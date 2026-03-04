@@ -391,6 +391,87 @@ class PublisherProposal(db.Model):
     __table_args__ = (db.UniqueConstraint('publisher_id', 'proposal_id'),)
 
 
+# ── Coaching Platform Models ─────────────────────────────────────────────────
+
+COACHING_MODULES = [
+    {"order": 1, "title": "Book Hook & Core Idea",        "description": "Craft the 1-2 sentence hook that makes editors keep reading."},
+    {"order": 2, "title": "Target Audience",               "description": "Define your ideal reader with precision — not 'everyone'."},
+    {"order": 3, "title": "Author Platform & Credentials", "description": "Build your case for why you are the right person to write this book."},
+    {"order": 4, "title": "Comparative Titles",            "description": "Select 3-5 realistic comps published in the last 5 years."},
+    {"order": 5, "title": "Chapter Outline",               "description": "Map the narrative arc — each chapter earns its place."},
+    {"order": 6, "title": "Sample Writing",                "description": "500-1,000 words of your strongest prose."},
+    {"order": 7, "title": "Marketing & Platform Strategy", "description": "Specific numbers and activities that prove you can sell books."},
+]
+
+COACHING_HOMEWORK_PROMPTS = {
+    1: "Write 1-3 sentences that capture: (1) what your book is about, (2) who it's for, and (3) why it matters right now. Then write 1 sentence explaining why your take on this topic is fresh or different.",
+    2: "Describe your ideal reader in detail: their age range, life situation, specific pain or desire that drives them to your book, and why they can't find this elsewhere. Aim for 150-250 words.",
+    3: "List your 3 strongest credentials for writing this book. For each, include any hard numbers (followers, email subscribers, speaking events, media appearances, years of expertise). Be specific.",
+    4: "Name 3-5 books published in the last 5 years that share your audience. For each, write one sentence explaining the connection — NOT that your book is like theirs, but that your book serves the same reader.",
+    5: "Write a brief outline: your book's overall arc in 2-3 sentences, then 1-2 sentences for each chapter explaining what the reader learns and how it builds on the previous chapter.",
+    6: "Paste 500-1,000 words of your strongest writing — ideally from a chapter draft or a piece you've published. Choose something that shows your voice and how you explain complex ideas.",
+    7: "List every specific activity you will do to sell this book: email list size, social media following (by platform), speaking engagements, bulk sale opportunities, media connections, and any pre-launch plan.",
+}
+
+COACHING_AI_SYSTEM = """You are an expert book proposal coach at Write It Great. You are helping an author work through a specific module of their coaching program. Be warm, specific, and honest — like a trusted mentor. Keep responses to 3-4 short paragraphs. Ask only ONE question at a time. Give concrete, actionable feedback, not generic advice."""
+
+
+class CoachingEnrollment(db.Model):
+    """One per author — tracks their coaching program enrollment"""
+    __tablename__ = 'coaching_enrollment'
+    id           = db.Column(db.Integer, primary_key=True)
+    author_id    = db.Column(db.Integer, db.ForeignKey('author.id'), nullable=False, unique=True)
+    book_title   = db.Column(db.String(500), nullable=False)
+    status       = db.Column(db.String(20), default='active')    # active / paused / completed
+    current_module = db.Column(db.Integer, default=1)
+    enrolled_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+
+    author   = db.relationship('Author', backref=db.backref('coaching', uselist=False))
+    modules  = db.relationship('AuthorModuleProgress', backref='enrollment', lazy='dynamic', cascade='all, delete-orphan')
+    chats    = db.relationship('CoachingChatMessage',  backref='enrollment', lazy='dynamic', cascade='all, delete-orphan')
+    homework = db.relationship('HomeworkSubmission',   backref='enrollment', lazy='dynamic', cascade='all, delete-orphan')
+
+
+class AuthorModuleProgress(db.Model):
+    """Per-module status for each enrolled author"""
+    __tablename__ = 'author_module_progress'
+    id              = db.Column(db.Integer, primary_key=True)
+    enrollment_id   = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'), nullable=False)
+    module_order    = db.Column(db.Integer, nullable=False)   # 1-7
+    status          = db.Column(db.String(20), default='locked')  # locked / in_progress / approved
+    started_at      = db.Column(db.DateTime)
+    approved_at     = db.Column(db.DateTime)
+    reminder_sent_at = db.Column(db.DateTime)
+
+    __table_args__ = (db.UniqueConstraint('enrollment_id', 'module_order'),)
+
+
+class CoachingChatMessage(db.Model):
+    """Server-side storage for coaching chat, scoped per enrollment + module"""
+    __tablename__ = 'coaching_chat_message'
+    id            = db.Column(db.Integer, primary_key=True)
+    enrollment_id = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'), nullable=False)
+    module_order  = db.Column(db.Integer, nullable=False)
+    role          = db.Column(db.String(10), nullable=False)   # 'user' or 'assistant'
+    content       = db.Column(db.Text, nullable=False)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class HomeworkSubmission(db.Model):
+    """Homework text, AI review, admin review, and approval status"""
+    __tablename__ = 'homework_submission'
+    id             = db.Column(db.Integer, primary_key=True)
+    enrollment_id  = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'), nullable=False)
+    module_order   = db.Column(db.Integer, nullable=False)
+    content        = db.Column(db.Text, nullable=False)
+    ai_feedback    = db.Column(db.Text)
+    admin_feedback = db.Column(db.Text)
+    status         = db.Column(db.String(30), default='pending')  # pending / approved / revision_requested
+    submitted_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    reviewed_at    = db.Column(db.DateTime)
+
+
 @login_manager.user_loader
 def load_user(user_id):
     """Load user from session — checks user_type to pick the right model"""
@@ -1382,6 +1463,141 @@ def send_author_milestone_email(proposal, new_status):
 
 
 # ============================================================================
+# COACHING EMAIL FUNCTIONS
+# ============================================================================
+
+def send_coaching_welcome_email(author, enrollment):
+    """Sent when an author enrolls in the coaching program"""
+    app_url = os.environ.get('APP_URL', 'http://localhost:5000')
+    subject = f"Welcome to Your Coaching Program — {enrollment.book_title}"
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <h1 style="color:#2D1B69;">Write It Great Coaching</h1>
+      <p>Hi {author.name},</p>
+      <p>Welcome! You're now enrolled in the Write It Great 7-module coaching program for <strong>"{enrollment.book_title}"</strong>.</p>
+      <p>Each module unlocks after your homework for the previous one is approved. You'll get AI feedback immediately, plus a human review from our team.</p>
+      <p>Your first module — <strong>Book Hook &amp; Core Idea</strong> — is ready for you now.</p>
+      <div style="text-align:center;margin:25px 0;">
+        <a href="{app_url}/author/coaching" style="display:inline-block;padding:14px 28px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:8px;font-weight:bold;">Start Module 1</a>
+      </div>
+      <p>Best,<br><strong>The Write It Great Team</strong></p>
+    </div></body></html>"""
+    try:
+        return send_email(author.email, subject, html)
+    except Exception as e:
+        print(f"Coaching welcome email error: {e}")
+        return False
+
+
+def send_coaching_module_unlocked_email(author, enrollment, module_order):
+    """Sent when a module is unlocked (homework approved)"""
+    app_url = os.environ.get('APP_URL', 'http://localhost:5000')
+    module = next((m for m in COACHING_MODULES if m['order'] == module_order), None)
+    if not module:
+        return False
+    subject = f"Module {module_order} Unlocked — {module['title']}"
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <h1 style="color:#2D1B69;">Module {module_order} Unlocked!</h1>
+      <p>Hi {author.name},</p>
+      <p>Great work on your previous module. <strong>Module {module_order}: {module['title']}</strong> is now open for you.</p>
+      <p>{module['description']}</p>
+      <div style="text-align:center;margin:25px 0;">
+        <a href="{app_url}/author/coaching/module/{module_order}" style="display:inline-block;padding:14px 28px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:8px;font-weight:bold;">Open Module {module_order}</a>
+      </div>
+      <p>Best,<br><strong>The Write It Great Team</strong></p>
+    </div></body></html>"""
+    try:
+        return send_email(author.email, subject, html)
+    except Exception as e:
+        print(f"Module unlocked email error: {e}")
+        return False
+
+
+def send_coaching_homework_reminder_email(author, enrollment, module_order):
+    """Sent when 3+ days have passed in a module with no approved submission"""
+    app_url = os.environ.get('APP_URL', 'http://localhost:5000')
+    module = next((m for m in COACHING_MODULES if m['order'] == module_order), None)
+    if not module:
+        return False
+    subject = f"Don't Lose Momentum — Module {module_order} Is Waiting"
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <h1 style="color:#2D1B69;">Checking in on your progress</h1>
+      <p>Hi {author.name},</p>
+      <p>We noticed you haven't submitted homework for <strong>Module {module_order}: {module['title']}</strong> yet. That's okay — sometimes life gets busy.</p>
+      <p>Your coaching session is still here when you're ready. Even 15 minutes of focused writing can move you forward.</p>
+      <div style="text-align:center;margin:25px 0;">
+        <a href="{app_url}/author/coaching/module/{module_order}" style="display:inline-block;padding:14px 28px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:8px;font-weight:bold;">Continue Module {module_order}</a>
+      </div>
+      <p>Best,<br><strong>The Write It Great Team</strong></p>
+    </div></body></html>"""
+    try:
+        return send_email(author.email, subject, html)
+    except Exception as e:
+        print(f"Homework reminder email error: {e}")
+        return False
+
+
+def send_coaching_homework_reviewed_email(author, enrollment, module_order, approved, admin_feedback):
+    """Sent when admin manually reviews a homework submission"""
+    app_url = os.environ.get('APP_URL', 'http://localhost:5000')
+    module = next((m for m in COACHING_MODULES if m['order'] == module_order), None)
+    if not module:
+        return False
+    if approved:
+        subject = f"Homework Approved — Module {module_order} Complete!"
+        status_msg = "Your homework has been <strong>approved</strong>. Well done!"
+    else:
+        subject = f"Homework Feedback — Module {module_order} Revision Needed"
+        status_msg = "Our coach has reviewed your homework and has some feedback for you before we move on."
+    feedback_block = f'<blockquote style="border-left:3px solid #2D1B69;padding:10px 15px;margin:15px 0;color:#555;">{admin_feedback}</blockquote>' if admin_feedback else ''
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <h1 style="color:#2D1B69;">Module {module_order} Homework Review</h1>
+      <p>Hi {author.name},</p>
+      <p>{status_msg}</p>
+      {feedback_block}
+      <div style="text-align:center;margin:25px 0;">
+        <a href="{app_url}/author/coaching/module/{module_order}" style="display:inline-block;padding:14px 28px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:8px;font-weight:bold;">View Module {module_order}</a>
+      </div>
+      <p>Best,<br><strong>The Write It Great Team</strong></p>
+    </div></body></html>"""
+    try:
+        return send_email(author.email, subject, html)
+    except Exception as e:
+        print(f"Homework reviewed email error: {e}")
+        return False
+
+
+def send_coaching_complete_email(author, enrollment):
+    """Sent when all 7 modules are approved"""
+    app_url = os.environ.get('APP_URL', 'http://localhost:5000')
+    subject = f"Congratulations — You've Completed the Coaching Program!"
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <h1 style="color:#2D1B69;">You Did It!</h1>
+      <p>Hi {author.name},</p>
+      <p>You've completed all 7 modules of the Write It Great coaching program for <strong>"{enrollment.book_title}"</strong>. That is a significant achievement.</p>
+      <p>You now have the core material for a publisher-ready book proposal. The next step is a full evaluation from our team — we'll score your proposal and estimate your advance potential.</p>
+      <div style="text-align:center;margin:25px 0;">
+        <a href="{app_url}/author/dashboard" style="display:inline-block;padding:14px 28px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:8px;font-weight:bold;">Go to My Dashboard</a>
+      </div>
+      <p>Congratulations again,<br><strong>The Write It Great Team</strong></p>
+    </div></body></html>"""
+    try:
+        return send_email(author.email, subject, html)
+    except Exception as e:
+        print(f"Coaching complete email error: {e}")
+        return False
+
+
+# ============================================================================
 # PUBLIC ROUTES
 # ============================================================================
 
@@ -2286,6 +2502,289 @@ def publisher_reset_password(token):
         return redirect(url_for('publisher_login'))
 
     return render_template('publisher_reset_password.html', token=token)
+
+
+# ============================================================================
+# AUTHOR COACHING ROUTES
+# ============================================================================
+
+@app.route('/author/coaching')
+@author_login_required
+def author_coaching_dashboard():
+    """Coaching program dashboard — progress overview for the logged-in author"""
+    enrollment = CoachingEnrollment.query.filter_by(author_id=current_user.id).first()
+
+    if enrollment:
+        # Homework reminder: fire if current module has been in_progress for 3+ days with no approved submission
+        prog = AuthorModuleProgress.query.filter_by(
+            enrollment_id=enrollment.id,
+            module_order=enrollment.current_module
+        ).first()
+        if prog and prog.status == 'in_progress' and prog.started_at:
+            days_elapsed = (datetime.utcnow() - prog.started_at).days
+            approved_hw = HomeworkSubmission.query.filter_by(
+                enrollment_id=enrollment.id,
+                module_order=enrollment.current_module,
+                status='approved'
+            ).first()
+            last_reminder_ok = (
+                prog.reminder_sent_at is None or
+                (datetime.utcnow() - prog.reminder_sent_at).days >= 3
+            )
+            if days_elapsed >= 3 and not approved_hw and last_reminder_ok:
+                send_coaching_homework_reminder_email(current_user, enrollment, enrollment.current_module)
+                prog.reminder_sent_at = datetime.utcnow()
+                db.session.commit()
+
+        # Build per-module status map
+        all_progress = {p.module_order: p for p in enrollment.modules.all()}
+        modules_data = []
+        for m in COACHING_MODULES:
+            p = all_progress.get(m['order'])
+            modules_data.append({
+                **m,
+                'status': p.status if p else 'locked',
+                'approved_at': p.approved_at if p else None,
+            })
+        pct = int((enrollment.current_module - 1) / 7 * 100) if enrollment.status != 'completed' else 100
+    else:
+        modules_data = [{'status': 'locked', **m} for m in COACHING_MODULES]
+        pct = 0
+
+    return render_template('author_coaching_dashboard.html',
+                           enrollment=enrollment,
+                           modules_data=modules_data,
+                           progress_pct=pct)
+
+
+@app.route('/author/coaching/enroll', methods=['GET', 'POST'])
+@author_login_required
+def author_coaching_enroll():
+    """Enrollment form — creates enrollment + first module progress record"""
+    if CoachingEnrollment.query.filter_by(author_id=current_user.id).first():
+        return redirect(url_for('author_coaching_dashboard'))
+
+    if request.method == 'POST':
+        book_title = request.form.get('book_title', '').strip()
+        if not book_title:
+            flash('Please enter your book title.', 'error')
+            return render_template('author_coaching_enroll.html')
+
+        enrollment = CoachingEnrollment(author_id=current_user.id, book_title=book_title)
+        db.session.add(enrollment)
+        db.session.flush()  # get enrollment.id
+
+        # Unlock module 1
+        prog = AuthorModuleProgress(
+            enrollment_id=enrollment.id,
+            module_order=1,
+            status='in_progress',
+            started_at=datetime.utcnow()
+        )
+        db.session.add(prog)
+        db.session.commit()
+
+        send_coaching_welcome_email(current_user, enrollment)
+        return redirect(url_for('author_coaching_module', order=1))
+
+    return render_template('author_coaching_enroll.html')
+
+
+@app.route('/author/coaching/module/<int:order>')
+@author_login_required
+def author_coaching_module(order):
+    """Individual module page — chat + homework"""
+    if order < 1 or order > 7:
+        return redirect(url_for('author_coaching_dashboard'))
+
+    enrollment = CoachingEnrollment.query.filter_by(author_id=current_user.id).first()
+    if not enrollment:
+        return redirect(url_for('author_coaching_enroll'))
+
+    prog = AuthorModuleProgress.query.filter_by(
+        enrollment_id=enrollment.id, module_order=order).first()
+    if not prog or prog.status == 'locked':
+        flash('This module is not yet unlocked.', 'error')
+        return redirect(url_for('author_coaching_dashboard'))
+
+    module_info    = next(m for m in COACHING_MODULES if m['order'] == order)
+    hw_prompt      = COACHING_HOMEWORK_PROMPTS.get(order, '')
+    chat_messages  = CoachingChatMessage.query.filter_by(
+        enrollment_id=enrollment.id, module_order=order
+    ).order_by(CoachingChatMessage.created_at).all()
+    latest_hw      = HomeworkSubmission.query.filter_by(
+        enrollment_id=enrollment.id, module_order=order
+    ).order_by(HomeworkSubmission.submitted_at.desc()).first()
+
+    return render_template('author_coaching_module.html',
+                           enrollment=enrollment,
+                           module_info=module_info,
+                           progress=prog,
+                           hw_prompt=hw_prompt,
+                           chat_messages=chat_messages,
+                           latest_hw=latest_hw,
+                           modules=COACHING_MODULES)
+
+
+@app.route('/api/coaching/chat', methods=['POST'])
+@author_login_required
+def api_coaching_chat():
+    """Persisted, module-scoped AI chat for the coaching program"""
+    try:
+        data         = request.get_json(force=True) or {}
+        module_order = int(data.get('module_order', 0))
+        user_msg     = (data.get('message') or '').strip()
+
+        if not user_msg or module_order < 1 or module_order > 7:
+            return jsonify({'success': False, 'error': 'Invalid request.'})
+
+        enrollment = CoachingEnrollment.query.filter_by(author_id=current_user.id).first()
+        if not enrollment:
+            return jsonify({'success': False, 'error': 'Not enrolled.'})
+
+        prog = AuthorModuleProgress.query.filter_by(
+            enrollment_id=enrollment.id, module_order=module_order).first()
+        if not prog or prog.status == 'locked':
+            return jsonify({'success': False, 'error': 'Module locked.'})
+
+        # Save user message
+        db.session.add(CoachingChatMessage(
+            enrollment_id=enrollment.id,
+            module_order=module_order,
+            role='user',
+            content=user_msg
+        ))
+        db.session.commit()
+
+        # Build history for AI (last 20 messages)
+        history = CoachingChatMessage.query.filter_by(
+            enrollment_id=enrollment.id, module_order=module_order
+        ).order_by(CoachingChatMessage.created_at).all()
+        history = history[-20:]
+
+        module_info = next(m for m in COACHING_MODULES if m['order'] == module_order)
+        system = (COACHING_AI_SYSTEM +
+                  f'\n\nModule focus: {module_info["title"]} — {module_info["description"]}' +
+                  f'\nBook title: "{enrollment.book_title}"')
+
+        response = client.chat.completions.create(
+            model='gpt-4o',
+            messages=[{'role': 'system', 'content': system}] +
+                     [{'role': m.role, 'content': m.content} for m in history],
+            temperature=0.8,
+            max_tokens=600
+        )
+        reply = response.choices[0].message.content.strip()
+
+        # Save assistant message
+        db.session.add(CoachingChatMessage(
+            enrollment_id=enrollment.id,
+            module_order=module_order,
+            role='assistant',
+            content=reply
+        ))
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': reply})
+
+    except Exception as e:
+        print(f'/api/coaching/chat error: {e}')
+        return jsonify({'success': False, 'error': 'Could not get a response. Please try again.'})
+
+
+@app.route('/api/coaching/homework', methods=['POST'])
+@author_login_required
+def api_coaching_homework():
+    """Submit homework → synchronous AI review → auto-unlock next module if approved"""
+    try:
+        data         = request.get_json(force=True) or {}
+        module_order = int(data.get('module_order', 0))
+        content      = (data.get('content') or '').strip()
+
+        if not content or len(content) < 30:
+            return jsonify({'success': False, 'error': 'Please write a more complete answer before submitting.'})
+        if module_order < 1 or module_order > 7:
+            return jsonify({'success': False, 'error': 'Invalid module.'})
+
+        enrollment = CoachingEnrollment.query.filter_by(author_id=current_user.id).first()
+        if not enrollment:
+            return jsonify({'success': False, 'error': 'Not enrolled.'})
+
+        prog = AuthorModuleProgress.query.filter_by(
+            enrollment_id=enrollment.id, module_order=module_order).first()
+        if not prog or prog.status == 'locked':
+            return jsonify({'success': False, 'error': 'Module locked.'})
+
+        module_info = next(m for m in COACHING_MODULES if m['order'] == module_order)
+        hw_prompt   = COACHING_HOMEWORK_PROMPTS.get(module_order, '')
+
+        # AI feedback
+        ai_prompt = (
+            f'You are a book proposal expert at Write It Great. Review this homework submission '
+            f'for Module {module_order}: {module_info["title"]}.\n\n'
+            f'Homework prompt: {hw_prompt}\n\n'
+            f'Author\'s book: "{enrollment.book_title}"\n\n'
+            f'Submission:\n{content}\n\n'
+            f'Provide 3-5 bullet points of specific, actionable feedback. Then on a new line write '
+            f'APPROVED if it meets the standard for a publisher-ready proposal, or REVISION_NEEDED '
+            f'if it needs more work. Be honest but encouraging.'
+        )
+        ai_response = client.chat.completions.create(
+            model='gpt-4o',
+            messages=[{'role': 'user', 'content': ai_prompt}],
+            temperature=0.6,
+            max_tokens=500
+        )
+        ai_text  = ai_response.choices[0].message.content.strip()
+        approved = 'APPROVED' in ai_text.upper() and 'REVISION_NEEDED' not in ai_text.upper()
+
+        hw = HomeworkSubmission(
+            enrollment_id=enrollment.id,
+            module_order=module_order,
+            content=content,
+            ai_feedback=ai_text,
+            status='approved' if approved else 'revision_requested'
+        )
+        db.session.add(hw)
+
+        if approved:
+            prog.status      = 'approved'
+            prog.approved_at = datetime.utcnow()
+            # Unlock next module
+            if module_order < 7:
+                next_order = module_order + 1
+                next_prog  = AuthorModuleProgress.query.filter_by(
+                    enrollment_id=enrollment.id, module_order=next_order).first()
+                if not next_prog:
+                    next_prog = AuthorModuleProgress(
+                        enrollment_id=enrollment.id,
+                        module_order=next_order,
+                        status='in_progress',
+                        started_at=datetime.utcnow()
+                    )
+                    db.session.add(next_prog)
+                else:
+                    next_prog.status     = 'in_progress'
+                    next_prog.started_at = datetime.utcnow()
+                enrollment.current_module = next_order
+                send_coaching_module_unlocked_email(current_user, enrollment, next_order)
+            else:
+                enrollment.status       = 'completed'
+                enrollment.completed_at = datetime.utcnow()
+                send_coaching_complete_email(current_user, enrollment)
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'approved': approved,
+            'feedback': ai_text,
+            'next_module': module_order + 1 if approved and module_order < 7 else None,
+            'program_complete': approved and module_order == 7
+        })
+
+    except Exception as e:
+        print(f'/api/coaching/homework error: {e}')
+        return jsonify({'success': False, 'error': 'Could not process your submission. Please try again.'})
 
 
 # ============================================================================
@@ -3222,6 +3721,116 @@ def admin_unshare_proposal(submission_id, publisher_id):
 
 
 # ============================================================================
+# ADMIN COACHING ROUTES
+# ============================================================================
+
+@app.route('/admin/coaching')
+@team_required
+def admin_coaching_list():
+    """Admin: table of all enrolled authors"""
+    enrollments = CoachingEnrollment.query.order_by(CoachingEnrollment.enrolled_at.desc()).all()
+    return render_template('admin_coaching_list.html', enrollments=enrollments)
+
+
+@app.route('/admin/coaching/<int:enrollment_id>')
+@team_required
+def admin_coaching_detail(enrollment_id):
+    """Admin: per-author accordion — progress, chats, homework, review forms"""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    all_progress = {p.module_order: p for p in enrollment.modules.all()}
+    modules_data = []
+    for m in COACHING_MODULES:
+        order = m['order']
+        prog  = all_progress.get(order)
+        chats = CoachingChatMessage.query.filter_by(
+            enrollment_id=enrollment.id, module_order=order
+        ).order_by(CoachingChatMessage.created_at).all()
+        submissions = HomeworkSubmission.query.filter_by(
+            enrollment_id=enrollment.id, module_order=order
+        ).order_by(HomeworkSubmission.submitted_at.desc()).all()
+        modules_data.append({**m, 'progress': prog, 'chats': chats, 'submissions': submissions})
+    return render_template('admin_coaching_detail.html',
+                           enrollment=enrollment,
+                           modules_data=modules_data)
+
+
+@app.route('/admin/coaching/<int:enrollment_id>/module/<int:order>/unlock', methods=['POST'])
+@team_required
+def admin_coaching_unlock(enrollment_id, order):
+    """Admin: manually unlock a specific module"""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    if order < 1 or order > 7:
+        return jsonify({'success': False, 'error': 'Invalid module.'})
+
+    prog = AuthorModuleProgress.query.filter_by(
+        enrollment_id=enrollment.id, module_order=order).first()
+    if not prog:
+        prog = AuthorModuleProgress(enrollment_id=enrollment.id, module_order=order)
+        db.session.add(prog)
+    prog.status     = 'in_progress'
+    prog.started_at = prog.started_at or datetime.utcnow()
+    if order > enrollment.current_module:
+        enrollment.current_module = order
+    db.session.commit()
+
+    send_coaching_module_unlocked_email(enrollment.author, enrollment, order)
+    flash(f'Module {order} unlocked for {enrollment.author.name}.', 'success')
+    return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+
+@app.route('/admin/coaching/<int:enrollment_id>/homework/<int:hw_id>/review', methods=['POST'])
+@team_required
+def admin_coaching_review_homework(enrollment_id, hw_id):
+    """Admin: approve or request revision on a homework submission"""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    hw         = HomeworkSubmission.query.get_or_404(hw_id)
+    action     = request.form.get('action')  # 'approve' or 'revision'
+    feedback   = request.form.get('admin_feedback', '').strip()
+
+    approved = (action == 'approve')
+    hw.admin_feedback = feedback
+    hw.status         = 'approved' if approved else 'revision_requested'
+    hw.reviewed_at    = datetime.utcnow()
+
+    if approved:
+        prog = AuthorModuleProgress.query.filter_by(
+            enrollment_id=enrollment.id, module_order=hw.module_order).first()
+        if prog:
+            prog.status      = 'approved'
+            prog.approved_at = datetime.utcnow()
+        # Unlock next module if not already unlocked
+        if hw.module_order < 7:
+            next_order = hw.module_order + 1
+            next_prog  = AuthorModuleProgress.query.filter_by(
+                enrollment_id=enrollment.id, module_order=next_order).first()
+            if not next_prog:
+                next_prog = AuthorModuleProgress(
+                    enrollment_id=enrollment.id,
+                    module_order=next_order,
+                    status='in_progress',
+                    started_at=datetime.utcnow()
+                )
+                db.session.add(next_prog)
+            elif next_prog.status == 'locked':
+                next_prog.status     = 'in_progress'
+                next_prog.started_at = datetime.utcnow()
+            if next_order > enrollment.current_module:
+                enrollment.current_module = next_order
+            send_coaching_module_unlocked_email(enrollment.author, enrollment, next_order)
+        else:
+            enrollment.status       = 'completed'
+            enrollment.completed_at = datetime.utcnow()
+            send_coaching_complete_email(enrollment.author, enrollment)
+
+    db.session.commit()
+    send_coaching_homework_reviewed_email(
+        enrollment.author, enrollment, hw.module_order, approved, feedback)
+
+    flash(f'Homework {"approved" if approved else "sent for revision"}.', 'success')
+    return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+
+# ============================================================================
 # DATABASE MIGRATIONS
 # ============================================================================
 
@@ -3341,6 +3950,23 @@ def run_migrations():
             if 'status_updated_at' not in pp_cols:
                 conn.execute(text('ALTER TABLE publisher_proposal ADD COLUMN status_updated_at TIMESTAMP'))
                 print("Migration: added publisher_proposal.status_updated_at")
+
+    # Coaching tables (new tables — created from model metadata)
+    if not inspector.has_table('coaching_enrollment'):
+        CoachingEnrollment.__table__.create(db.engine)
+        print("Migration: created coaching_enrollment table")
+
+    if not inspector.has_table('author_module_progress'):
+        AuthorModuleProgress.__table__.create(db.engine)
+        print("Migration: created author_module_progress table")
+
+    if not inspector.has_table('coaching_chat_message'):
+        CoachingChatMessage.__table__.create(db.engine)
+        print("Migration: created coaching_chat_message table")
+
+    if not inspector.has_table('homework_submission'):
+        HomeworkSubmission.__table__.create(db.engine)
+        print("Migration: created homework_submission table")
 
 
 # ============================================================================

@@ -20,6 +20,7 @@
                 {% if current_user.is_authenticated and current_user.is_team_member %}
                 {# Team member nav #}
                 <a href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+                <a href="{{ url_for('admin_coaching_list') }}">Coaching</a>
                 {% if current_user.is_admin %}
                 <a href="{{ url_for('admin_team') }}">Team</a>
                 {% endif %}
@@ -29,6 +30,7 @@
                 {% elif current_user.is_authenticated and current_user.is_author %}
                 {# Author nav #}
                 <a href="{{ url_for('author_dashboard') }}">My Proposals</a>
+                <a href="{{ url_for('author_coaching_dashboard') }}">Coaching</a>
                 <a href="{{ url_for('author_logout') }}">Logout</a>
                 <a href="{{ url_for('index') }}" class="btn-accent">Submit Proposal</a>
                 {% elif current_user.is_authenticated and current_user.is_publisher %}

@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Coaching: {{ enrollment.author.name }} — Admin{% endblock %}
+
+{% block extra_css %}
+.module-accordion { border: 1.5px solid var(--gray-200); border-radius: var(--radius); margin-bottom: 1rem; overflow: hidden; }
+.accordion-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.25rem; background: #f8f6f9;
+    cursor: pointer; user-select: none;
+    border-bottom: 1.5px solid var(--gray-200);
+}
+.accordion-header:hover { background: #f0ebff; }
+.accordion-header .mod-title { font-weight: 700; color: var(--primary); }
+.accordion-header .mod-status { font-size: .8rem; }
+.accordion-body { padding: 1.25rem; display: none; }
+.accordion-body.open { display: block; }
+.status-chip {
+    display: inline-block; padding: .2rem .7rem; border-radius: 999px;
+    font-size: .75rem; font-weight: 600;
+}
+.chip-locked      { background:#f1f5f9;color:#64748b; }
+.chip-in-progress { background:#ede9fe;color:#5b21b6; }
+.chip-approved    { background:#dcfce7;color:#166534; }
+.chat-transcript  { background:#fafafa;border:1px solid var(--gray-200);border-radius:var(--radius);padding:1rem;max-height:320px;overflow-y:auto;margin-bottom:1rem; }
+.chat-line { margin-bottom:.75rem; }
+.chat-line .role  { font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-400);margin-bottom:.2rem; }
+.chat-line.user .role   { color:var(--primary); }
+.chat-line .body  { font-size:.875rem;line-height:1.55;white-space:pre-wrap;color:#333; }
+.hw-card { border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem;margin-bottom:1rem; }
+.hw-card.approved-hw  { border-color:#86efac; }
+.hw-card.revision-hw  { border-color:#fde68a; }
+.hw-content { background:#f8f6f9;border-radius:var(--radius);padding:.875rem;font-size:.875rem;line-height:1.6;white-space:pre-wrap;color:#333;margin:.75rem 0; }
+{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width:1000px;margin:2rem auto;padding:0 1rem;">
+    <div style="margin-bottom:1.5rem;">
+        <a href="{{ url_for('admin_coaching_list') }}" style="color:var(--gray-500);font-size:.875rem;text-decoration:none;">← All Enrollments</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }}" style="margin-bottom:1rem;">{{ msg }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <!-- Header card -->
+    <div class="card" style="margin-bottom:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;">
+            <div>
+                <h2 style="margin:0;color:var(--primary);">{{ enrollment.author.name }}</h2>
+                <p style="margin:.25rem 0 0;color:var(--gray-500);">{{ enrollment.author.email }}</p>
+                <p style="margin:.5rem 0 0;font-size:.9375rem;"><strong>Book:</strong> {{ enrollment.book_title }}</p>
+            </div>
+            <div style="text-align:right;">
+                {% if enrollment.status == 'completed' %}
+                <span class="status-chip chip-approved" style="font-size:.875rem;">Program Complete</span>
+                {% else %}
+                <span class="status-chip chip-in-progress" style="font-size:.875rem;">Module {{ enrollment.current_module }} / 7</span>
+                {% endif %}
+                <p style="font-size:.8125rem;color:var(--gray-400);margin:.4rem 0 0;">Enrolled {{ enrollment.enrolled_at.strftime('%B %d, %Y') }}</p>
+            </div>
+        </div>
+        <!-- Progress bar -->
+        <div style="margin-top:1rem;background:#e5e7eb;border-radius:999px;height:8px;">
+            <div style="background:var(--accent);border-radius:999px;height:8px;width:{{ ((enrollment.current_module - 1) / 7 * 100)|int if enrollment.status != 'completed' else 100 }}%;"></div>
+        </div>
+    </div>
+
+    <!-- Module accordions -->
+    {% for m in modules_data %}
+    <div class="module-accordion">
+        <div class="accordion-header" onclick="toggleAcc({{ m.order }})">
+            <div>
+                <span style="font-size:.8rem;color:var(--gray-400);font-weight:600;text-transform:uppercase;">Module {{ m.order }}</span>
+                <div class="mod-title">{{ m.title }}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:1rem;">
+                {% if not m.progress %}
+                    <span class="status-chip chip-locked">Locked</span>
+                {% elif m.progress.status == 'in_progress' %}
+                    <span class="status-chip chip-in-progress">In Progress</span>
+                {% else %}
+                    <span class="status-chip chip-approved">Approved</span>
+                {% endif %}
+                <span style="font-size:1.2rem;color:var(--gray-400);" id="acc-arrow-{{ m.order }}">▼</span>
+            </div>
+        </div>
+
+        <div class="accordion-body" id="acc-body-{{ m.order }}">
+            <!-- Manual unlock -->
+            {% if not m.progress or m.progress.status == 'locked' %}
+            <form method="POST" action="{{ url_for('admin_coaching_unlock', enrollment_id=enrollment.id, order=m.order) }}" style="margin-bottom:1.25rem;">
+                <button type="submit" style="padding:.5rem 1.1rem;background:var(--primary);color:white;border:none;border-radius:var(--radius);cursor:pointer;font-size:.875rem;">
+                    🔓 Unlock Module {{ m.order }}
+                </button>
+            </form>
+            {% else %}
+            <div style="margin-bottom:1rem;">
+                <form method="POST" action="{{ url_for('admin_coaching_unlock', enrollment_id=enrollment.id, order=m.order) }}" style="display:inline;">
+                    <button type="submit" style="padding:.4rem .9rem;background:#f1f5f9;color:var(--gray-600);border:1.5px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;font-size:.8125rem;">
+                        ↩ Re-unlock
+                    </button>
+                </form>
+                {% if m.progress.started_at %}
+                <span style="font-size:.8rem;color:var(--gray-400);margin-left:.75rem;">Started {{ m.progress.started_at.strftime('%b %d, %Y') }}</span>
+                {% endif %}
+                {% if m.progress.approved_at %}
+                <span style="font-size:.8rem;color:#166534;margin-left:.75rem;">✓ Approved {{ m.progress.approved_at.strftime('%b %d, %Y') }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Chat transcript -->
+            {% if m.chats %}
+            <h4 style="color:var(--primary);margin:0 0 .5rem;font-size:.875rem;">Chat Transcript ({{ m.chats|length }} messages)</h4>
+            <div class="chat-transcript">
+                {% for msg in m.chats %}
+                <div class="chat-line {{ msg.role }}">
+                    <div class="role">{{ msg.role|title }} — {{ msg.created_at.strftime('%b %d, %H:%M') }}</div>
+                    <div class="body">{{ msg.content }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color:var(--gray-400);font-size:.875rem;margin:0 0 1rem;">No chat messages yet.</p>
+            {% endif %}
+
+            <!-- Homework submissions -->
+            {% if m.submissions %}
+            <h4 style="color:var(--primary);margin:0 0 .75rem;font-size:.875rem;">Homework Submissions ({{ m.submissions|length }})</h4>
+            {% for hw in m.submissions %}
+            <div class="hw-card {{ 'approved-hw' if hw.status == 'approved' else 'revision-hw' if hw.status == 'revision_requested' else '' }}">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+                    <span style="font-size:.8rem;color:var(--gray-400);">Submitted {{ hw.submitted_at.strftime('%b %d, %Y %H:%M') }}</span>
+                    <span class="status-chip {{ 'chip-approved' if hw.status == 'approved' else 'chip-in-progress' if hw.status == 'pending' else 'chip-locked' }}">
+                        {{ hw.status|replace('_',' ')|title }}
+                    </span>
+                </div>
+
+                <div class="hw-content">{{ hw.content }}</div>
+
+                {% if hw.ai_feedback %}
+                <details style="margin-bottom:.75rem;">
+                    <summary style="font-size:.8125rem;color:var(--gray-500);cursor:pointer;">AI Feedback</summary>
+                    <div style="margin-top:.5rem;font-size:.8125rem;color:#555;white-space:pre-wrap;padding:.75rem;background:#fafafa;border-radius:var(--radius);">{{ hw.ai_feedback }}</div>
+                </details>
+                {% endif %}
+
+                {% if hw.admin_feedback %}
+                <div style="margin-bottom:.75rem;font-size:.8125rem;color:#555;">
+                    <strong>Your note:</strong> {{ hw.admin_feedback }}
+                </div>
+                {% endif %}
+
+                {% if hw.status != 'approved' %}
+                <form method="POST" action="{{ url_for('admin_coaching_review_homework', enrollment_id=enrollment.id, hw_id=hw.id) }}" style="margin-top:.75rem;">
+                    <textarea name="admin_feedback" rows="3" placeholder="Optional note to author…"
+                        style="width:100%;padding:.6rem;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:.875rem;margin-bottom:.5rem;box-sizing:border-box;resize:vertical;font-family:inherit;"></textarea>
+                    <div style="display:flex;gap:.75rem;">
+                        <button type="submit" name="action" value="approve"
+                            style="padding:.5rem 1.25rem;background:#22c55e;color:white;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:.875rem;">
+                            ✓ Approve
+                        </button>
+                        <button type="submit" name="action" value="revision"
+                            style="padding:.5rem 1.25rem;background:#f59e0b;color:white;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:.875rem;">
+                            ↩ Request Revision
+                        </button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% else %}
+            <p style="color:var(--gray-400);font-size:.875rem;margin:0;">No homework submitted yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+function toggleAcc(order) {
+    const body  = document.getElementById('acc-body-' + order);
+    const arrow = document.getElementById('acc-arrow-' + order);
+    const open  = body.classList.toggle('open');
+    arrow.textContent = open ? '▲' : '▼';
+}
+// Auto-open the current module
+toggleAcc({{ enrollment.current_module }});
+</script>
+{% endblock %}

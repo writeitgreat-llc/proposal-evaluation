@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Enroll in Coaching — Write It Great{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width:560px;margin:3rem auto;padding:0 1rem;">
+    <div class="card">
+        <h2 style="color:var(--primary);margin:0 0 .5rem;">Start Your Coaching Program</h2>
+        <p style="color:var(--gray-500);margin:0 0 2rem;font-size:.9375rem;">Seven focused modules, AI feedback, and expert review — designed to get your proposal publisher-ready.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for cat, msg in messages %}
+                <div class="alert alert-{{ cat }}" style="margin-bottom:1rem;">{{ msg }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="POST">
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block;font-weight:600;margin-bottom:.5rem;color:var(--primary);">Working Book Title</label>
+                <input type="text" name="book_title" required placeholder="e.g. The Art of Deep Work"
+                       style="width:100%;padding:.75rem 1rem;border:1.5px solid var(--gray-300);border-radius:var(--radius);font-size:1rem;box-sizing:border-box;">
+                <p style="font-size:.8125rem;color:var(--gray-400);margin:.4rem 0 0;">You can refine the title later — just put something in for now.</p>
+            </div>
+
+            <div style="background:#f8f6f9;border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem;">
+                <h4 style="margin:0 0 .75rem;color:var(--primary);">What you'll get:</h4>
+                <ul style="margin:0;padding-left:1.25rem;color:var(--gray-600);font-size:.9rem;line-height:1.8;">
+                    <li>7 guided modules covering every proposal section</li>
+                    <li>AI coaching chat in each module</li>
+                    <li>Homework reviewed by AI, then by our team</li>
+                    <li>Modules unlock sequentially as you complete each one</li>
+                    <li>Email updates at every milestone</li>
+                </ul>
+            </div>
+
+            <button type="submit" class="btn-accent" style="width:100%;padding:.875rem;font-size:1rem;">
+                Enroll and Start Module 1
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

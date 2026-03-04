@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Coaching Program — Write It Great{% endblock %}
+
+{% block extra_css %}
+.coaching-hero {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    padding: 2.5rem 2rem;
+    border-bottom: 4px solid var(--accent);
+    color: white;
+}
+.coaching-hero h1 { color: var(--accent); font-size: 1.375rem; margin-bottom: 0.25rem; }
+.coaching-hero p  { color: rgba(255,255,255,0.8); margin: 0; }
+.progress-bar-wrap { background: rgba(255,255,255,0.15); border-radius: 999px; height: 10px; margin: 1.25rem 0 0.5rem; max-width: 480px; }
+.progress-bar-fill { background: var(--accent); border-radius: 999px; height: 10px; transition: width 0.4s; }
+.progress-label    { font-size: 0.8125rem; color: rgba(255,255,255,0.7); }
+
+.module-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+.module-card {
+    background: white;
+    border: 2px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    position: relative;
+    transition: box-shadow 0.15s;
+}
+.module-card.in-progress  { border-color: var(--primary); }
+.module-card.approved     { border-color: #22c55e; }
+.module-card.locked       { opacity: 0.55; }
+.module-card a.module-btn {
+    display: inline-block; margin-top: 1rem;
+    padding: 0.5rem 1.25rem;
+    background: var(--accent); color: var(--accent-text);
+    border-radius: var(--radius); font-weight: 600;
+    font-size: 0.875rem; text-decoration: none;
+}
+.module-card a.module-btn:hover { background: var(--accent-dark); }
+.module-num  { font-size: 0.75rem; font-weight: 700; color: var(--gray-400); text-transform: uppercase; letter-spacing: .06em; }
+.module-title { font-size: 1rem; font-weight: 700; color: var(--primary); margin: 0.25rem 0; }
+.module-desc  { font-size: 0.8125rem; color: var(--gray-500); line-height: 1.5; }
+.status-pip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.75rem; font-weight: 600;
+    padding: 0.2rem 0.6rem; border-radius: 999px; margin-bottom: 0.5rem;
+}
+.pip-locked      { background: #f1f5f9; color: #64748b; }
+.pip-in-progress { background: #ede9fe; color: #5b21b6; }
+.pip-approved    { background: #dcfce7; color: #166534; }
+{% endblock %}
+
+{% block content %}
+<section class="coaching-hero">
+    <div style="max-width:1200px;margin:0 auto;">
+        {% if enrollment %}
+        <h1>Your Coaching Program</h1>
+        <p style="margin-bottom:.5rem;">{{ enrollment.book_title }}</p>
+        <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" style="width:{{ progress_pct }}%"></div>
+        </div>
+        <span class="progress-label">
+            {% if enrollment.status == 'completed' %}
+                Program complete — all 7 modules approved!
+            {% else %}
+                Module {{ enrollment.current_module }} of 7
+            {% endif %}
+        </span>
+        {% else %}
+        <h1>Write It Great Coaching Program</h1>
+        <p>Seven focused modules to build your publisher-ready proposal — with AI coaching, homework review, and expert feedback at every step.</p>
+        <a href="{{ url_for('author_coaching_enroll') }}" style="display:inline-block;margin-top:1.25rem;padding:.75rem 1.75rem;background:var(--accent);color:var(--accent-text);border-radius:var(--radius);font-weight:700;text-decoration:none;">Enroll Now</a>
+        {% endif %}
+    </div>
+</section>
+
+<div class="container" style="max-width:1200px;margin:2rem auto;padding:0 1rem;">
+    {% if enrollment and enrollment.status == 'completed' %}
+    <div class="card" style="border-left:4px solid #22c55e;padding:1.5rem;">
+        <h3 style="color:#166534;margin:0 0 .5rem;">Congratulations — Program Complete!</h3>
+        <p style="margin:0;color:var(--gray-600);">You've completed all 7 modules. Your proposal material is ready for a full evaluation. Submit it from your <a href="{{ url_for('author_dashboard') }}">dashboard</a>.</p>
+    </div>
+    {% endif %}
+
+    <div class="module-grid">
+        {% for m in modules_data %}
+        <div class="module-card {{ m.status }}">
+            {% if m.status == 'locked' %}
+                <span class="status-pip pip-locked">🔒 Locked</span>
+            {% elif m.status == 'in_progress' %}
+                <span class="status-pip pip-in-progress">✏️ In Progress</span>
+            {% else %}
+                <span class="status-pip pip-approved">✓ Approved</span>
+            {% endif %}
+
+            <div class="module-num">Module {{ m.order }}</div>
+            <div class="module-title">{{ m.title }}</div>
+            <div class="module-desc">{{ m.description }}</div>
+
+            {% if m.status != 'locked' %}
+                <a href="{{ url_for('author_coaching_module', order=m.order) }}" class="module-btn">
+                    {% if m.status == 'approved' %}Review{% else %}Open{% endif %}
+                </a>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

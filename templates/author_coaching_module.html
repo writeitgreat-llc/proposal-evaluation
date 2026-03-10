@@ -121,6 +121,27 @@
 .feedback-bullets h4 { color: #0369a1; font-size: 0.875rem; margin: 0 0 0.625rem; }
 .feedback-bullets ul { margin: 0; padding-left: 1.25rem; }
 .feedback-bullets li { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-bottom: 0.375rem; }
+
+/* ── Research panel ────────────────────────────────────── */
+.research-panel {
+    background: white; border: 1.5px solid #c4b5fd;
+    border-radius: var(--radius); overflow: hidden; margin-top: 0.75rem; display: none;
+}
+.research-panel-header {
+    padding: 0.75rem 1rem; background: #f5f3ff; border-bottom: 1px solid #c4b5fd;
+    display: flex; align-items: center; gap: 0.5rem;
+}
+.research-panel-header h4 { margin: 0; font-size: 0.9375rem; color: #5b21b6; }
+.research-panel-header .research-subtitle { font-size: 0.75rem; color: #7c3aed; margin: 0 0 0 auto; }
+.research-section { padding: 0.875rem 1rem; border-bottom: 1px solid #ede9fe; }
+.research-section:last-child { border-bottom: none; }
+.research-section h5 { margin: 0 0 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: #7c3aed; }
+.research-section ul { margin: 0; padding-left: 1.25rem; }
+.research-section li { font-size: 0.8375rem; line-height: 1.65; color: var(--gray-700); margin-bottom: 0.35rem; }
+.research-insight { font-size: 0.8375rem; line-height: 1.7; color: var(--gray-700); margin: 0; }
+.research-loading { padding: 1.5rem 1rem; text-align: center; color: var(--gray-500); font-size: 0.875rem; }
+.research-loading .spin { display: inline-block; animation: spin 1s linear infinite; margin-right: 0.35rem; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .feedback-approved-block {
     background: linear-gradient(135deg, #f0fdf4, #dcfce7);
     border: 1px solid #86efac; border-radius: var(--radius); padding: 1rem 1.25rem;
@@ -275,6 +296,9 @@
                 <span class="word-count"><span id="word-count">{{ saved_content.word_count if saved_content else 0 }}</span> words</span>
                 <div class="writing-actions">
                     {% if module_progress.status != 'approved' %}
+                    <button id="btn-research" class="btn" style="background:white;border:1.5px solid #7c3aed;color:#7c3aed;font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
+                        🔍 Research
+                    </button>
                     <button id="btn-get-feedback" class="btn" style="background:white;border:1.5px solid var(--primary);color:var(--primary);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
                         Get AI Feedback
                     </button>
@@ -300,6 +324,15 @@
             <div class="feedback-bullets" id="feedback-bullets" style="display:none;"></div>
             <!-- Result from "Mark Complete" -->
             <div id="complete-result" style="display:none;"></div>
+        </div>
+
+        <!-- Research panel (populated by JS) -->
+        <div class="research-panel" id="research-panel">
+            <div class="research-panel-header">
+                <h4>🔍 Research Findings</h4>
+                <span class="research-subtitle">Based on your book concept</span>
+            </div>
+            <div id="research-body"></div>
         </div>
 
         {% if module_progress.status == 'approved' and latest_submission and latest_submission.ai_feedback %}
@@ -638,6 +671,84 @@
     inputEl.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(inputEl.value); }
     });
+
+    /* ── Research agent ──────────────────────────────── */
+    const researchBtn   = document.getElementById('btn-research');
+    const researchPanel = document.getElementById('research-panel');
+    const researchBody  = document.getElementById('research-body');
+
+    function renderResearch(d) {
+        let html = '';
+
+        if (d.market_insight) {
+            html += `<div class="research-section">
+                <h5>Market Moment</h5>
+                <p class="research-insight">${esc(d.market_insight)}</p>
+            </div>`;
+        }
+        if (d.viral_angles && d.viral_angles.length) {
+            html += `<div class="research-section">
+                <h5>Viral Angles &amp; Trending Conversations</h5>
+                <ul>${d.viral_angles.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+            </div>`;
+        }
+        if (d.research_areas && d.research_areas.length) {
+            html += `<div class="research-section">
+                <h5>Relevant Research &amp; Academic Areas</h5>
+                <ul>${d.research_areas.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+            </div>`;
+        }
+        if (d.comparable_titles && d.comparable_titles.length) {
+            html += `<div class="research-section">
+                <h5>Comparable Titles</h5>
+                <ul>${d.comparable_titles.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+            </div>`;
+        }
+        if (d.compelling_stats && d.compelling_stats.length) {
+            html += `<div class="research-section">
+                <h5>Stats &amp; Data Points</h5>
+                <ul>${d.compelling_stats.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+            </div>`;
+        }
+        return html || '<div class="research-section"><p class="research-insight">No results returned. Try again with more detail in your hook.</p></div>';
+    }
+
+    if (researchBtn) {
+        researchBtn.addEventListener('click', async () => {
+            const hook = textarea ? textarea.value.trim() : '';
+            if (hook.length < 20) {
+                alert('Write a bit about your book concept first — even a rough sentence — so the research agent knows what to look for.');
+                return;
+            }
+            researchBtn.disabled = true;
+            researchBtn.textContent = '🔍 Researching…';
+            researchPanel.style.display = 'block';
+            researchBody.innerHTML = '<div class="research-loading"><span class="spin">⟳</span> Finding relevant research and viral angles…</div>';
+            researchPanel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+
+            try {
+                const r = await fetch('/api/coaching/research', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        hook: hook,
+                        book_title: BOOK_TITLE,
+                        module_order: MODULE_ORDER
+                    })
+                });
+                const d = await r.json();
+                if (d.success) {
+                    researchBody.innerHTML = renderResearch(d);
+                } else {
+                    researchBody.innerHTML = `<div class="research-section"><p class="research-insight" style="color:var(--error);">${esc(d.error || 'Could not fetch research. Please try again.')}</p></div>`;
+                }
+            } catch(e) {
+                researchBody.innerHTML = '<div class="research-section"><p class="research-insight" style="color:var(--error);">Network error. Please try again.</p></div>';
+            }
+            researchBtn.disabled = false;
+            researchBtn.textContent = '🔍 Research';
+        });
+    }
 
 })();
 </script>

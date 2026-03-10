@@ -1997,6 +1997,10 @@ Approve if the submission meaningfully addresses the prompt with reasonable spec
         result = json.loads(response.choices[0].message.content)
         approved = bool(result.get('approved', False))
         feedback = result.get('feedback', 'Review complete.')
+        # Module 1 (hook) is a coaching step, not a gate — always advance so
+        # authors can experience the full programme. Strictness can be restored later.
+        if module_info.get('order') == 1:
+            approved = True
         return approved, feedback
     except Exception as e:
         print(f"AI homework review error: {e}")
@@ -2432,6 +2436,59 @@ def api_coaching_homework_submit():
         print(f'/api/coaching/homework error: {e}')
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Could not submit homework. Please try again.'})
+
+
+@app.route('/api/coaching/research', methods=['POST'])
+@login_required
+def api_coaching_research():
+    """Research agent: surfaces relevant research areas and viral angles for the author's book concept."""
+    data = request.get_json() or {}
+    hook = (data.get('hook') or '').strip()
+    book_title = (data.get('book_title') or '').strip()
+    module_order = int(data.get('module_order', 1))
+
+    if len(hook) < 20:
+        return jsonify({'success': False, 'error': 'Write a bit more about your book first so the research agent has something to work with.'})
+
+    title_line = f'Book title: "{book_title}"\n' if book_title else ''
+    prompt = f"""You are a publishing industry research agent. An author is developing a non-fiction book proposal and needs research support.
+
+{title_line}Author's current book concept / hook:
+"{hook}"
+
+Your job: surface the most relevant, specific, and actionable research to strengthen this book proposal. Respond with a JSON object:
+
+{{
+    "research_areas": [
+        "3-5 specific academic fields, journals, or bodies of research directly relevant to this topic"
+    ],
+    "viral_angles": [
+        "3-5 proven viral content angles or trending cultural conversations this book can tap into — be specific, not generic"
+    ],
+    "comparable_titles": [
+        "3-5 real published books that occupy nearby market territory — format each as: Title by Author (year) — one sentence on relevance"
+    ],
+    "market_insight": "2-3 sentences on the current market moment for this topic: why now, who's buying, what gap this book fills",
+    "compelling_stats": [
+        "2-4 real or widely-cited statistics, studies, or data points that would strengthen a proposal pitch for this book"
+    ]
+}}
+
+Be specific and credible. Avoid generic advice. Think like a smart literary agent who has done their homework."""
+
+    try:
+        response = client.chat.completions.create(
+            model='gpt-4o',
+            messages=[{'role': 'user', 'content': prompt}],
+            response_format={'type': 'json_object'},
+            temperature=0.5,
+            max_tokens=1000
+        )
+        result = json.loads(response.choices[0].message.content)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        print(f"Research agent error: {e}")
+        return jsonify({'success': False, 'error': 'Research agent encountered an error. Please try again.'})
 
 
 @app.route('/api/evaluate', methods=['POST'])

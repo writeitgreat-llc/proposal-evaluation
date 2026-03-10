@@ -579,25 +579,39 @@
                         : d.next_module
                             ? `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Module ${d.next_module} →</a>`
                             : `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
-                    completeResult.innerHTML = `
-                        <div class="feedback-approved-block">
-                            <strong style="color:#14532d;">✓ Section approved!</strong>
-                            <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
-                        </div>
-                        ${nextLink}`;
+
+                    if (d.publisher_ready) {
+                        completeResult.innerHTML = `
+                            <div class="feedback-approved-block">
+                                <strong style="color:#14532d;">✓ Publisher-ready!</strong>
+                                <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
+                            </div>
+                            ${nextLink}`;
+                    } else {
+                        completeResult.innerHTML = `
+                            <div class="feedback-revision-block">
+                                <strong style="color:#854d0e;">⚠️ This section needs more work before it's publisher-ready</strong>
+                                <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
+                            </div>
+                            <div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.75rem;">
+                                <p style="margin:0 0 0.5rem;font-size:0.875rem;font-weight:600;color:#9a3412;">Want to get this section to the next level?</p>
+                                <p style="margin:0 0 0.875rem;font-size:0.8375rem;color:#78350f;line-height:1.6;">Our team can work through this with you directly — either in a focused one-hour session or as part of ongoing coaching.</p>
+                                <div style="display:flex;gap:0.625rem;flex-wrap:wrap;">
+                                    <a href="https://writeitgreat.com/coaching" target="_blank"
+                                       style="display:inline-block;padding:0.5rem 1rem;background:#9a3412;color:white;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
+                                        Explore 1-on-1 Coaching →
+                                    </a>
+                                    <a href="https://writeitgreat.com/brainstorm" target="_blank"
+                                       style="display:inline-block;padding:0.5rem 1rem;background:white;border:1.5px solid #9a3412;color:#9a3412;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
+                                        Book a 1-Hour Brainstorm
+                                    </a>
+                                </div>
+                            </div>
+                            ${nextLink}`;
+                    }
                     if (textarea) textarea.disabled = true;
                     markCompleteBtn.style.display = 'none';
                     if (getFeedbackBtn) getFeedbackBtn.style.display = 'none';
-                } else {
-                    completeResult.innerHTML = `
-                        <div class="feedback-revision-block">
-                            <strong style="color:#854d0e;">Almost there — a few things to strengthen</strong>
-                            <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
-                        </div>
-                        <p style="font-size:0.8125rem;color:var(--gray-500);margin-top:0.5rem;">Revise your draft above and click <strong>Mark Complete</strong> again when ready.</p>`;
-                    markCompleteBtn.disabled = false;
-                    markCompleteBtn.textContent = 'Mark Complete & Continue →';
-                    if (getFeedbackBtn) getFeedbackBtn.disabled = false;
                 }
                 completeResult.scrollIntoView({behavior:'smooth', block:'nearest'});
             } catch(e) {

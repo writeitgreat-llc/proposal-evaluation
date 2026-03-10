@@ -1956,7 +1956,11 @@ When the author feels ready to write their homework, encourage them to do so usi
 
 
 def _review_homework_with_ai(module_info, content, author_name, book_title):
-    """Use AI to review homework submission. Returns (approved: bool, feedback: str)"""
+    """Use AI to review homework submission.
+    Returns (approved: bool, feedback: str, publisher_ready: bool).
+    approved is always True so authors can always advance through the programme.
+    publisher_ready reflects the AI's honest assessment of submission quality.
+    """
     title_line = f'Book title: "{book_title}"\n' if book_title else ''
     prompt = f"""You are an expert literary agent reviewing homework for a book proposal coaching program.
 
@@ -1979,12 +1983,12 @@ Evaluate this homework submission. Consider:
 
 Respond with a JSON object:
 {{
-    "approved": true or false,
-    "feedback": "2-4 paragraphs of specific, actionable feedback. If approved, lead with genuine praise of the strongest elements and note 1-2 things to polish further. If not approved, be honest and direct about what's missing or weak, and give concrete instructions for revision.",
+    "publisher_ready": true or false,
+    "feedback": "2-4 paragraphs of specific, actionable feedback. If publisher_ready, lead with genuine praise of the strongest elements and note 1-2 things to polish further. If not publisher_ready, be honest and direct about what's missing or weak, and give concrete instructions for revision.",
     "word_count_adequate": true or false
 }}
 
-Approve if the submission meaningfully addresses the prompt with reasonable specificity. Reject if it is vague, incomplete, too short, or misses the core requirement."""
+Set publisher_ready=true only if the submission is genuinely strong enough that an editor would take it seriously. Be honest — authors benefit from knowing where they really stand."""
 
     try:
         response = client.chat.completions.create(
@@ -1995,16 +1999,14 @@ Approve if the submission meaningfully addresses the prompt with reasonable spec
             max_tokens=800
         )
         result = json.loads(response.choices[0].message.content)
-        approved = bool(result.get('approved', False))
+        publisher_ready = bool(result.get('publisher_ready', False))
         feedback = result.get('feedback', 'Review complete.')
-        # Module 1 (hook) is a coaching step, not a gate — always advance so
-        # authors can experience the full programme. Strictness can be restored later.
-        if module_info.get('order') == 1:
-            approved = True
-        return approved, feedback
+        # Always advance — authors can always move to the next module.
+        # publisher_ready signals quality without being a gate.
+        return True, feedback, publisher_ready
     except Exception as e:
         print(f"AI homework review error: {e}")
-        return False, 'We encountered an issue reviewing your submission. Please try again.'
+        return True, 'We encountered an issue reviewing your submission. Please try again.', False
 
 
 @app.route('/author/coaching')
@@ -2372,14 +2374,14 @@ def api_coaching_homework_submit():
         db.session.add(submission)
         db.session.flush()
 
-        # AI review (synchronous)
-        approved, feedback = _review_homework_with_ai(
+        # AI review (synchronous) — approved is always True; publisher_ready is the quality signal
+        approved, feedback, publisher_ready = _review_homework_with_ai(
             module_info, content, current_user.name, enrollment.book_title or '')
 
         submission.ai_feedback = feedback
-        submission.ai_approved = approved
+        submission.ai_approved = publisher_ready   # store actual quality assessment
         submission.ai_reviewed_at = datetime.utcnow()
-        submission.status = 'approved' if approved else 'revision_requested'
+        submission.status = 'approved'             # always advance
 
         if approved:
             mp.status = 'approved'
@@ -2426,6 +2428,7 @@ def api_coaching_homework_submit():
         return jsonify({
             'success': True,
             'approved': approved,
+            'publisher_ready': publisher_ready,
             'feedback': feedback,
             'status': submission.status,
             'next_module': next_order if approved and next_order <= len(COACHING_MODULES) else None,

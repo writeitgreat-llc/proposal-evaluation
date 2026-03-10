@@ -4394,10 +4394,40 @@ def run_migrations():
     if not inspector.has_table('coaching_enrollment'):
         CoachingEnrollment.__table__.create(db.engine)
         print("Migration: created coaching_enrollment table")
+    else:
+        # Add columns added in v2 that may be missing from the first-deployed schema
+        ce_cols = [c['name'] for c in inspector.get_columns('coaching_enrollment')]
+        with db.engine.connect() as conn:
+            if 'welcome_email_sent' not in ce_cols:
+                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN welcome_email_sent BOOLEAN DEFAULT FALSE'))
+                print("Migration: added coaching_enrollment.welcome_email_sent")
+            if 'complete_email_sent' not in ce_cols:
+                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN complete_email_sent BOOLEAN DEFAULT FALSE'))
+                print("Migration: added coaching_enrollment.complete_email_sent")
+            conn.commit()
 
     if not inspector.has_table('author_module_progress'):
         AuthorModuleProgress.__table__.create(db.engine)
         print("Migration: created author_module_progress table")
+    else:
+        amp_cols = [c['name'] for c in inspector.get_columns('author_module_progress')]
+        with db.engine.connect() as conn:
+            if 'unlocked_at' not in amp_cols:
+                conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN unlocked_at TIMESTAMP'))
+                print("Migration: added author_module_progress.unlocked_at")
+            if 'completed_at' not in amp_cols:
+                conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN completed_at TIMESTAMP'))
+                print("Migration: added author_module_progress.completed_at")
+            if 'admin_notes' not in amp_cols:
+                conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN admin_notes TEXT'))
+                print("Migration: added author_module_progress.admin_notes")
+            if 'module_unlock_email_sent' not in amp_cols:
+                conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN module_unlock_email_sent BOOLEAN DEFAULT FALSE'))
+                print("Migration: added author_module_progress.module_unlock_email_sent")
+            if 'homework_reminder_sent_at' not in amp_cols:
+                conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN homework_reminder_sent_at TIMESTAMP'))
+                print("Migration: added author_module_progress.homework_reminder_sent_at")
+            conn.commit()
 
     if not inspector.has_table('coaching_chat_message'):
         CoachingChatMessage.__table__.create(db.engine)
@@ -4406,6 +4436,28 @@ def run_migrations():
     if not inspector.has_table('homework_submission'):
         HomeworkSubmission.__table__.create(db.engine)
         print("Migration: created homework_submission table")
+    else:
+        hw_cols = [c['name'] for c in inspector.get_columns('homework_submission')]
+        with db.engine.connect() as conn:
+            if 'revision_number' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN revision_number INTEGER DEFAULT 1'))
+                print("Migration: added homework_submission.revision_number")
+            if 'ai_approved' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN ai_approved BOOLEAN'))
+                print("Migration: added homework_submission.ai_approved")
+            if 'ai_reviewed_at' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN ai_reviewed_at TIMESTAMP'))
+                print("Migration: added homework_submission.ai_reviewed_at")
+            if 'admin_reviewed_by' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN admin_reviewed_by VARCHAR(200)'))
+                print("Migration: added homework_submission.admin_reviewed_by")
+            if 'admin_reviewed_at' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN admin_reviewed_at TIMESTAMP'))
+                print("Migration: added homework_submission.admin_reviewed_at")
+            if 'review_email_sent' not in hw_cols:
+                conn.execute(text('ALTER TABLE homework_submission ADD COLUMN review_email_sent BOOLEAN DEFAULT FALSE'))
+                print("Migration: added homework_submission.review_email_sent")
+            conn.commit()
 
     if not inspector.has_table('coaching_module_content'):
         CoachingModuleContent.__table__.create(db.engine)

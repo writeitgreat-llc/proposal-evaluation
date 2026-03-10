@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Your Draft Proposal — Write It Great{% endblock %}
+
+{% block extra_css %}
+.proposal-header {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    padding: 2rem 2rem 1.5rem;
+    border-bottom: 3px solid var(--accent);
+    color: white;
+}
+.proposal-header h1 { color: var(--accent); font-size: 1.375rem; margin: 0 0 0.25rem; }
+.proposal-header p  { color: rgba(255,255,255,0.75); font-size: 0.9rem; margin: 0; }
+.proposal-meta { display: flex; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap; }
+.proposal-meta-item { font-size: 0.8125rem; color: rgba(255,255,255,0.7); }
+.proposal-meta-item strong { color: white; display: block; font-size: 0.9375rem; }
+
+.proposal-body {
+    max-width: 780px;
+    margin: 2rem auto;
+    padding: 0 1rem 4rem;
+}
+
+.section-block {
+    background: white;
+    border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+.section-block.completed { border-color: #86efac; }
+.section-block.empty { border-style: dashed; background: var(--gray-50); }
+
+.section-header {
+    padding: 0.875rem 1.25rem;
+    display: flex; align-items: center; gap: 0.75rem;
+    border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50);
+}
+.section-block.completed .section-header { background: #f0fdf4; border-bottom-color: #bbf7d0; }
+.section-block.empty .section-header { background: var(--gray-50); }
+
+.section-num { font-size: 0.75rem; font-weight: 600; color: var(--gray-400); text-transform: uppercase; letter-spacing: 0.05em; }
+.section-icon { font-size: 1.25rem; }
+.section-title { font-size: 0.9375rem; font-weight: 700; color: var(--gray-900); flex: 1; }
+.section-badge { font-size: 0.725rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 20px; }
+.section-badge.done { background: #dcfce7; color: #166534; }
+.section-badge.in-progress { background: #ede9fe; color: #4c1d95; }
+.section-badge.empty { background: var(--gray-100); color: var(--gray-400); }
+.section-word-count { font-size: 0.75rem; color: var(--gray-400); }
+
+.section-content {
+    padding: 1.25rem;
+    font-size: 0.9375rem;
+    line-height: 1.8;
+    color: var(--gray-800);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.section-empty-state {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--gray-400);
+    font-size: 0.875rem;
+}
+.section-empty-state a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.section-empty-state a:hover { text-decoration: underline; }
+
+.cta-bar {
+    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+    border: 1.5px solid #86efac;
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    text-align: center;
+    margin-bottom: 2rem;
+}
+.cta-bar h3 { color: #14532d; margin: 0 0 0.5rem; font-size: 1rem; }
+.cta-bar p  { color: #166534; font-size: 0.875rem; margin: 0 0 1rem; }
+
+.progress-summary {
+    display: flex; gap: 1rem; flex-wrap: wrap;
+    background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+    align-items: center;
+}
+.prog-track { flex: 1; min-width: 160px; height: 6px; background: var(--gray-200); border-radius: 3px; overflow: hidden; }
+.prog-fill  { height: 100%; background: var(--primary); border-radius: 3px; }
+@media print {
+    .no-print { display: none !important; }
+    .proposal-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section-block { break-inside: avoid; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="proposal-header">
+    <div style="max-width:780px;margin:0 auto;">
+        <div class="no-print" style="margin-bottom:0.75rem;">
+            <a href="{{ url_for('author_coaching_dashboard') }}" style="color:rgba(255,255,255,0.7);font-size:0.8125rem;text-decoration:none;">← Program Overview</a>
+        </div>
+        <h1>📄 Your Draft Proposal</h1>
+        <p>{{ enrollment.book_title or 'Working Title TBD' }}</p>
+        <div class="proposal-meta">
+            <div class="proposal-meta-item">
+                <strong>{{ total_words | default(0) | int }}</strong>
+                total words
+            </div>
+            <div class="proposal-meta-item">
+                <strong>{{ sections | selectattr('status', 'eq', 'approved') | list | length }}/{{ sections | length }}</strong>
+                sections complete
+            </div>
+            <div class="proposal-meta-item">
+                <strong>{{ sections | selectattr('content') | list | length }}</strong>
+                sections with content
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="proposal-body">
+
+    <!-- Progress bar -->
+    {% set done_count = sections | selectattr('status', 'eq', 'approved') | list | length %}
+    {% set content_count = sections | selectattr('content') | list | length %}
+    <div class="progress-summary no-print">
+        <div>
+            <div style="font-size:0.8125rem;font-weight:600;color:var(--gray-700);">Overall progress</div>
+            <div style="font-size:0.75rem;color:var(--gray-400);">{{ done_count }} approved · {{ content_count - done_count }} in progress</div>
+        </div>
+        <div class="prog-track">
+            <div class="prog-fill" style="width:{{ ((done_count / sections|length) * 100)|int }}%"></div>
+        </div>
+        <div style="font-size:0.875rem;font-weight:700;color:var(--primary);">{{ ((done_count / sections|length) * 100)|int }}%</div>
+    </div>
+
+    <!-- CTA if complete -->
+    {% if done_count == sections|length %}
+    <div class="cta-bar no-print">
+        <h3>🎉 All sections complete — your proposal is ready!</h3>
+        <p>Submit it now for a full professional evaluation including tier rating, score breakdown, and advance estimate.</p>
+        <a href="{{ url_for('index') }}" class="btn btn-accent" style="text-decoration:none;font-weight:700;">Submit for Full Evaluation →</a>
+    </div>
+    {% endif %}
+
+    <!-- Print / back buttons -->
+    <div class="no-print" style="display:flex;justify-content:flex-end;gap:0.75rem;margin-bottom:1rem;">
+        <button onclick="window.print()" class="btn" style="background:white;border:1.5px solid var(--gray-200);color:var(--gray-700);font-size:0.875rem;padding:0.45rem 0.875rem;cursor:pointer;border-radius:var(--radius);">
+            🖨 Print / Save PDF
+        </button>
+    </div>
+
+    <!-- Sections -->
+    {% for s in sections %}
+    {% set has_content = s.content and s.content | trim %}
+    <div class="section-block {% if s.status == 'approved' %}completed{% elif not has_content %}empty{% endif %}">
+        <div class="section-header">
+            <span class="section-icon">{{ s.module.icon }}</span>
+            <div style="flex:1;min-width:0;">
+                <div class="section-num">Section {{ s.module.order }} of {{ sections|length }}</div>
+                <div class="section-title">{{ s.module.title }}</div>
+            </div>
+            {% if s.status == 'approved' %}
+            <span class="section-badge done">✓ Complete</span>
+            {% elif has_content %}
+            <span class="section-badge in-progress">Draft</span>
+            {% else %}
+            <span class="section-badge empty">Not started</span>
+            {% endif %}
+            {% if s.word_count %}
+            <span class="section-word-count">{{ s.word_count }} words</span>
+            {% endif %}
+        </div>
+
+        {% if has_content %}
+        <div class="section-content">{{ s.content }}</div>
+        {% else %}
+        <div class="section-empty-state">
+            <p>Nothing written here yet.</p>
+            {% if s.status != 'locked' %}
+            <a href="{{ url_for('author_coaching_module', module_order=s.module.order) }}">
+                Write your {{ s.module.homework_label }} →
+            </a>
+            {% else %}
+            <p style="font-size:0.8125rem;color:var(--gray-300);">🔒 Unlocks after completing the previous section</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <!-- Bottom CTA -->
+    <div class="no-print" style="text-align:center;padding-top:1rem;">
+        {% if done_count == sections|length %}
+        <a href="{{ url_for('index') }}" class="btn btn-primary" style="text-decoration:none;padding:0.875rem 2rem;font-size:1rem;">
+            Submit for Full Evaluation →
+        </a>
+        {% else %}
+        <a href="{{ url_for('author_coaching_dashboard') }}" class="btn btn-primary" style="text-decoration:none;padding:0.75rem 1.5rem;">
+            Continue Building Your Proposal →
+        </a>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

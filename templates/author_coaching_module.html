@@ -5,153 +5,201 @@
 /* ── Module header ─────────────────────────────────────── */
 .mod-header {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-    padding: 1.5rem 2rem;
+    padding: 1.25rem 2rem 1.5rem;
     color: white;
     border-bottom: 3px solid var(--accent);
 }
-.mod-header-inner { max-width: 900px; margin: 0 auto; }
+.mod-header-inner { max-width: 1100px; margin: 0 auto; }
 .mod-breadcrumb { font-size: 0.8125rem; color: rgba(255,255,255,0.6); margin-bottom: 0.75rem; }
-.mod-breadcrumb a { color: rgba(255,255,255,0.75); text-decoration: none; }
+.mod-breadcrumb a { color: rgba(255,255,255,0.8); text-decoration: none; }
 .mod-breadcrumb a:hover { color: white; }
 .mod-title-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-.mod-big-icon { font-size: 2.25rem; }
-.mod-title-text h1 { color: var(--accent); font-size: 1.25rem; margin: 0 0 0.2rem; }
+.mod-big-icon { font-size: 2rem; }
+.mod-title-text h1 { color: var(--accent); font-size: 1.2rem; margin: 0 0 0.15rem; }
 .mod-title-text p  { color: rgba(255,255,255,0.75); font-size: 0.875rem; margin: 0; }
 
-/* ── Module progress stepper ───────────────────────────── */
+/* ── Stepper ───────────────────────────────────────────── */
 .mod-stepper {
-    display: flex; align-items: center; gap: 0; margin-top: 1rem;
-    background: rgba(255,255,255,0.08); border-radius: var(--radius); padding: 0.5rem 0.75rem;
-    overflow-x: auto; max-width: 640px;
+    display: flex; align-items: center; margin-top: 1rem;
+    background: rgba(255,255,255,0.08); border-radius: var(--radius);
+    padding: 0.45rem 0.75rem; overflow-x: auto; max-width: 580px; gap: 0;
 }
 .step-dot {
-    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.6875rem; font-weight: 700;
+    font-size: 0.65rem; font-weight: 700;
 }
 .step-dot.done    { background: var(--accent); color: var(--accent-text); }
 .step-dot.current { background: white; color: var(--primary); }
-.step-dot.todo    { background: rgba(255,255,255,0.2); color: rgba(255,255,255,0.6); }
-.step-line { flex: 1; height: 2px; background: rgba(255,255,255,0.2); min-width: 12px; max-width: 32px; }
+.step-dot.todo    { background: rgba(255,255,255,0.18); color: rgba(255,255,255,0.55); }
+.step-line { flex: 1; height: 2px; background: rgba(255,255,255,0.18); min-width: 10px; max-width: 28px; }
 .step-line.done-line { background: var(--accent); }
 
 /* ── Two-column layout ─────────────────────────────────── */
-.module-layout {
+.mod-layout {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 1.5rem;
-    max-width: 900px;
+    gap: 1.25rem;
+    max-width: 1100px;
     margin: 1.5rem auto;
     padding: 0 1rem 3rem;
+    align-items: start;
 }
-@media(min-width: 860px) {
-    .module-layout { grid-template-columns: 1fr 380px; }
+@media(min-width: 900px) {
+    .mod-layout { grid-template-columns: 1fr 340px; }
 }
 
-/* ── Chat pane ─────────────────────────────────────────── */
-.chat-pane { display: flex; flex-direction: column; min-height: 520px; }
-.chat-pane-header {
-    padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
-    display: flex; align-items: center; gap: 0.625rem;
+/* ── Writing panel (main) ──────────────────────────────── */
+.writing-panel { display: flex; flex-direction: column; gap: 1rem; }
+
+.context-card {
+    background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); overflow: hidden;
 }
-.coach-av {
-    width: 32px; height: 32px; border-radius: 50%;
+.context-card summary {
+    padding: 0.75rem 1rem; cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.875rem; font-weight: 600; color: var(--primary);
+    background: var(--gray-50); border-bottom: 1px solid var(--gray-200);
+    list-style: none;
+}
+.context-card summary::-webkit-details-marker { display: none; }
+.context-card[open] summary { border-bottom-color: var(--gray-200); }
+.context-card .context-body {
+    padding: 1rem; font-size: 0.875rem; color: var(--gray-700); line-height: 1.7;
+}
+.context-card .context-body .tip-block {
+    background: #f0f9ff; border-left: 3px solid #38bdf8;
+    padding: 0.75rem 1rem; border-radius: 0 6px 6px 0; margin-top: 0.75rem;
+    font-size: 0.8125rem; line-height: 1.65;
+}
+
+.writing-card {
+    background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); overflow: hidden;
+}
+.writing-card-header {
+    padding: 0.875rem 1rem; background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200);
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+}
+.writing-card-header h2 { margin: 0; font-size: 1rem; color: var(--primary); flex: 1; }
+.save-indicator { font-size: 0.75rem; color: var(--gray-400); display: flex; align-items: center; gap: 0.3rem; }
+.save-indicator.saving { color: #d97706; }
+.save-indicator.saved  { color: #16a34a; }
+
+.writing-guide {
+    margin: 0.875rem 1rem 0;
+    padding: 0.75rem 1rem; background: var(--gray-50);
+    border-left: 3px solid var(--primary); border-radius: 0 6px 6px 0;
+    font-size: 0.8125rem; color: var(--gray-700); line-height: 1.65;
+}
+.writing-guide strong { display: block; color: var(--primary); margin-bottom: 0.25rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+#content-textarea {
+    display: block; width: 100%; min-height: 280px;
+    padding: 1rem; margin: 0.875rem 0 0;
+    border: none; border-top: 1px solid var(--gray-100);
+    font-size: 0.9375rem; font-family: inherit; line-height: 1.75;
+    resize: vertical; box-sizing: border-box; color: var(--gray-900);
+    background: white;
+}
+#content-textarea:focus { outline: none; }
+#content-textarea::placeholder { color: var(--gray-300); }
+
+.writing-footer {
+    padding: 0.75rem 1rem; border-top: 1px solid var(--gray-100);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 0.75rem;
+}
+.word-count { font-size: 0.8125rem; color: var(--gray-400); }
+.writing-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* ── Feedback panel ────────────────────────────────────── */
+.feedback-panel { margin-top: 0.5rem; display: none; }
+.feedback-bullets { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: var(--radius); padding: 1rem; }
+.feedback-bullets h4 { color: #0369a1; font-size: 0.875rem; margin: 0 0 0.625rem; }
+.feedback-bullets ul { margin: 0; padding-left: 1.25rem; }
+.feedback-bullets li { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-bottom: 0.375rem; }
+.feedback-approved-block {
+    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+    border: 1px solid #86efac; border-radius: var(--radius); padding: 1rem 1.25rem;
+}
+.feedback-revision-block {
+    background: #fef9c3; border: 1px solid #fde047; border-radius: var(--radius); padding: 1rem 1.25rem;
+}
+.feedback-block-text { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-top: 0.5rem; white-space: pre-wrap; }
+.next-mod-btn {
+    display: block; width: 100%; text-align: center; padding: 0.875rem;
+    background: var(--primary); color: white; border-radius: var(--radius);
+    font-weight: 700; text-decoration: none; margin-top: 0.875rem; font-size: 0.9375rem;
+    transition: background 0.2s;
+}
+.next-mod-btn:hover { background: var(--primary-light); }
+
+/* ── Chat sidebar ──────────────────────────────────────── */
+.chat-sidebar {
+    background: white; border: 1.5px solid var(--gray-200); border-radius: var(--radius);
+    display: flex; flex-direction: column; overflow: hidden;
+    position: sticky; top: 90px; max-height: calc(100vh - 110px);
+}
+.chat-sidebar-header {
+    padding: 0.875rem 1rem; border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50);
+}
+.chat-sidebar-header h3 { margin: 0; font-size: 0.9375rem; color: var(--primary); }
+.chat-sidebar-header p  { margin: 0.2rem 0 0; font-size: 0.75rem; color: var(--gray-500); }
+.chat-agent-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+.chat-av {
+    width: 28px; height: 28px; border-radius: 50%;
     background: var(--primary); color: var(--accent);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 0.875rem; flex-shrink: 0;
+    font-weight: 700; font-size: 0.75rem; flex-shrink: 0;
 }
+
 .chat-messages {
-    flex: 1; overflow-y: auto; padding: 1rem;
-    display: flex; flex-direction: column; gap: 0.875rem;
-    min-height: 300px; max-height: 440px;
+    flex: 1; overflow-y: auto; padding: 0.875rem;
+    display: flex; flex-direction: column; gap: 0.75rem;
+    min-height: 200px;
 }
-.cmsg { display: flex; gap: 0.5rem; max-width: 90%; }
+.cmsg { display: flex; gap: 0.4rem; max-width: 92%; }
 .cmsg.agent { align-self: flex-start; }
 .cmsg.user  { align-self: flex-end; flex-direction: row-reverse; }
 .cmsg-av {
-    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.75rem; font-weight: 700; margin-top: 2px;
+    font-size: 0.65rem; font-weight: 700; margin-top: 2px;
 }
 .cmsg.agent .cmsg-av { background: var(--primary); color: var(--accent); }
 .cmsg.user  .cmsg-av { background: var(--accent); color: var(--accent-text); }
 .cmsg-bubble {
-    padding: 0.625rem 0.875rem; border-radius: 14px;
-    font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+    padding: 0.5rem 0.75rem; border-radius: 12px;
+    font-size: 0.8375rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
 }
-.cmsg.agent .cmsg-bubble { background: white; border: 1px solid var(--gray-200); border-radius: 3px 14px 14px 14px; box-shadow: var(--shadow); color: var(--gray-900); }
-.cmsg.user  .cmsg-bubble { background: var(--primary); color: white; border-radius: 14px 3px 14px 14px; }
-.typing-bubble { background: white; border: 1px solid var(--gray-200); border-radius: 3px 14px 14px 14px; padding: 0.625rem 0.875rem; box-shadow: var(--shadow); display: flex; align-items: center; gap: 4px; }
-.typing-bubble span { width: 6px; height: 6px; border-radius: 50%; background: var(--gray-400); animation: tb 1.2s infinite ease-in-out; display: inline-block; }
-.typing-bubble span:nth-child(2) { animation-delay: 0.2s; }
-.typing-bubble span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes tb { 0%,60%,100% { transform: translateY(0); opacity:0.4; } 30% { transform: translateY(-4px); opacity:1; } }
+.cmsg.agent .cmsg-bubble { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 2px 12px 12px 12px; color: var(--gray-900); }
+.cmsg.user  .cmsg-bubble { background: var(--primary); color: white; border-radius: 12px 2px 12px 12px; }
+.typing-bub { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 2px 12px 12px 12px; padding: 0.5rem 0.75rem; display: flex; align-items: center; gap: 3px; }
+.typing-bub span { width: 5px; height: 5px; border-radius: 50%; background: var(--gray-400); animation: tb 1.2s infinite ease-in-out; display: inline-block; }
+.typing-bub span:nth-child(2) { animation-delay: 0.2s; }
+.typing-bub span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes tb { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-4px);opacity:1} }
 
 .chat-input-row {
-    border-top: 1px solid var(--gray-200);
-    padding: 0.75rem;
-    display: flex; gap: 0.5rem; align-items: flex-end;
+    border-top: 1px solid var(--gray-200); padding: 0.625rem;
+    display: flex; gap: 0.4rem; align-items: flex-end; flex-shrink: 0;
 }
 #chat-input {
-    flex: 1; padding: 0.625rem 0.875rem; border: 2px solid var(--gray-200); border-radius: 10px;
-    font-size: 0.9rem; font-family: inherit; line-height: 1.5; resize: none; max-height: 120px; overflow-y: auto;
+    flex: 1; padding: 0.55rem 0.75rem; border: 1.5px solid var(--gray-200); border-radius: 9px;
+    font-size: 0.85rem; font-family: inherit; line-height: 1.5; resize: none; max-height: 100px; overflow-y: auto;
 }
 #chat-input:focus { outline: none; border-color: var(--primary); }
 #btn-send-chat {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: var(--primary); border: none; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s;
+    width: 34px; height: 34px; border-radius: 50%; background: var(--primary); border: none;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s;
 }
 #btn-send-chat:hover   { background: var(--primary-light); }
 #btn-send-chat:disabled { background: var(--gray-300); cursor: not-allowed; }
-#btn-send-chat svg { width: 16px; height: 16px; }
-
-/* ── Homework pane ─────────────────────────────────────── */
-.hw-pane { display: flex; flex-direction: column; gap: 1rem; }
-.hw-card {
-    background: white; border: 1.5px solid var(--gray-200); border-radius: var(--radius); overflow: hidden;
-}
-.hw-card-header {
-    background: var(--gray-50); padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
-    display: flex; align-items: center; gap: 0.5rem;
-}
-.hw-card-header h3 { margin: 0; font-size: 0.9375rem; color: var(--primary); }
-.hw-card-body { padding: 1rem; }
-.hw-prompt {
-    background: var(--gray-50); border-left: 3px solid var(--primary);
-    padding: 0.875rem 1rem; border-radius: 0 var(--radius) var(--radius) 0;
-    font-size: 0.875rem; color: var(--gray-700); line-height: 1.65; margin-bottom: 1rem;
-}
-#hw-textarea {
-    width: 100%; min-height: 160px; padding: 0.75rem;
-    border: 1.5px solid var(--gray-200); border-radius: var(--radius);
-    font-size: 0.9rem; font-family: inherit; line-height: 1.6; resize: vertical;
-    box-sizing: border-box;
-}
-#hw-textarea:focus { outline: none; border-color: var(--primary); }
-.hw-char-count { font-size: 0.75rem; color: var(--gray-400); text-align: right; margin-top: 0.25rem; }
-
-/* ── Feedback / status blocks ──────────────────────────── */
-.feedback-approved {
-    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-    border: 1px solid #86efac; border-radius: var(--radius); padding: 1rem;
-}
-.feedback-revision {
-    background: #fef9c3; border: 1px solid #fde047; border-radius: var(--radius); padding: 1rem;
-}
-.feedback-pending {
-    background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius); padding: 1rem;
-    text-align: center; color: var(--gray-500); font-size: 0.875rem;
-}
-.feedback-text { font-size: 0.875rem; line-height: 1.65; white-space: pre-wrap; margin-top: 0.625rem; color: var(--gray-700); }
-.next-module-btn {
-    display: block; width: 100%; text-align: center; padding: 0.75rem;
-    background: var(--primary); color: white; border-radius: var(--radius);
-    font-weight: 700; text-decoration: none; margin-top: 1rem; transition: background 0.2s;
-}
-.next-module-btn:hover { background: var(--primary-light); }
+#btn-send-chat svg { width: 14px; height: 14px; }
 {% endblock %}
 
 {% block content %}
@@ -159,7 +207,7 @@
 <div class="mod-header">
     <div class="mod-header-inner">
         <div class="mod-breadcrumb">
-            <a href="{{ url_for('author_coaching_dashboard') }}">← Coaching Dashboard</a>
+            <a href="{{ url_for('author_coaching_dashboard') }}">← Program Overview</a>
         </div>
         <div class="mod-title-row">
             <div class="mod-big-icon">{{ module_info.icon }}</div>
@@ -168,33 +216,122 @@
                 <p>{{ module_info.subtitle }}</p>
             </div>
         </div>
-
         <!-- Stepper -->
         <div class="mod-stepper">
-            {% for m in range(1, total_modules + 1) %}
-                {% if m > 1 %}
-                <div class="step-line {% if m <= module_info.order %}done-line{% endif %}"></div>
-                {% endif %}
-                <div class="step-dot {% if m < module_info.order %}done{% elif m == module_info.order %}current{% else %}todo{% endif %}"
-                     title="Module {{ m }}">
-                    {% if m < module_info.order %}✓{% else %}{{ m }}{% endif %}
+            {% for n in range(1, total_modules + 1) %}
+                {% if n > 1 %}<div class="step-line {% if n <= module_info.order %}done-line{% endif %}"></div>{% endif %}
+                <div class="step-dot {% if n < module_info.order %}done{% elif n == module_info.order %}current{% else %}todo{% endif %}" title="Module {{ n }}">
+                    {% if n < module_info.order %}✓{% else %}{{ n }}{% endif %}
                 </div>
             {% endfor %}
         </div>
     </div>
 </div>
 
-<!-- Module content -->
-<div class="module-layout">
+<!-- Main layout -->
+<div class="mod-layout">
 
-    <!-- Left: description + chat -->
-    <div class="chat-pane card" style="padding:0;">
-        <div class="chat-pane-header">
-            <div class="coach-av">W</div>
-            <div>
-                <strong style="font-size:0.9rem;color:var(--gray-900);">Book Proposal Coach</strong><br>
-                <span style="font-size:0.75rem;color:var(--gray-500);">Module {{ module_info.order }}: {{ module_info.title }}</span>
+    <!-- LEFT: Writing panel -->
+    <div class="writing-panel">
+
+        <!-- Collapsible context card -->
+        <details class="context-card" {% if not saved_content or not saved_content.content %}open{% endif %}>
+            <summary>
+                <span>📌 About this module</span>
+                <span style="font-size:0.7rem;color:var(--gray-400);font-weight:400;">click to {{ 'collapse' if (not saved_content or not saved_content.content) else 'expand' }}</span>
+            </summary>
+            <div class="context-body">
+                {{ module_info.description }}
+                <div class="tip-block">
+                    <strong style="display:block;margin-bottom:0.25rem;color:#0369a1;">💬 Tip</strong>
+                    Use the <strong>Brainstorm Assistant</strong> on the right if you're not sure where to start.
+                    Chat through your ideas first, then come back here to write your draft.
+                </div>
             </div>
+        </details>
+
+        <!-- Writing area -->
+        <div class="writing-card">
+            <div class="writing-card-header">
+                <h2>✍️ Write Your {{ module_info.homework_label }}</h2>
+                <span class="save-indicator" id="save-status">
+                    {% if saved_content and saved_content.last_saved_at %}
+                        <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#16a34a"/></svg>
+                        Saved
+                    {% endif %}
+                </span>
+            </div>
+
+            <div class="writing-guide">
+                <strong>What to write</strong>
+                {{ module_info.homework_prompt }}
+            </div>
+
+            <textarea id="content-textarea"
+                      placeholder="Start writing here… your draft saves automatically as you type."
+                      {% if module_progress.status == 'approved' %}disabled{% endif %}>{{ saved_content.content if saved_content and saved_content.content else '' }}</textarea>
+
+            <div class="writing-footer">
+                <span class="word-count"><span id="word-count">{{ saved_content.word_count if saved_content else 0 }}</span> words</span>
+                <div class="writing-actions">
+                    {% if module_progress.status != 'approved' %}
+                    <button id="btn-get-feedback" class="btn" style="background:white;border:1.5px solid var(--primary);color:var(--primary);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
+                        Get AI Feedback
+                    </button>
+                    <button id="btn-mark-complete" class="btn btn-primary" style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
+                        Mark Complete &amp; Continue →
+                    </button>
+                    {% else %}
+                    <span style="font-size:0.875rem;color:#16a34a;font-weight:600;">✓ This section is complete</span>
+                    {% if module_info.order < total_modules %}
+                    <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}"
+                       class="btn btn-primary" style="font-size:0.875rem;padding:0.45rem 1.125rem;text-decoration:none;">
+                        Continue to Module {{ module_info.order + 1 }} →
+                    </a>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Feedback display (populated by JS) -->
+        <div class="feedback-panel" id="feedback-panel">
+            <!-- Bullets from "Get AI Feedback" -->
+            <div class="feedback-bullets" id="feedback-bullets" style="display:none;"></div>
+            <!-- Result from "Mark Complete" -->
+            <div id="complete-result" style="display:none;"></div>
+        </div>
+
+        {% if module_progress.status == 'approved' and latest_submission and latest_submission.ai_feedback %}
+        <!-- Approved feedback preserved -->
+        <div class="feedback-approved-block" style="margin-top:0.5rem;">
+            <strong style="color:#14532d;">✓ Section approved</strong>
+            <div class="feedback-block-text">{{ latest_submission.ai_feedback }}</div>
+        </div>
+        {% elif latest_submission and latest_submission.status == 'revision_requested' %}
+        <div class="feedback-revision-block" style="margin-top:0.5rem;" id="persisted-revision">
+            <strong style="color:#854d0e;">Feedback from last review</strong>
+            <div class="feedback-block-text">{{ latest_submission.ai_feedback }}</div>
+        </div>
+        {% endif %}
+
+        <!-- View proposal link -->
+        <div style="text-align:center;padding-top:0.5rem;">
+            <a href="{{ url_for('author_coaching_proposal') }}" style="font-size:0.8125rem;color:var(--gray-500);text-decoration:none;">
+                📄 View your full draft proposal →
+            </a>
+        </div>
+
+    </div>
+
+    <!-- RIGHT: Brainstorm chat sidebar -->
+    <div class="chat-sidebar">
+        <div class="chat-sidebar-header">
+            <div class="chat-agent-row">
+                <div class="chat-av">W</div>
+                <h3>Brainstorm Assistant</h3>
+            </div>
+            <p>Stuck? Talk through your ideas here — then write your draft on the left.</p>
         </div>
 
         <div class="chat-messages" id="chat-messages">
@@ -206,20 +343,18 @@
             {% endfor %}
 
             {% if not chat_messages %}
-            <!-- Seed welcome -->
-            <div class="cmsg agent" id="welcome-msg">
+            <div class="cmsg agent">
                 <div class="cmsg-av">W</div>
-                <div class="cmsg-bubble" id="welcome-bubble">
-                    Hi {{ current_user.name }}! Let's work on <strong>{{ module_info.title }}</strong> together.<br><br>
-                    {{ module_info.description }}<br><br>
-                    To start — tell me where you are with this section. Do you have some ideas already, or are you starting from scratch?
+                <div class="cmsg-bubble">
+                    Hi {{ current_user.name }}! I'm here to help you brainstorm your <strong>{{ module_info.title }}</strong>.<br><br>
+                    What's on your mind? You can ask me anything — share a rough idea, a question, or just where you're stuck.
                 </div>
             </div>
             {% endif %}
         </div>
 
         <div class="chat-input-row">
-            <textarea id="chat-input" rows="1" placeholder="Type your message…"></textarea>
+            <textarea id="chat-input" rows="1" placeholder="Ask me anything…"></textarea>
             <button id="btn-send-chat" aria-label="Send">
                 <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -228,84 +363,6 @@
         </div>
     </div>
 
-    <!-- Right: module info + homework -->
-    <div class="hw-pane">
-
-        <!-- About this module -->
-        <div class="hw-card">
-            <div class="hw-card-header">
-                <span>📌</span>
-                <h3>About This Module</h3>
-            </div>
-            <div class="hw-card-body" style="font-size:0.875rem;color:var(--gray-700);line-height:1.65;">
-                {{ module_info.description }}
-            </div>
-        </div>
-
-        <!-- Homework -->
-        <div class="hw-card" id="homework-card">
-            <div class="hw-card-header">
-                <span>📝</span>
-                <h3>Homework: {{ module_info.homework_label }}</h3>
-                {% if module_progress.status == 'approved' %}
-                <span style="margin-left:auto;font-size:0.75rem;background:#dcfce7;color:#166534;padding:0.2rem 0.5rem;border-radius:20px;font-weight:600;">✓ Approved</span>
-                {% elif module_progress.status == 'revision_requested' %}
-                <span style="margin-left:auto;font-size:0.75rem;background:#fef9c3;color:#854d0e;padding:0.2rem 0.5rem;border-radius:20px;font-weight:600;">Revision needed</span>
-                {% elif module_progress.status == 'in_progress' %}
-                <span style="margin-left:auto;font-size:0.75rem;background:#ede9fe;color:#4c1d95;padding:0.2rem 0.5rem;border-radius:20px;font-weight:600;">In Progress</span>
-                {% endif %}
-            </div>
-            <div class="hw-card-body" id="homework-body">
-
-                {% if module_progress.status == 'approved' %}
-                <!-- Approved state -->
-                <div class="feedback-approved">
-                    <strong style="color:#14532d;">✓ Homework approved!</strong>
-                    {% if latest_hw and latest_hw.ai_feedback %}
-                    <div class="feedback-text">{{ latest_hw.ai_feedback }}</div>
-                    {% endif %}
-                </div>
-                {% if module_info.order < total_modules %}
-                <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}"
-                   class="next-module-btn">Continue to Module {{ module_info.order + 1 }} →</a>
-                {% else %}
-                <a href="{{ url_for('author_coaching_dashboard') }}" class="next-module-btn">
-                    🎉 View Your Completed Program →
-                </a>
-                {% endif %}
-
-                {% elif latest_hw and latest_hw.status == 'revision_requested' %}
-                <!-- Revision needed -->
-                <div class="feedback-revision">
-                    <strong style="color:#854d0e;">Revision needed</strong>
-                    <div class="feedback-text">{{ latest_hw.ai_feedback }}</div>
-                </div>
-                <div style="margin-top:1rem;">
-                    <p style="font-size:0.8125rem;color:var(--gray-600);margin-bottom:0.5rem;">Revise and resubmit:</p>
-                    <div class="hw-prompt">{{ module_info.homework_prompt }}</div>
-                    <textarea id="hw-textarea" placeholder="Revise your homework here…">{{ latest_hw.content }}</textarea>
-                    <div class="hw-char-count"><span id="hw-char-count">0</span> characters</div>
-                    <button id="btn-submit-hw" class="btn btn-primary" style="width:100%;margin-top:0.75rem;">
-                        Resubmit for Review
-                    </button>
-                    <div id="hw-feedback-area" style="margin-top:0.875rem;display:none;"></div>
-                </div>
-
-                {% else %}
-                <!-- Not yet submitted -->
-                <div class="hw-prompt">{{ module_info.homework_prompt }}</div>
-                <textarea id="hw-textarea" placeholder="Write your homework here…">{{ latest_hw.content if latest_hw else '' }}</textarea>
-                <div class="hw-char-count"><span id="hw-char-count">0</span> characters</div>
-                <button id="btn-submit-hw" class="btn btn-primary" style="width:100%;margin-top:0.75rem;">
-                    Submit for AI Review
-                </button>
-                <div id="hw-feedback-area" style="margin-top:0.875rem;display:none;"></div>
-                {% endif %}
-
-            </div>
-        </div>
-
-    </div>
 </div>
 {% endblock %}
 
@@ -314,33 +371,220 @@
 (function () {
     const ENROLLMENT_ID  = {{ enrollment.id }};
     const MODULE_ORDER   = {{ module_info.order }};
+    const SECTION_KEY    = '{{ section_key }}';
     const AUTHOR_INITIAL = '{{ current_user.name[0]|upper }}';
+    const BOOK_TITLE     = '{{ (enrollment.book_title or '') | e }}';
     const TOTAL_MODULES  = {{ total_modules }};
+    const IS_APPROVED    = {{ 'true' if module_progress.status == 'approved' else 'false' }};
 
-    /* ── Format message text (bold + line breaks) ───── */
-    function fmt(text) {
-        return text
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-            .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-            .replace(/\n/g,'<br>');
+    /* ── Helpers ─────────────────────────────────────── */
+    function esc(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function fmt(t) {
+        return esc(t).replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
     }
 
-    /* ── Render pre-loaded messages ─────────────────── */
+    /* ── Render pre-loaded chat history ─────────────── */
     document.querySelectorAll('.cmsg-bubble[data-raw]').forEach(el => {
         el.innerHTML = fmt(el.getAttribute('data-raw'));
         el.removeAttribute('data-raw');
     });
+    const chatEl = document.getElementById('chat-messages');
+    chatEl.scrollTop = chatEl.scrollHeight;
 
-    /* ── Chat ────────────────────────────────────────── */
-    const chatEl   = document.getElementById('chat-messages');
+    /* ── Autosave ────────────────────────────────────── */
+    const textarea  = document.getElementById('content-textarea');
+    const wordCount = document.getElementById('word-count');
+    const saveStatus = document.getElementById('save-status');
+    let saveTimer = null;
+
+    function countWords(text) {
+        return text.trim() ? text.trim().split(/\s+/).length : 0;
+    }
+
+    function updateWordCount() {
+        if (textarea && wordCount) {
+            wordCount.textContent = countWords(textarea.value).toLocaleString();
+        }
+    }
+
+    function setSaveStatus(state) {
+        if (!saveStatus) return;
+        if (state === 'saving') {
+            saveStatus.className = 'save-indicator saving';
+            saveStatus.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#d97706"/></svg> Saving…';
+        } else if (state === 'saved') {
+            saveStatus.className = 'save-indicator saved';
+            saveStatus.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#16a34a"/></svg> Saved';
+        } else {
+            saveStatus.className = 'save-indicator';
+            saveStatus.innerHTML = '';
+        }
+    }
+
+    async function saveContent() {
+        if (!textarea || IS_APPROVED) return;
+        setSaveStatus('saving');
+        try {
+            const r = await fetch('/api/coaching/content/save', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    enrollment_id: ENROLLMENT_ID,
+                    module_order: MODULE_ORDER,
+                    content: textarea.value
+                })
+            });
+            const d = await r.json();
+            if (d.success) {
+                setSaveStatus('saved');
+                if (wordCount) wordCount.textContent = (d.word_count || 0).toLocaleString();
+            }
+        } catch(e) { setSaveStatus(''); }
+    }
+
+    if (textarea && !IS_APPROVED) {
+        textarea.addEventListener('input', () => {
+            updateWordCount();
+            setSaveStatus('saving');
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(saveContent, 1500);
+        });
+        updateWordCount();
+    }
+
+    /* ── Get AI Feedback ─────────────────────────────── */
+    const feedbackPanel  = document.getElementById('feedback-panel');
+    const feedbackBullets = document.getElementById('feedback-bullets');
+    const getFeedbackBtn = document.getElementById('btn-get-feedback');
+
+    if (getFeedbackBtn) {
+        getFeedbackBtn.addEventListener('click', async () => {
+            const content = textarea ? textarea.value.trim() : '';
+            if (content.length < 50) {
+                alert('Write at least a paragraph before requesting feedback.');
+                return;
+            }
+            getFeedbackBtn.disabled = true;
+            getFeedbackBtn.textContent = 'Analysing…';
+            feedbackPanel.style.display = 'block';
+            feedbackBullets.style.display = 'block';
+            feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--gray-500);font-size:0.875rem;">Reading your draft…</p>';
+
+            try {
+                const r = await fetch('/api/coach-feedback', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        section: SECTION_KEY,
+                        text: content,
+                        book_title: BOOK_TITLE
+                    })
+                });
+                const d = await r.json();
+                if (d.success && d.bullets && d.bullets.length) {
+                    feedbackBullets.innerHTML = '<h4>AI Feedback on your draft</h4><ul>' +
+                        d.bullets.map(b => `<li>${fmt(b)}</li>`).join('') + '</ul>';
+                } else {
+                    feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--gray-500);font-size:0.875rem;">Could not generate feedback. Try again.</p>';
+                }
+            } catch(e) {
+                feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--error);font-size:0.875rem;">Network error. Please try again.</p>';
+            }
+            getFeedbackBtn.disabled = false;
+            getFeedbackBtn.textContent = 'Get AI Feedback';
+            feedbackBullets.scrollIntoView({behavior:'smooth', block:'nearest'});
+        });
+    }
+
+    /* ── Mark Complete ───────────────────────────────── */
+    const markCompleteBtn = document.getElementById('btn-mark-complete');
+    const completeResult  = document.getElementById('complete-result');
+
+    if (markCompleteBtn) {
+        markCompleteBtn.addEventListener('click', async () => {
+            const content = textarea ? textarea.value.trim() : '';
+            if (content.length < 100) {
+                alert('Please write more before marking this section complete. The more detail you provide, the better the final proposal.');
+                return;
+            }
+            if (!confirm('Submit this section for AI review? The AI will check if it\'s ready to advance.')) return;
+
+            markCompleteBtn.disabled = true;
+            markCompleteBtn.textContent = 'Reviewing…';
+            if (getFeedbackBtn) getFeedbackBtn.disabled = true;
+            feedbackPanel.style.display = 'block';
+            feedbackBullets.style.display = 'none';
+            completeResult.style.display = 'block';
+            completeResult.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem;padding:0.5rem 0;">Reviewing your section…</p>';
+
+            // Save first, then submit
+            await saveContent();
+
+            try {
+                const r = await fetch('/api/coaching/homework', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        enrollment_id: ENROLLMENT_ID,
+                        module_order: MODULE_ORDER,
+                        content: content
+                    })
+                });
+                const d = await r.json();
+
+                if (!d.success) {
+                    markCompleteBtn.disabled = false;
+                    markCompleteBtn.textContent = 'Mark Complete & Continue →';
+                    if (getFeedbackBtn) getFeedbackBtn.disabled = false;
+                    completeResult.innerHTML = `<p style="color:var(--error);font-size:0.875rem;">${esc(d.error || 'Something went wrong.')}</p>`;
+                    return;
+                }
+
+                if (d.approved) {
+                    const nextLink = d.program_complete
+                        ? `<a href="/author/coaching/proposal" class="next-mod-btn">🎉 View Your Complete Draft Proposal →</a>`
+                        : d.next_module
+                            ? `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Module ${d.next_module} →</a>`
+                            : `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
+                    completeResult.innerHTML = `
+                        <div class="feedback-approved-block">
+                            <strong style="color:#14532d;">✓ Section approved!</strong>
+                            <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
+                        </div>
+                        ${nextLink}`;
+                    if (textarea) textarea.disabled = true;
+                    markCompleteBtn.style.display = 'none';
+                    if (getFeedbackBtn) getFeedbackBtn.style.display = 'none';
+                } else {
+                    completeResult.innerHTML = `
+                        <div class="feedback-revision-block">
+                            <strong style="color:#854d0e;">Almost there — a few things to strengthen</strong>
+                            <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
+                        </div>
+                        <p style="font-size:0.8125rem;color:var(--gray-500);margin-top:0.5rem;">Revise your draft above and click <strong>Mark Complete</strong> again when ready.</p>`;
+                    markCompleteBtn.disabled = false;
+                    markCompleteBtn.textContent = 'Mark Complete & Continue →';
+                    if (getFeedbackBtn) getFeedbackBtn.disabled = false;
+                }
+                completeResult.scrollIntoView({behavior:'smooth', block:'nearest'});
+            } catch(e) {
+                markCompleteBtn.disabled = false;
+                markCompleteBtn.textContent = 'Mark Complete & Continue →';
+                if (getFeedbackBtn) getFeedbackBtn.disabled = false;
+                completeResult.innerHTML = '<p style="color:var(--error);font-size:0.875rem;">Network error. Please try again.</p>';
+            }
+        });
+    }
+
+    /* ── Chat sidebar ────────────────────────────────── */
     const inputEl  = document.getElementById('chat-input');
     const sendBtn  = document.getElementById('btn-send-chat');
     let waiting = false;
 
-    function appendBubble(role, content, scroll=true) {
-        const wrap   = document.createElement('div');
+    function appendBubble(role, content) {
+        const wrap = document.createElement('div');
         wrap.className = 'cmsg ' + role;
-        const av     = document.createElement('div');
+        const av = document.createElement('div');
         av.className = 'cmsg-av';
         av.textContent = role === 'agent' ? 'W' : AUTHOR_INITIAL;
         const bubble = document.createElement('div');
@@ -348,26 +592,29 @@
         bubble.innerHTML = fmt(content);
         wrap.appendChild(av); wrap.appendChild(bubble);
         chatEl.appendChild(wrap);
-        if (scroll) chatEl.scrollTop = chatEl.scrollHeight;
-        return wrap;
+        chatEl.scrollTop = chatEl.scrollHeight;
     }
 
     function showTyping() {
-        const wrap = document.createElement('div');
-        wrap.className = 'cmsg agent'; wrap.id = 'typing-ind';
-        const av = document.createElement('div'); av.className = 'cmsg-av'; av.textContent = 'W';
-        const b  = document.createElement('div'); b.className = 'typing-bubble';
-        b.innerHTML = '<span></span><span></span><span></span>';
-        wrap.appendChild(av); wrap.appendChild(b); chatEl.appendChild(wrap);
+        const w = document.createElement('div'); w.className='cmsg agent'; w.id='typing-ind';
+        const av = document.createElement('div'); av.className='cmsg-av'; av.textContent='W';
+        const b = document.createElement('div'); b.className='typing-bub';
+        b.innerHTML='<span></span><span></span><span></span>';
+        w.appendChild(av); w.appendChild(b); chatEl.appendChild(w);
         chatEl.scrollTop = chatEl.scrollHeight;
     }
     function removeTyping() { const t=document.getElementById('typing-ind'); if(t) t.remove(); }
+
+    function chatAutoResize() {
+        inputEl.style.height = 'auto';
+        inputEl.style.height = Math.min(inputEl.scrollHeight, 100) + 'px';
+    }
 
     async function sendChat(text) {
         text = text.trim();
         if (!text || waiting) return;
         waiting = true; sendBtn.disabled = true;
-        inputEl.value = ''; autoResize();
+        inputEl.value = ''; chatAutoResize();
         appendBubble('user', text);
         showTyping();
         try {
@@ -378,108 +625,20 @@
             });
             const d = await r.json();
             removeTyping();
-            if (d.success && d.message) {
-                appendBubble('agent', d.message);
-            } else {
-                appendBubble('agent', 'Sorry, I had trouble responding. Please try again.');
-            }
+            appendBubble('agent', d.success && d.message ? d.message : 'Sorry, I had trouble responding. Please try again.');
         } catch(e) {
             removeTyping();
-            appendBubble('agent', 'Network error — please check your connection and try again.');
+            appendBubble('agent', 'Network error — please try again.');
         }
         waiting = false; sendBtn.disabled = false; inputEl.focus();
     }
 
-    function autoResize() {
-        inputEl.style.height = 'auto';
-        inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
-    }
-    inputEl.addEventListener('input', autoResize);
+    inputEl.addEventListener('input', chatAutoResize);
     sendBtn.addEventListener('click', () => sendChat(inputEl.value));
     inputEl.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(inputEl.value); }
     });
 
-    // Scroll chat to bottom on load
-    chatEl.scrollTop = chatEl.scrollHeight;
-
-    /* ── Homework ────────────────────────────────────── */
-    const hwTextarea = document.getElementById('hw-textarea');
-    const hwSubmitBtn = document.getElementById('btn-submit-hw');
-    const hwFeedback  = document.getElementById('hw-feedback-area');
-    const hwCharCount = document.getElementById('hw-char-count');
-
-    if (hwTextarea) {
-        function updateCharCount() {
-            if (hwCharCount) hwCharCount.textContent = hwTextarea.value.length.toLocaleString();
-        }
-        hwTextarea.addEventListener('input', updateCharCount);
-        updateCharCount();
-    }
-
-    if (hwSubmitBtn) {
-        hwSubmitBtn.addEventListener('click', async () => {
-            const content = hwTextarea ? hwTextarea.value.trim() : '';
-            if (content.length < 50) {
-                alert('Please write at least a few sentences before submitting.');
-                return;
-            }
-            hwSubmitBtn.disabled = true;
-            hwSubmitBtn.textContent = 'Reviewing…';
-
-            try {
-                const r = await fetch('/api/coaching/homework', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, content: content })
-                });
-                const d = await r.json();
-
-                if (!d.success) {
-                    hwSubmitBtn.disabled = false;
-                    hwSubmitBtn.textContent = 'Submit for AI Review';
-                    alert(d.error || 'Something went wrong. Please try again.');
-                    return;
-                }
-
-                // Show feedback
-                if (hwFeedback) {
-                    hwFeedback.style.display = 'block';
-                    if (d.approved) {
-                        hwFeedback.innerHTML = `
-                            <div class="feedback-approved">
-                                <strong style="color:#14532d;">✓ Approved!</strong>
-                                <div class="feedback-text">${d.feedback ? d.feedback.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>') : ''}</div>
-                            </div>
-                            ${d.program_complete
-                                ? '<a href="/author/coaching" class="next-module-btn">🎉 View Your Completed Program →</a>'
-                                : d.next_module
-                                    ? `<a href="/author/coaching/module/${d.next_module}" class="next-module-btn">Continue to Module ${d.next_module} →</a>`
-                                    : ''}`;
-                        if (hwSubmitBtn) hwSubmitBtn.style.display = 'none';
-                        if (hwTextarea) hwTextarea.style.display = 'none';
-                        // Update status badge
-                        const badge = document.querySelector('#homework-card .hw-card-header span[style*="color"]');
-                        if (badge) { badge.textContent = '✓ Approved'; badge.style.background='#dcfce7'; badge.style.color='#166534'; }
-                    } else {
-                        hwFeedback.innerHTML = `
-                            <div class="feedback-revision">
-                                <strong style="color:#854d0e;">Revision needed</strong>
-                                <div class="feedback-text">${d.feedback ? d.feedback.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>') : ''}</div>
-                            </div>`;
-                        hwSubmitBtn.disabled = false;
-                        hwSubmitBtn.textContent = 'Resubmit for Review';
-                        const badge = document.querySelector('#homework-card .hw-card-header span[style*="color"]');
-                        if (badge) { badge.textContent = 'Revision needed'; badge.style.background='#fef9c3'; badge.style.color='#854d0e'; }
-                    }
-                }
-            } catch(e) {
-                hwSubmitBtn.disabled = false;
-                hwSubmitBtn.textContent = 'Submit for AI Review';
-                alert('Network error. Please try again.');
-            }
-        });
-    }
 })();
 </script>
 {% endblock %}

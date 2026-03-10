@@ -12,19 +12,22 @@
 .coaching-hero h1 { color: var(--accent); font-size: 1.5rem; margin-bottom: 0.25rem; }
 .coaching-hero p  { color: rgba(255,255,255,0.8); font-size: 0.9375rem; margin: 0; }
 
-/* ── Progress bar ──────────────────────────────────────── */
-.progress-section {
+/* ── Progress block ────────────────────────────────────── */
+.progress-block {
     background: rgba(255,255,255,0.07);
     border: 1.5px solid rgba(255,255,255,0.18);
     border-radius: var(--radius);
     padding: 1.25rem 1.5rem;
     margin-top: 1.25rem;
-    max-width: 640px;
+    max-width: 680px;
 }
-.progress-label { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem; }
+.progress-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; font-size: 0.875rem; }
 .progress-track { height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; overflow: hidden; }
 .progress-fill  { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.6s ease; }
-.progress-info  { margin-top: 0.5rem; font-size: 0.8125rem; color: rgba(255,255,255,0.65); }
+.progress-sub   { margin-top: 0.625rem; display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.progress-sub a, .progress-sub span { font-size: 0.8125rem; color: rgba(255,255,255,0.65); text-decoration: none; }
+.progress-sub a:hover { color: var(--accent); }
+.progress-sub a.accent-link { color: var(--accent); font-weight: 600; }
 
 /* ── Enroll CTA ────────────────────────────────────────── */
 .enroll-cta {
@@ -51,36 +54,36 @@
     background: white;
     border: 1.5px solid var(--gray-200);
     border-radius: var(--radius);
-    padding: 1.125rem 1.375rem;
+    padding: 1rem 1.25rem;
     display: flex;
     align-items: flex-start;
-    gap: 1rem;
+    gap: 0.875rem;
     text-decoration: none;
     color: inherit;
     transition: all 0.2s;
     position: relative;
 }
 .module-card:hover:not(.locked) { border-color: var(--primary); box-shadow: 0 2px 12px rgba(45,27,105,0.12); transform: translateY(-1px); }
-.module-card.locked { background: var(--gray-50); opacity: 0.65; cursor: default; }
+.module-card.locked { background: var(--gray-50); opacity: 0.6; cursor: default; }
 .module-card.current { border-color: var(--primary); border-width: 2px; box-shadow: 0 2px 16px rgba(45,27,105,0.15); }
 .module-card.completed { border-color: #86efac; }
 
-.mod-icon { font-size: 1.75rem; flex-shrink: 0; margin-top: 2px; }
-.mod-body { flex: 1; min-width: 0; }
-.mod-num  { font-size: 0.75rem; font-weight: 600; color: var(--gray-400); text-transform: uppercase; letter-spacing: 0.05em; }
+.mod-icon  { font-size: 1.625rem; flex-shrink: 0; margin-top: 2px; }
+.mod-body  { flex: 1; min-width: 0; }
+.mod-num   { font-size: 0.7rem; font-weight: 600; color: var(--gray-400); text-transform: uppercase; letter-spacing: 0.05em; }
 .mod-title { font-size: 0.9375rem; font-weight: 700; color: var(--gray-900); margin: 2px 0; }
-.mod-sub  { font-size: 0.8125rem; color: var(--gray-500); }
+.mod-sub   { font-size: 0.8rem; color: var(--gray-500); }
+.mod-meta  { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
-.mod-status {
-    font-size: 0.725rem; font-weight: 600; padding: 0.2rem 0.55rem;
-    border-radius: 20px; white-space: nowrap; flex-shrink: 0; margin-top: 3px;
-}
-.mod-status.approved  { background: #dcfce7; color: #166534; }
+.mod-status { font-size: 0.7rem; font-weight: 600; padding: 0.175rem 0.5rem; border-radius: 20px; }
+.mod-status.approved    { background: #dcfce7; color: #166534; }
 .mod-status.in-progress { background: #ede9fe; color: #4c1d95; }
-.mod-status.revision  { background: #fef9c3; color: #854d0e; }
-.mod-status.locked    { background: var(--gray-100); color: var(--gray-400); }
+.mod-status.has-draft   { background: #fef3c7; color: #92400e; }
+.mod-status.locked      { background: var(--gray-100); color: var(--gray-400); }
 
-.mod-lock { position: absolute; top: 0.875rem; right: 0.875rem; font-size: 1rem; color: var(--gray-300); }
+.mod-word-count { font-size: 0.7rem; color: var(--gray-400); }
+.mod-lock { position: absolute; top: 0.875rem; right: 0.875rem; font-size: 0.9rem; color: var(--gray-300); }
+.mod-check{ position: absolute; top: 0.875rem; right: 0.875rem; color: #16a34a; font-size: 1rem; }
 
 /* ── Complete banner ───────────────────────────────────── */
 .complete-banner {
@@ -99,45 +102,42 @@
 <!-- Hero -->
 <div class="coaching-hero">
     <div style="max-width:1200px;margin:0 auto;">
-        <h1>📖 Proposal Coaching Program</h1>
-        <p>Develop your complete book proposal with AI-guided coaching — one module at a time.</p>
+        <h1>📖 Book Proposal Program</h1>
+        <p>Build every section of your publisher-ready proposal — one module at a time.</p>
 
         {% if enrollment %}
-        <!-- Progress bar -->
         {% set pct = ((completed_count / total_modules) * 100)|int %}
-        <div class="progress-section">
-            <div class="progress-label">
+        <div class="progress-block">
+            <div class="progress-row">
                 <span style="font-weight:600;">{{ enrollment.book_title or 'Your Proposal' }}</span>
-                <span>{{ completed_count }}/{{ total_modules }} modules complete</span>
+                <span>{{ completed_count }}/{{ total_modules }} sections complete</span>
             </div>
             <div class="progress-track">
                 <div class="progress-fill" style="width:{{ pct }}%"></div>
             </div>
-            <div class="progress-info">
+            <div class="progress-sub">
+                <span>{{ pct }}% complete</span>
+                {% if has_any_content %}
+                <a href="{{ url_for('author_coaching_proposal') }}" class="accent-link">📄 View your draft proposal →</a>
+                {% endif %}
                 {% if enrollment.status == 'completed' %}
-                    🎉 All modules complete — your proposal is ready for evaluation!
-                {% elif pct == 0 %}
-                    Start with Module 1 below to begin your journey.
-                {% else %}
-                    {{ pct }}% complete — keep going!
+                <a href="{{ url_for('index') }}" class="accent-link">Submit for evaluation →</a>
                 {% endif %}
             </div>
         </div>
-
         {% else %}
-        <!-- Enroll CTA -->
         <div class="enroll-cta">
-            <h3>Build your proposal the right way</h3>
+            <h3>Write your book proposal the right way</h3>
             <ul>
-                <li>7 focused modules covering every section of a publisher-ready proposal</li>
-                <li>AI coach in each module to guide your thinking</li>
-                <li>Homework reviewed with specific, actionable feedback</li>
-                <li>Each module unlocks after the previous is approved</li>
-                <li>When complete, submit for a full professional evaluation</li>
+                <li>7 focused modules — one for each section of a publisher-ready proposal</li>
+                <li>AI brainstorm assistant in every module to help you develop your ideas</li>
+                <li>Your writing saves automatically as you go</li>
+                <li>AI reviews each section and unlocks the next when it's ready</li>
+                <li>At the end, you have a complete proposal draft ready for submission</li>
             </ul>
             <a href="{{ url_for('author_coaching_enroll') }}"
                style="display:inline-block;padding:0.75rem 1.75rem;background:var(--accent);color:var(--accent-text);font-weight:700;border-radius:var(--radius);text-decoration:none;font-size:0.9375rem;">
-                Enroll Now — It's Free →
+                Start Building Your Proposal →
             </a>
         </div>
         {% endif %}
@@ -149,57 +149,64 @@
 
     {% if enrollment and enrollment.status == 'completed' %}
     <div class="complete-banner">
-        <h3>🎉 Congratulations — All 7 Modules Complete!</h3>
-        <p>Your proposal is ready for a professional evaluation. Submit it now to receive your tier rating, score breakdown, and advance estimate.</p>
-        <a href="{{ url_for('index') }}" class="btn btn-accent" style="text-decoration:none;">
-            Submit for Full Evaluation →
-        </a>
+        <h3>🎉 Congratulations — All 7 Sections Complete!</h3>
+        <p>Your proposal draft is finished. Submit it for a full professional evaluation to receive your tier rating, score breakdown, and advance estimate.</p>
+        <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+            <a href="{{ url_for('author_coaching_proposal') }}" class="btn" style="background:white;border:1.5px solid #16a34a;color:#14532d;font-weight:700;text-decoration:none;padding:0.6rem 1.25rem;">
+                📄 View Full Draft
+            </a>
+            <a href="{{ url_for('index') }}" class="btn btn-primary" style="text-decoration:none;">
+                Submit for Evaluation →
+            </a>
+        </div>
     </div>
     {% endif %}
 
-    <h3 style="color:var(--primary);margin-bottom:1rem;">
-        {{ 'Your Modules' if enrollment else 'Program Overview' }}
-    </h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+        <h3 style="color:var(--primary);margin:0;">
+            {{ 'Your 7 Sections' if enrollment else 'Program Overview' }}
+        </h3>
+        {% if has_any_content %}
+        <a href="{{ url_for('author_coaching_proposal') }}"
+           style="font-size:0.875rem;color:var(--primary);font-weight:600;text-decoration:none;border:1.5px solid var(--primary);padding:0.4rem 0.875rem;border-radius:var(--radius);">
+            📄 View Draft Proposal
+        </a>
+        {% endif %}
+    </div>
 
     <div class="modules-grid">
         {% for m in modules %}
             {% set order = m.order %}
             {% set mp = all_progress | selectattr('module_order', 'eq', order) | first | default(none) %}
-            {% set hw = latest_hw.get(order) %}
-
-            {% if enrollment and mp %}
-                {% set status = mp.status %}
-            {% else %}
-                {% set status = 'locked' %}
-            {% endif %}
-
+            {% set mc = saved_content.get(order) %}
+            {% set status = mp.status if (enrollment and mp) else 'locked' %}
+            {% set has_draft = mc and mc.content and mc.content | trim %}
             {% set is_locked = (status == 'locked') %}
             {% set is_approved = (status == 'approved') %}
             {% set is_current = (enrollment and enrollment.current_module == order and status != 'approved') %}
 
             {% if not is_locked and enrollment %}
             <a href="{{ url_for('author_coaching_module', module_order=order) }}"
-               class="module-card{% if is_locked %} locked{% endif %}{% if is_current %} current{% endif %}{% if is_approved %} completed{% endif %}">
+               class="module-card{% if is_current %} current{% endif %}{% if is_approved %} completed{% endif %}">
             {% else %}
             <div class="module-card locked">
             {% endif %}
                 <div class="mod-icon">{{ m.icon }}</div>
                 <div class="mod-body">
-                    <div class="mod-num">Module {{ order }} of {{ total_modules }}</div>
+                    <div class="mod-num">Section {{ order }} of {{ total_modules }}</div>
                     <div class="mod-title">{{ m.title }}</div>
                     <div class="mod-sub">{{ m.subtitle }}</div>
                     {% if enrollment and mp %}
-                    <div style="margin-top:0.5rem;">
-                        {% if status == 'approved' %}
+                    <div class="mod-meta">
+                        {% if is_approved %}
                         <span class="mod-status approved">✓ Complete</span>
-                        {% elif status == 'in_progress' %}
-                            {% if hw and hw.status == 'pending_review' %}
-                            <span class="mod-status in-progress">Homework submitted</span>
-                            {% else %}
-                            <span class="mod-status in-progress">In Progress</span>
-                            {% endif %}
-                        {% elif status == 'revision_requested' %}
-                        <span class="mod-status revision">Revision needed</span>
+                        {% elif has_draft %}
+                        <span class="mod-status has-draft">Draft saved</span>
+                        {% elif status == 'in_progress' or status == 'revision_requested' %}
+                        <span class="mod-status in-progress">In Progress</span>
+                        {% endif %}
+                        {% if mc and mc.word_count %}
+                        <span class="mod-word-count">{{ mc.word_count }} words</span>
                         {% endif %}
                     </div>
                     {% endif %}
@@ -207,10 +214,10 @@
                 {% if is_locked %}
                 <div class="mod-lock">🔒</div>
                 {% elif is_approved %}
-                <div style="position:absolute;top:0.875rem;right:0.875rem;color:#16a34a;font-size:1.1rem;">✓</div>
+                <div class="mod-check">✓</div>
                 {% elif is_current %}
                 <div style="position:absolute;top:0.875rem;right:0.875rem;">
-                    <span style="font-size:0.75rem;background:var(--primary);color:white;padding:0.2rem 0.5rem;border-radius:20px;font-weight:600;">Current</span>
+                    <span style="font-size:0.7rem;background:var(--primary);color:white;padding:0.175rem 0.5rem;border-radius:20px;font-weight:600;">Current</span>
                 </div>
                 {% endif %}
             {% if not is_locked and enrollment %}
@@ -223,8 +230,8 @@
 
     {% if not enrollment %}
     <div style="margin-top:1.5rem;text-align:center;">
-        <p style="color:var(--gray-500);font-size:0.875rem;">Or, if your proposal is already written:</p>
-        <a href="{{ url_for('index') }}" style="color:var(--primary);font-weight:600;font-size:0.875rem;">Submit an existing proposal for evaluation →</a>
+        <p style="color:var(--gray-500);font-size:0.875rem;">Already have a finished proposal?</p>
+        <a href="{{ url_for('index') }}" style="color:var(--primary);font-weight:600;font-size:0.875rem;">Upload it for evaluation instead →</a>
     </div>
     {% endif %}
 </div>

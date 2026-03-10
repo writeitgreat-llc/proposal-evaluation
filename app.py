@@ -534,6 +534,19 @@ class HomeworkSubmission(db.Model):
     review_email_sent = db.Column(db.Boolean, default=False)
 
 
+class CoachingModuleContent(db.Model):
+    """Autosaved draft content for each coaching module — the living proposal sections"""
+    __tablename__ = 'coaching_module_content'
+    id = db.Column(db.Integer, primary_key=True)
+    enrollment_id = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'), nullable=False)
+    module_order = db.Column(db.Integer, nullable=False)
+    content = db.Column(db.Text)
+    word_count = db.Column(db.Integer, default=0)
+    last_saved_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('enrollment_id', 'module_order'),)
+
+
 @login_manager.user_loader
 def load_user(user_id):
     """Load user from session — checks user_type to pick the right model"""
@@ -2026,18 +2039,20 @@ def author_coaching_dashboard():
         all_progress = list(enrollment.module_progress.order_by(
             AuthorModuleProgress.module_order).all())
         completed_count = sum(1 for mp in all_progress if mp.status == 'approved')
-        # Latest homework per module for display
-        latest_hw = {}
+        # Saved draft content per module
+        saved_content = {}
         for mp in all_progress:
-            hw = HomeworkSubmission.query.filter_by(
+            mc = CoachingModuleContent.query.filter_by(
                 enrollment_id=enrollment.id,
                 module_order=mp.module_order
-            ).order_by(HomeworkSubmission.submitted_at.desc()).first()
-            latest_hw[mp.module_order] = hw
+            ).first()
+            saved_content[mp.module_order] = mc
+        has_any_content = any(mc and mc.content for mc in saved_content.values())
     else:
         all_progress = []
         completed_count = 0
-        latest_hw = {}
+        saved_content = {}
+        has_any_content = False
 
     return render_template(
         'author_coaching_dashboard.html',
@@ -2045,7 +2060,8 @@ def author_coaching_dashboard():
         modules=COACHING_MODULES,
         all_progress=all_progress,
         completed_count=completed_count,
-        latest_hw=latest_hw,
+        saved_content=saved_content,
+        has_any_content=has_any_content,
         total_modules=len(COACHING_MODULES),
     )
 
@@ -2128,10 +2144,18 @@ def author_coaching_module(module_order):
         enrollment_id=enrollment.id, module_order=module_order
     ).order_by(CoachingChatMessage.created_at).all()
 
-    # Latest homework submission for this module
-    latest_hw = HomeworkSubmission.query.filter_by(
+    # Autosaved draft content
+    saved_content = CoachingModuleContent.query.filter_by(
+        enrollment_id=enrollment.id, module_order=module_order).first()
+
+    # Latest submission (for feedback display after "Mark Complete")
+    latest_submission = HomeworkSubmission.query.filter_by(
         enrollment_id=enrollment.id, module_order=module_order
     ).order_by(HomeworkSubmission.submitted_at.desc()).first()
+
+    # Map module order → section key for feedback API
+    section_keys = {1:'hook', 2:'audience', 3:'comps', 4:'credentials',
+                    5:'outline', 6:'writing', 7:'marketing'}
 
     return render_template(
         'author_coaching_module.html',
@@ -2139,7 +2163,9 @@ def author_coaching_module(module_order):
         module_info=module_info,
         module_progress=mp,
         chat_messages=chat_messages,
-        latest_hw=latest_hw,
+        saved_content=saved_content,
+        latest_submission=latest_submission,
+        section_key=section_keys.get(module_order, 'hook'),
         total_modules=len(COACHING_MODULES),
     )
 
@@ -2216,6 +2242,81 @@ def api_coaching_chat():
     except Exception as e:
         print(f'/api/coaching/chat error: {e}')
         return jsonify({'success': False, 'error': 'Could not get a response. Please try again.'})
+
+
+@app.route('/api/coaching/content/save', methods=['POST'])
+def api_coaching_content_save():
+    """Autosave draft content for a coaching module (upsert)"""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'success': False, 'error': 'Not authenticated.'})
+    try:
+        data = request.get_json(force=True) or {}
+        enrollment_id = data.get('enrollment_id')
+        module_order = int(data.get('module_order', 0))
+        content = data.get('content', '')
+
+        if not enrollment_id or not module_order:
+            return jsonify({'success': False, 'error': 'Missing fields.'})
+
+        enrollment = CoachingEnrollment.query.filter_by(
+            id=enrollment_id, author_id=current_user.id).first()
+        if not enrollment:
+            return jsonify({'success': False, 'error': 'Enrollment not found.'})
+
+        word_count = len(content.split()) if content else 0
+
+        mc = CoachingModuleContent.query.filter_by(
+            enrollment_id=enrollment_id, module_order=module_order).first()
+        if mc:
+            mc.content = content
+            mc.word_count = word_count
+            mc.last_saved_at = datetime.utcnow()
+        else:
+            mc = CoachingModuleContent(
+                enrollment_id=enrollment_id,
+                module_order=module_order,
+                content=content,
+                word_count=word_count,
+            )
+            db.session.add(mc)
+        db.session.commit()
+        return jsonify({'success': True, 'word_count': word_count})
+    except Exception as e:
+        print(f'/api/coaching/content/save error: {e}')
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'Save failed.'})
+
+
+@app.route('/author/coaching/proposal')
+def author_coaching_proposal():
+    """Compiled draft proposal — all module content in one readable view"""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return redirect(url_for('author_login'))
+
+    enrollment = CoachingEnrollment.query.filter_by(
+        author_id=current_user.id).order_by(
+        CoachingEnrollment.enrolled_at.desc()).first()
+    if not enrollment:
+        return redirect(url_for('author_coaching_dashboard'))
+
+    sections = []
+    for m in COACHING_MODULES:
+        mc = CoachingModuleContent.query.filter_by(
+            enrollment_id=enrollment.id, module_order=m['order']).first()
+        mp = AuthorModuleProgress.query.filter_by(
+            enrollment_id=enrollment.id, module_order=m['order']).first()
+        sections.append({
+            'module': m,
+            'content': mc.content if mc else '',
+            'word_count': mc.word_count if mc else 0,
+            'status': mp.status if mp else 'locked',
+        })
+
+    total_words = sum(s['word_count'] for s in sections)
+    return render_template('author_coaching_proposal.html',
+                           enrollment=enrollment,
+                           sections=sections,
+                           total_words=total_words)
 
 
 @app.route('/api/coaching/homework', methods=['POST'])
@@ -4305,6 +4406,10 @@ def run_migrations():
     if not inspector.has_table('homework_submission'):
         HomeworkSubmission.__table__.create(db.engine)
         print("Migration: created homework_submission table")
+
+    if not inspector.has_table('coaching_module_content'):
+        CoachingModuleContent.__table__.create(db.engine)
+        print("Migration: created coaching_module_content table")
 
 
 # ============================================================================

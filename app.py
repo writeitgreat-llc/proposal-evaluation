@@ -4755,6 +4755,9 @@ def run_migrations():
         # Add columns added in v2 that may be missing from the first-deployed schema
         ce_cols = [c['name'] for c in inspector.get_columns('coaching_enrollment')]
         with db.engine.connect() as conn:
+            if 'book_title' not in ce_cols:
+                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN book_title VARCHAR(500)'))
+                print("Migration: added coaching_enrollment.book_title")
             if 'welcome_email_sent' not in ce_cols:
                 conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN welcome_email_sent BOOLEAN DEFAULT FALSE'))
                 print("Migration: added coaching_enrollment.welcome_email_sent")

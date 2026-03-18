@@ -2587,12 +2587,10 @@ def api_coaching_homework_submit():
 
             next_order = module_order + 1
             if next_order <= len(COACHING_MODULES):
-                # Unlock next module
-                next_mp = AuthorModuleProgress.query.filter_by(
-                    enrollment_id=enrollment_id, module_order=next_order).first()
-                if next_mp:
-                    next_mp.status = 'in_progress'
-                    next_mp.unlocked_at = datetime.utcnow()
+                # Unlock next module — create the row if it was somehow deleted
+                next_mp = _get_or_create_module_progress(enrollment_id, next_order)
+                next_mp.status = 'in_progress'
+                next_mp.unlocked_at = datetime.utcnow()
                 enrollment.current_module = next_order
 
             else:
@@ -4760,7 +4758,46 @@ def run_migrations():
         CoachingModuleContent.__table__.create(db.engine)
         print("Migration: created coaching_module_content table")
 
-    # Back to 7 modules — no orphaned rows to clean up.
+    # Back to 7 modules — repair any enrollments that have missing progress rows
+    # (caused by the 6-module migration that deleted module-7 rows).
+    if inspector.has_table('coaching_enrollment') and inspector.has_table('author_module_progress'):
+        try:
+            from sqlalchemy.orm import joinedload
+            active_enrollments = CoachingEnrollment.query.filter_by(status='active').all()
+            total_modules = len(COACHING_MODULES)
+            repaired = 0
+            for enr in active_enrollments:
+                existing = {
+                    mp.module_order: mp
+                    for mp in AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).all()
+                }
+                for m in COACHING_MODULES:
+                    order = m['order']
+                    if order not in existing:
+                        # Determine what status this missing row should have
+                        if order < enr.current_module:
+                            status = 'approved'
+                            unlocked_at = datetime.utcnow()
+                        elif order == enr.current_module:
+                            status = 'in_progress'
+                            unlocked_at = datetime.utcnow()
+                        else:
+                            status = 'locked'
+                            unlocked_at = None
+                        new_mp = AuthorModuleProgress(
+                            enrollment_id=enr.id,
+                            module_order=order,
+                            status=status,
+                            unlocked_at=unlocked_at,
+                        )
+                        db.session.add(new_mp)
+                        repaired += 1
+            if repaired:
+                db.session.commit()
+                print(f"Migration: created {repaired} missing module progress row(s)")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Migration repair warning: {e}")
 
 
 # ============================================================================

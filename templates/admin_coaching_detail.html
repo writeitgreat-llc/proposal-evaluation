@@ -100,17 +100,25 @@
         </div>
         <div class="module-block-body {{ 'open' if is_open }}">
 
-            <!-- Unlock / override button -->
+            <!-- Unlock / override / approve buttons -->
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
             {% if mp.status in ('locked', 'revision_requested') %}
-            <div style="margin-bottom:1rem;">
                 <form method="POST" action="{{ url_for('admin_coaching_unlock_module', enrollment_id=enrollment.id, module_order=m.order) }}"
-                      onsubmit="return confirm('Manually unlock Module {{ m.order }} for {{ enrollment.author.name }}?')">
+                      onsubmit="return confirm('Manually unlock Section {{ m.order }} for {{ enrollment.author.name }}?')">
                     <button type="submit" class="btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;background:var(--primary);color:white;border:none;cursor:pointer;border-radius:var(--radius);">
-                        🔓 {% if mp.status == 'revision_requested' %}Override & Unlock Anyway{% else %}Unlock This Module{% endif %}
+                        🔓 {% if mp.status == 'revision_requested' %}Override & Unlock Anyway{% else %}Unlock This Section{% endif %}
                     </button>
                 </form>
-            </div>
             {% endif %}
+            {% if mp.status != 'approved' and mp.status != 'locked' %}
+                <form method="POST" action="{{ url_for('admin_coaching_approve_module', enrollment_id=enrollment.id, module_order=m.order) }}"
+                      onsubmit="return confirm('Mark Section {{ m.order }} as complete for {{ enrollment.author.name }}?')">
+                    <button type="submit" class="btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;background:#16a34a;color:white;border:none;cursor:pointer;border-radius:var(--radius);">
+                        ✓ Mark Section Complete
+                    </button>
+                </form>
+            {% endif %}
+            </div>
 
             <!-- Homework submissions -->
             {% if item.submissions %}

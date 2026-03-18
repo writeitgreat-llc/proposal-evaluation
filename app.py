@@ -4486,20 +4486,24 @@ def admin_coaching_unlock_module(enrollment_id, module_order):
     mp = AuthorModuleProgress.query.filter_by(
         enrollment_id=enrollment_id, module_order=module_order).first_or_404()
 
-    if mp.status not in ('locked', 'revision_requested'):
-        flash('Module is already in progress or approved.', 'info')
-        return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
-
-    mp.status = 'in_progress'
-    mp.unlocked_at = mp.unlocked_at or datetime.utcnow()
-
-    # If it's a higher module, also approve the previous (unless already done)
+    # Always auto-approve the previous section when unlocking, regardless of
+    # whether this module is already in progress (fixes gap where early-return
+    # prevented the previous section from being marked approved).
     if module_order > 1:
         prev_mp = AuthorModuleProgress.query.filter_by(
             enrollment_id=enrollment_id, module_order=module_order - 1).first()
         if prev_mp and prev_mp.status not in ('approved',):
             prev_mp.status = 'approved'
             prev_mp.completed_at = prev_mp.completed_at or datetime.utcnow()
+
+    if mp.status not in ('locked', 'revision_requested'):
+        # Module already accessible — just ensure prev section is approved (done above)
+        db.session.commit()
+        flash('Module is already in progress or approved.', 'info')
+        return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+    mp.status = 'in_progress'
+    mp.unlocked_at = mp.unlocked_at or datetime.utcnow()
 
     enrollment.current_module = max(enrollment.current_module, module_order)
     db.session.commit()
@@ -4513,6 +4517,27 @@ def admin_coaching_unlock_module(enrollment_id, module_order):
             pass
 
     flash(f'Module {module_order} unlocked for {author.name}.', 'success')
+    return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+
+@app.route('/admin/coaching/<int:enrollment_id>/module/<int:module_order>/approve', methods=['POST'])
+@team_required
+def admin_coaching_approve_module(enrollment_id, module_order):
+    """Admin manually marks a module as approved/complete without unlocking the next one"""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    mp = AuthorModuleProgress.query.filter_by(
+        enrollment_id=enrollment_id, module_order=module_order).first_or_404()
+
+    if mp.status == 'approved':
+        flash('Section is already marked complete.', 'info')
+        return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+    mp.status = 'approved'
+    mp.completed_at = mp.completed_at or datetime.utcnow()
+    db.session.commit()
+
+    author = enrollment.author
+    flash(f'Section {module_order} marked complete for {author.name}.', 'success')
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
 
 

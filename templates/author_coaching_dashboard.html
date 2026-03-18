@@ -21,10 +21,20 @@
     margin-top: 1.25rem;
     max-width: 680px;
 }
-.progress-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; font-size: 0.875rem; }
-.progress-track { height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; overflow: hidden; }
-.progress-fill  { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.6s ease; }
-.progress-sub   { margin-top: 0.625rem; display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.progress-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem; font-size: 0.875rem; }
+/* Section dots row */
+.section-dots { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.625rem; flex-wrap: wrap; }
+.section-dot {
+    width: 2rem; height: 2rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700; flex-shrink: 0;
+    transition: transform 0.15s;
+}
+.section-dot.done    { background: var(--accent); color: var(--accent-text); }
+.section-dot.current { background: rgba(255,255,255,0.25); color: white; border: 2px solid var(--accent); }
+.section-dot.locked  { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.4); }
+.section-dot-label { font-size: 0.6875rem; color: rgba(255,255,255,0.5); }
+.progress-sub   { margin-top: 0.5rem; display: flex; gap: 1.25rem; flex-wrap: wrap; }
 .progress-sub a, .progress-sub span { font-size: 0.8125rem; color: rgba(255,255,255,0.65); text-decoration: none; }
 .progress-sub a:hover { color: var(--accent); }
 .progress-sub a.accent-link { color: var(--accent); font-weight: 600; }
@@ -112,11 +122,22 @@
                 <span style="font-weight:600;">{{ enrollment.book_title or 'Your Proposal' }}</span>
                 <span>{{ completed_count }}/{{ total_modules }} sections complete</span>
             </div>
-            <div class="progress-track">
-                <div class="progress-fill" style="width:{{ pct }}%"></div>
+            <div class="section-dots">
+                {% for m in modules %}
+                    {% set order = m.order %}
+                    {% set mp = all_progress | selectattr('module_order', 'eq', order) | first | default(none) %}
+                    {% set dot_status = mp.status if (mp) else 'locked' %}
+                    {% if dot_status == 'approved' %}
+                        <span class="section-dot done" title="{{ m.title }}">✓</span>
+                    {% elif dot_status in ('in_progress', 'revision_requested') %}
+                        <span class="section-dot current" title="{{ m.title }}">{{ order }}</span>
+                    {% else %}
+                        <span class="section-dot locked" title="{{ m.title }}">{{ order }}</span>
+                    {% endif %}
+                {% endfor %}
+                <span class="section-dot-label">{{ pct }}%</span>
             </div>
             <div class="progress-sub">
-                <span>{{ pct }}% complete</span>
                 {% if has_any_content %}
                 <a href="{{ url_for('author_coaching_proposal') }}" class="accent-link">📄 View your draft proposal →</a>
                 {% endif %}

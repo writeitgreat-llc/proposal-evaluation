@@ -2186,6 +2186,22 @@ def author_coaching_dashboard():
 
         all_progress = list(enrollment.module_progress.order_by(
             AuthorModuleProgress.module_order).all())
+
+        # Auto-repair: if section N+1 is approved, section N must also be approved.
+        # This fixes data inconsistencies where the previous section was left in
+        # 'in_progress' when the next section was unlocked/approved.
+        progress_by_order = {mp.module_order: mp for mp in all_progress}
+        repaired = False
+        for mp in all_progress:
+            if mp.status == 'approved' and mp.module_order > 1:
+                prev = progress_by_order.get(mp.module_order - 1)
+                if prev and prev.status not in ('approved',):
+                    prev.status = 'approved'
+                    prev.completed_at = prev.completed_at or datetime.utcnow()
+                    repaired = True
+        if repaired:
+            db.session.commit()
+
         completed_count = sum(1 for mp in all_progress if mp.status == 'approved')
         # Saved draft content per module
         saved_content = {}

@@ -419,19 +419,19 @@
         </div>
         {% elif latest_submission and not is_publisher_ready and latest_submission.ai_feedback %}
         <!-- Needs-work feedback preserved on page reload -->
-        <div style="background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.5rem;">
-            <strong style="font-size:0.875rem;color:var(--gray-700);">Room for growth</strong>
+        <div id="server-feedback-block" style="background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.5rem;">
+            <strong style="font-size:0.875rem;color:var(--gray-700);">You're making great progress! Here are a few ways to strengthen this section:</strong>
             <ul style="margin:0.5rem 0 0;padding-left:1.25rem;">
                 {% for bullet in latest_submission.ai_feedback.split('\n') if bullet.strip() %}
                 <li style="font-size:0.8375rem;line-height:1.65;color:var(--gray-700);margin-bottom:0.35rem;">{{ bullet.strip() }}</li>
                 {% endfor %}
             </ul>
+            {% if module_progress.status == 'approved' and module_info.order < total_modules %}
+            <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}" class="next-mod-btn" style="margin-top:0.75rem;">
+                Continue to Module {{ module_info.order + 1 }} →
+            </a>
+            {% endif %}
         </div>
-        {% if module_progress.status == 'approved' and module_info.order < total_modules %}
-        <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}" class="next-mod-btn" style="margin-top:0.75rem;">
-            Continue to Module {{ module_info.order + 1 }} →
-        </a>
-        {% endif %}
         {% endif %}
 
         <!-- View proposal link -->
@@ -660,11 +660,14 @@
 
     function renderBullets(bullets, publisher_ready) {
         const heading = publisher_ready
-            ? `<strong style="font-size:0.875rem;color:#14532d;">✓ Publisher-ready</strong>`
-            : `<strong style="font-size:0.875rem;color:var(--gray-700);">Room for growth</strong>`;
+            ? `<strong style="font-size:0.875rem;color:#14532d;">✓ Excellent work — this section is publisher-ready!</strong>`
+            : `<strong style="font-size:0.875rem;color:var(--gray-700);">Great effort! Here are a few suggestions to make it even stronger:</strong>`;
         const wrapClass = publisher_ready ? 'feedback-approved-block' : '';
         const wrapStyle = publisher_ready ? '' : 'background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;';
         const items = (bullets || []).map(b => `<li>${fmt(b)}</li>`).join('');
+        // Hide server-rendered feedback block so there's no duplicate
+        const serverBlock = document.getElementById('server-feedback-block');
+        if (serverBlock) serverBlock.style.display = 'none';
         return `<div class="${wrapClass}" style="${wrapStyle}">${heading}<ul class="feedback-bullets-list">${items}</ul></div>`;
     }
 

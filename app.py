@@ -18,6 +18,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, session
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -2243,45 +2244,40 @@ def author_coaching_enroll():
         return redirect(url_for('author_coaching_dashboard'))
 
     if request.method == 'POST':
-        import traceback
-        from sqlalchemy import text as _text, inspect as _inspect
-
-        # Log actual DB schema for debugging
+        # Ensure all columns exist before inserting — self-healing schema patch
         try:
-            _insp = _inspect(db.engine)
-            _ce_cols = [c['name'] for c in _insp.get_columns('coaching_enrollment')]
-            print(f"DEBUG coaching_enrollment columns: {_ce_cols}")
-        except Exception as _e:
-            print(f"DEBUG could not inspect coaching_enrollment: {_e}")
+            with db.engine.begin() as _conn:
+                _conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS book_title VARCHAR(500)'))
+                _conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP'))
+                _conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS current_module INTEGER DEFAULT 1'))
+                _conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS welcome_email_sent BOOLEAN DEFAULT FALSE'))
+                _conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS complete_email_sent BOOLEAN DEFAULT FALSE'))
+        except Exception as _patch_err:
+            print(f"Schema patch error (non-fatal): {_patch_err}")
 
         book_title = request.form.get('book_title', '').strip()
-        try:
-            enrollment = CoachingEnrollment(
-                author_id=current_user.id,
-                book_title=book_title or None,
-                status='active',
-                current_module=1,
+        enrollment = CoachingEnrollment(
+            author_id=current_user.id,
+            book_title=book_title or None,
+            status='active',
+            current_module=1,
+        )
+        db.session.add(enrollment)
+        db.session.flush()
+
+        # Create module progress rows: module 1 = in_progress, rest = locked
+        for m in COACHING_MODULES:
+            status = 'in_progress' if m['order'] == 1 else 'locked'
+            unlocked_at = datetime.utcnow() if m['order'] == 1 else None
+            mp = AuthorModuleProgress(
+                enrollment_id=enrollment.id,
+                module_order=m['order'],
+                status=status,
+                unlocked_at=unlocked_at,
             )
-            db.session.add(enrollment)
-            db.session.flush()
+            db.session.add(mp)
 
-            # Create module progress rows: module 1 = in_progress, rest = locked
-            for m in COACHING_MODULES:
-                status = 'in_progress' if m['order'] == 1 else 'locked'
-                unlocked_at = datetime.utcnow() if m['order'] == 1 else None
-                mp = AuthorModuleProgress(
-                    enrollment_id=enrollment.id,
-                    module_order=m['order'],
-                    status=status,
-                    unlocked_at=unlocked_at,
-                )
-                db.session.add(mp)
-
-            db.session.commit()
-        except Exception as _enroll_err:
-            db.session.rollback()
-            print(f"ENROLL ERROR full traceback:\n{traceback.format_exc()}")
-            raise
+        db.session.commit()
 
         # Send welcome email
         try:

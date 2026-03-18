@@ -138,87 +138,90 @@ GENRE_OPTIONS = [
 COACHING_MODULES = [
     {
         'order': 1,
-        'title': 'Overview',
-        'subtitle': 'Your book\'s elevator pitch — 1 page maximum',
+        'title': 'Book Concept & Hook',
+        'subtitle': 'Craft a compelling 1-2 sentence pitch',
         'description': (
-            "This is the section that makes agents want to keep reading. "
-            "It's your entire pitch distilled into one compelling page. "
-            "Three paragraphs, each doing a specific job:\n\n"
-            "• Paragraph 1 — The big idea: the problem your book solves, your main argument, "
-            "what readers will learn, and how their lives will be different after reading it.\n"
-            "• Paragraph 2 — The reader and the moment: who exactly will buy this "
-            "(specific, not vague), and why they'll buy it NOW.\n"
-            "• Paragraph 3 — Why you: who you are, why you're uniquely positioned to write "
-            "this book, and a realistic estimate of how many copies you'll sell in year one.\n\n"
-            "WIG hook framework to get you started:\n"
+            "Every great book starts with a hook — a clear, compelling statement that tells "
+            "an editor exactly what the book is, who it's for, and why it matters now.\n\n"
+            "Use the WIG framework as a starting point:\n"
             "\"Most people believe [common misconception]. But actually, [reframe]. "
-            "And it's a much bigger deal than you think because [stakes].\""
+            "And it's a much bigger deal than you think because [stakes/consequence].\"\n\n"
+            "Adapt it freely — a strong hook sounds like something an editor would quote "
+            "back to a colleague."
         ),
         'homework_prompt': (
-            "Write your Overview (maximum 1 page / ~400 words). Three paragraphs:\n\n"
-            "Paragraph 1: Start with a powerful hook that captures the core problem or big idea. "
-            "Describe your book's main argument or framework. What will readers learn? "
-            "How will their lives be different after reading it?\n\n"
-            "Paragraph 2: Who is your ideal reader — be specific (not 'adults interested in "
-            "business' but 'mid-career professionals facing their first leadership role'). "
-            "Why is this book timely and relevant right now?\n\n"
-            "Paragraph 3: Who are you and why are you uniquely positioned to write and sell "
-            "this book? If you can, include an estimate of how many copies you'll sell in "
-            "year one of publication."
+            "Write your book hook: 1-2 sentences that describe your book, who it's for, "
+            "and why it matters now. Try the WIG framework:\n"
+            "\"Most people believe [misconception]. But actually, [reframe]. And it's a much "
+            "bigger deal than you think because [stakes].\"\n\n"
+            "Aim for clarity and specificity. A strong hook sounds like something an editor "
+            "would quote back to a colleague."
         ),
-        'homework_label': 'Overview',
-        'icon': '📖',
-        'chat_context': 'the book overview — the core idea, target reader, and why you',
+        'homework_label': 'Book Hook',
+        'icon': '🎯',
+        'chat_context': 'developing the book concept and hook',
     },
     {
         'order': 2,
-        'title': 'Marketing & Platform',
-        'subtitle': 'Show publishers you can help sell this book',
+        'title': 'Target Reader',
+        'subtitle': 'Define your ideal reader with precision',
         'description': (
-            "Publishers want to know there will be a return on their investment. "
-            "Breakeven for most publishers is around 3,000 copies sold — 10,000 means "
-            "they've made their money back and then some. Your marketing section needs "
-            "to show specific, credible plans with real numbers.\n\n"
-            "Three sections to cover:\n"
-            "1. Your Current Platform — actual follower/subscriber counts\n"
-            "2. Marketing Opportunities — media, speaking, bulk sales, endorsements\n"
-            "3. Your Marketing Commitment — what YOU will personally do to sell this book"
+            "Publishers need to know exactly who they're selling to. Vague audiences kill "
+            "proposals. Specific, well-defined readers win deals.\n\n"
+            "Not 'adults interested in business' — but 'mid-career professionals facing "
+            "their first leadership role.' The more specific, the more credible."
         ),
         'homework_prompt': (
-            "Write your Marketing & Platform section (2+ pages). Use these three headings:\n\n"
-            "**Your Current Platform**\n"
-            "Email list: ___ subscribers\n"
-            "Social media: Instagram ___ · TikTok ___ · LinkedIn ___ · Facebook ___ · other ___\n"
-            "Website: ___ monthly visitors\n"
-            "Podcast / YouTube: ___ listeners/subscribers\n"
-            "Speaking: ___ events per year, typical audience size ___\n"
-            "(No huge platform yet? Focus on engagement and growth potential.)\n\n"
-            "**Marketing Opportunities**\n"
-            "Personal network: who in your network can help promote this? "
-            "Influencers, professional associations, potential foreword writer or blurb providers.\n"
-            "Media: what podcasts, publications, or outlets are natural fits for interviews?\n"
-            "Speaking & events: conferences, workshops, events you could speak at.\n"
-            "Corporate / bulk sales: organisations or companies that might buy in bulk.\n\n"
-            "**Your Marketing Commitment**\n"
-            "Describe specifically what YOU will do to market this book. "
-            "Podcast interviews, social media campaigns, speaking engagements, "
-            "newsletter promotions — be concrete and committed. Publishers want enthusiasm."
+            "Write a 1-2 paragraph description of your ideal reader. Include:\n\n"
+            "• Their age range, life situation, or profession\n"
+            "• The specific problem or desire that brings them to your book\n"
+            "• Why they would buy YOUR book over others\n"
+            "• Why this book is timely and relevant for them RIGHT NOW\n\n"
+            "Avoid vague categories — describe a real, specific person."
         ),
-        'homework_label': 'Marketing & Platform',
-        'icon': '📣',
-        'chat_context': 'marketing platform, audience reach, and marketing commitment',
+        'homework_label': 'Target Reader Profile',
+        'icon': '👤',
+        'chat_context': 'defining the target reader and audience',
     },
     {
         'order': 3,
+        'title': 'Comparative Analysis',
+        'subtitle': 'Show where your book fits in the market',
+        'description': (
+            "Comp titles show publishers where your book lives in the market. "
+            "You're not competing with these books — you're joining a conversation.\n\n"
+            "Pro tip: browse Amazon bestseller lists in your genre by publication date. "
+            "Check Goodreads ratings and review counts for popularity signals. "
+            "Sales figures are not required — focus on audience overlap and tone.\n\n"
+            "Consider pitching your book as \u201cTitle A meets Title B.\u201d"
+        ),
+        'homework_prompt': (
+            "List 3-5 comparable titles published in the last 5 years. "
+            "For each one include:\n\n"
+            "**[Book Title] by [Author] ([Year])**\n"
+            "What it covers: brief description of the book's focus.\n"
+            "What it does well: what makes it successful?\n"
+            "How your book is different: what gap does YOUR book fill?\n\n"
+            "Then add a **Market Gap** paragraph: what unique angle, methodology, or "
+            "perspective do you bring that none of these titles offer?\n\n"
+            "Note: sales figures are not required. Titles older than 5 years are fine "
+            "as secondary comps — flag them as such."
+        ),
+        'homework_label': 'Comparative Analysis',
+        'icon': '📚',
+        'chat_context': 'comparative titles, market positioning, and market gap',
+    },
+    {
+        'order': 4,
         'title': 'Author Bio',
         'subtitle': 'Why you are the perfect person to write this book',
         'description': (
-            "Publishers buy the author first and the book idea second. "
+            "Nonfiction publishers buy the author first and the book idea second. "
             "Your bio needs to establish credibility, humanity, and a clear "
-            "throughline to your book's topic. Aim for 200–300 words (one page maximum)."
+            "throughline to your book's topic. Aim for 200-300 words (one page maximum)."
         ),
         'homework_prompt': (
-            "Write your Author Bio (200–300 words, one page maximum). Include:\n\n"
+            "Write your Author Bio (200-300 words, one page maximum). Include:\n\n"
             "• Your professional credentials and expertise relevant to this topic\n"
             "• Relevant life experiences that inform the book\n"
             "• Previous publications or media appearances\n"
@@ -233,66 +236,17 @@ COACHING_MODULES = [
         ),
         'homework_label': 'Author Bio',
         'icon': '🏆',
-        'chat_context': 'author bio — credentials, story, and unique positioning',
-    },
-    {
-        'order': 4,
-        'title': 'Comparative Analysis',
-        'subtitle': 'Show where your book fits in the market',
-        'description': (
-            "Identify 3–5 books that readers of YOUR book might also read. "
-            "You're not competing with these books — you're joining a conversation. "
-            "Focus on titles that have sold fairly well: this shows you know the market "
-            "and that similar books sell.\n\n"
-            "Pro tip: browse Amazon bestseller lists in your genre by publication date. "
-            "Check Goodreads ratings and review counts for popularity signals. "
-            "You don't need sales figures — focus on audience overlap and tone.\n\n"
-            'Consider pitching your book like \u201cTitle A meets Title B.\u201d'
-        ),
-        'homework_prompt': (
-            "Write your Comparative Analysis (1–2 pages). For each of 3–5 titles:\n\n"
-            "**Comparative Title: [Book Title] by [Author] ([Year])**\n"
-            "What it covers: brief description of the book's focus.\n"
-            "What it does well: what makes it successful?\n"
-            "How your book is different: what does YOUR book offer that this one doesn't? "
-            "What gap does it fill?\n\n"
-            "Then add a **Market Gap** paragraph: after analysing these titles, what specific "
-            "gap does your book fill? What unique angle, methodology, or perspective do you "
-            "bring? What can readers get from your book that they can't get anywhere else?\n\n"
-            "Note: sales figures are not required. Titles older than 5 years are fine as "
-            "secondary comps but flag them as such."
-        ),
-        'homework_label': 'Comparative Analysis',
-        'icon': '📚',
-        'chat_context': 'comparative titles, market positioning, and market gap',
+        'chat_context': 'author bio, credentials, and unique positioning',
     },
     {
         'order': 5,
-        'title': 'Sample Writing',
-        'subtitle': 'Show editors your voice in action',
-        'description': (
-            "Your writing sample is often the last thing editors read — but it can override "
-            "everything else. Weak writing kills strong proposals. Strong writing rescues "
-            "weak ones. Typically include Chapter 1 plus 1–2 others that showcase different "
-            "aspects of the book."
-        ),
-        'homework_prompt': (
-            "Submit 3,000–10,000 words of your strongest writing for this book. "
-            "Include 1–3 sample chapters — typically Chapter 1 plus one or two others "
-            "that showcase different aspects of the book. Choose writing that immediately "
-            "draws the reader in and reflects the tone of the full book."
-        ),
-        'homework_label': 'Sample Writing',
-        'icon': '✍️',
-        'chat_context': 'sample writing and authorial voice',
-    },
-    {
-        'order': 6,
         'title': 'Book Outline',
-        'subtitle': 'Chapter-by-chapter structure of your book',
+        'subtitle': "Map your book's narrative arc chapter by chapter",
         'description': (
-            "Give a chapter-by-chapter overview that shows the arc and structure of your book. "
-            "Each chapter summary should be 25–100 words. Show the logical flow from one "
+            "A strong chapter outline shows publishers you've thought through how the book "
+            "actually works — not just what it's about, but how it delivers on its promise "
+            "from beginning to end. Structure is argument.\n\n"
+            "Each chapter summary should be 25-100 words. Show the logical flow from one "
             "chapter to the next — the structure should tell a story with momentum."
         ),
         'homework_prompt': (
@@ -301,14 +255,72 @@ COACHING_MODULES = [
             "Summarise what this chapter covers. What story will you tell? What key concepts "
             "will you introduce? What will readers learn or feel by the end?\n\n"
             "**Chapter 2: [Title]**\n"
-            "Continue with chapter summaries (25–100 words each). Show the logical flow "
+            "Continue with chapter summaries (25-100 words each). Show the logical flow "
             "from one chapter to the next.\n\n"
             "Continue through all chapters. Include an introduction and conclusion. "
-            "Aim for at least 8–10 chapters unless the book structure calls for fewer."
+            "Aim for at least 8-10 chapters unless your structure calls for fewer."
         ),
         'homework_label': 'Book Outline',
         'icon': '📋',
         'chat_context': 'book outline and chapter structure',
+    },
+    {
+        'order': 6,
+        'title': 'Sample Writing',
+        'subtitle': 'Show editors your voice in action',
+        'description': (
+            "Your writing sample is often the last thing editors read — but it can override "
+            "everything else. Weak writing kills strong proposals. Strong writing rescues "
+            "weak ones. This section gives you no room to hide.\n\n"
+            "Typically include Chapter 1 plus 1-2 others that showcase different aspects "
+            "of the book."
+        ),
+        'homework_prompt': (
+            "Submit 3,000-10,000 words of your strongest writing for this book. "
+            "Include 1-3 sample chapters — typically Chapter 1 plus one or two others "
+            "that showcase different aspects of the book. Choose writing that immediately "
+            "draws the reader in and reflects the tone of the full book."
+        ),
+        'homework_label': 'Sample Writing',
+        'icon': '✍️',
+        'chat_context': 'sample writing and authorial voice',
+    },
+    {
+        'order': 7,
+        'title': 'Marketing & Platform',
+        'subtitle': "Show publishers you can help sell this book",
+        'description': (
+            "Publishers want to know there will be a return on their investment. "
+            "Breakeven for most publishers is around 3,000 copies sold — 10,000 means "
+            "they've made their money back and then some.\n\n"
+            "Three sections to cover:\n"
+            "1. Your Current Platform — real numbers\n"
+            "2. Marketing Opportunities — media, speaking, bulk sales, endorsements\n"
+            "3. Your Marketing Commitment — what YOU will personally do"
+        ),
+        'homework_prompt': (
+            "Write your Marketing & Platform section (2+ pages). Use these three headings:\n\n"
+            "**Your Current Platform**\n"
+            "Email list: ___ subscribers\n"
+            "Social media: Instagram ___ · TikTok ___ · LinkedIn ___ · Facebook ___ · other ___\n"
+            "Website: ___ monthly visitors\n"
+            "Podcast / YouTube: ___ listeners/subscribers\n"
+            "Speaking: ___ events per year, typical audience size ___\n"
+            "(No huge platform yet? Focus on engagement and growth potential.)\n\n"
+            "**Marketing Opportunities**\n"
+            "Personal network: who in your network can help promote this? "
+            "Influencers, professional associations, potential foreword writer or blurb providers.\n"
+            "Media: podcasts, publications, or outlets that are natural fits.\n"
+            "Speaking & events: conferences, workshops, events you could speak at.\n"
+            "Corporate / bulk sales: organisations or companies that might buy in bulk.\n\n"
+            "**Your Marketing Commitment**\n"
+            "Describe specifically what YOU will do to market this book. "
+            "Podcast interviews, social media campaigns, speaking engagements, "
+            "newsletter promotions — be concrete and committed. Publishers want enthusiasm."
+        ),
+        'homework_label': 'Marketing & Platform',
+        'icon': '📣',
+        'chat_context': 'marketing platform, audience reach, and marketing commitment',
     },
 ]
 
@@ -2269,7 +2281,7 @@ def author_coaching_module(module_order):
     ).order_by(HomeworkSubmission.submitted_at.desc()).first()
 
     # Map module order → section key for feedback API
-    section_keys = {1:'overview', 2:'marketing', 3:'bio', 4:'comps', 5:'writing', 6:'outline'}
+    section_keys = {1:'hook', 2:'audience', 3:'comps', 4:'bio', 5:'outline', 6:'writing', 7:'marketing'}
 
     # All module progress (for stepper nav + progress bar)
     all_module_progress = {
@@ -4748,20 +4760,7 @@ def run_migrations():
         CoachingModuleContent.__table__.create(db.engine)
         print("Migration: created coaching_module_content table")
 
-    # Restructure from 7 modules → 6 modules.
-    # Delete any orphaned module_order=7 rows so the UI stays clean.
-    if inspector.has_table('author_module_progress'):
-        with db.engine.connect() as conn:
-            deleted = conn.execute(text('DELETE FROM author_module_progress WHERE module_order = 7'))
-            if deleted.rowcount:
-                print(f"Migration: removed {deleted.rowcount} orphaned module-7 progress row(s)")
-            conn.commit()
-    if inspector.has_table('coaching_module_content'):
-        with db.engine.connect() as conn:
-            deleted = conn.execute(text('DELETE FROM coaching_module_content WHERE module_order = 7'))
-            if deleted.rowcount:
-                print(f"Migration: removed {deleted.rowcount} orphaned module-7 content row(s)")
-            conn.commit()
+    # Back to 7 modules — no orphaned rows to clean up.
 
 
 # ============================================================================

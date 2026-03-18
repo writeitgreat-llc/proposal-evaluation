@@ -256,8 +256,7 @@
 /* ── Formatting toolbar ─────────────────────────────────── */
 .fmt-toolbar {
     display: flex; align-items: center; gap: 2px;
-    padding: 0.35rem 0.625rem; border-bottom: 1px solid var(--gray-100);
-    background: var(--gray-50); flex-wrap: wrap;
+    flex-wrap: wrap;
 }
 .fmt-btn {
     height: 26px; min-width: 26px; padding: 0 6px;
@@ -350,18 +349,6 @@
                 </span>
             </div>
 
-            {% if not is_publisher_ready %}
-            <div class="fmt-toolbar" id="fmt-toolbar">
-                <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
-                <button class="fmt-btn italic" data-action="italic"  title="Italic (Ctrl+I)"><i>I</i></button>
-                <div class="fmt-toolbar-sep"></div>
-                <button class="fmt-btn" data-action="h2" title="Heading 2" style="font-size:0.75rem;font-weight:700;">H2</button>
-                <button class="fmt-btn" data-action="h3" title="Heading 3" style="font-size:0.75rem;">H3</button>
-                <div class="fmt-toolbar-sep"></div>
-                <button class="fmt-btn" data-action="bullet" title="Bullet list" style="font-size:1rem;line-height:1;">•</button>
-            </div>
-            {% endif %}
-
             <div class="writing-guide">
                 <strong>What to write</strong>
                 {{ module_info.homework_prompt }}
@@ -375,6 +362,17 @@
 
             <div class="writing-footer">
                 <span class="word-count"><span id="word-count">{{ saved_content.word_count if saved_content else 0 }}</span> words</span>
+                {% if not is_publisher_ready %}
+                <div class="fmt-toolbar" id="fmt-toolbar">
+                    <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
+                    <button class="fmt-btn italic" data-action="italic"  title="Italic (Ctrl+I)"><i>I</i></button>
+                    <div class="fmt-toolbar-sep"></div>
+                    <button class="fmt-btn" data-action="h2" title="Heading 2" style="font-size:0.75rem;font-weight:700;">H2</button>
+                    <button class="fmt-btn" data-action="h3" title="Heading 3" style="font-size:0.75rem;">H3</button>
+                    <div class="fmt-toolbar-sep"></div>
+                    <button class="fmt-btn" data-action="bullet" title="Bullet list" style="font-size:1rem;line-height:1;">•</button>
+                </div>
+                {% endif %}
                 <div class="writing-actions">
                     {% if not is_publisher_ready %}
                     <button id="btn-research" class="btn" style="background:white;border:1.5px solid #7c3aed;color:#7c3aed;font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
@@ -446,7 +444,7 @@
     </div>
 
     <!-- Persistent coaching upsell widget — shown from module 6 onwards -->
-    {% if module_info.order >= 5 %}
+    {% if module_info.order >= 6 %}
     <div class="coaching-upsell-widget" id="coaching-upsell">
         <button class="coaching-upsell-close" onclick="document.getElementById('coaching-upsell').style.display='none'" aria-label="Close">✕</button>
         <p>Want to take your ideas further? Work with a coach.</p>

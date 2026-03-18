@@ -162,10 +162,28 @@
     background: linear-gradient(135deg, #f0fdf4, #dcfce7);
     border: 1px solid #86efac; border-radius: var(--radius); padding: 1rem 1.25rem;
 }
-.feedback-revision-block {
-    background: #fef9c3; border: 1px solid #fde047; border-radius: var(--radius); padding: 1rem 1.25rem;
+.feedback-block-text { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-top: 0.5rem; }
+.feedback-bullets-list { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+.feedback-bullets-list li { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-bottom: 0.375rem; }
+
+/* ── Auto-expand textarea ───────────────────────────────── */
+#content-textarea { min-height: 280px; height: auto; overflow-y: hidden; }
+
+/* ── Corner coaching upsell (M6+) ──────────────────────── */
+.coaching-upsell-widget {
+    position: fixed; bottom: 1.25rem; right: 1.25rem; z-index: 100;
+    background: white; border: 1.5px solid #c4b5fd; border-radius: 12px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.12); padding: 0.75rem 1rem;
+    max-width: 220px; font-size: 0.8125rem;
 }
-.feedback-block-text { font-size: 0.875rem; line-height: 1.65; color: var(--gray-700); margin-top: 0.5rem; white-space: pre-wrap; }
+.coaching-upsell-widget p { margin: 0 0 0.5rem; color: var(--gray-700); line-height: 1.5; }
+.coaching-upsell-widget a { color: #7c3aed; font-weight: 600; text-decoration: none; font-size: 0.8rem; }
+.coaching-upsell-widget a:hover { text-decoration: underline; }
+.coaching-upsell-close {
+    position: absolute; top: 0.3rem; right: 0.5rem;
+    background: none; border: none; font-size: 0.9rem; color: var(--gray-400);
+    cursor: pointer; line-height: 1;
+}
 .next-mod-btn {
     display: block; width: 100%; text-align: center; padding: 0.875rem;
     background: var(--primary); color: white; border-radius: var(--radius);
@@ -332,8 +350,8 @@
                     <button id="btn-research" class="btn" style="background:white;border:1.5px solid #7c3aed;color:#7c3aed;font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
                         🔍 Research
                     </button>
-                    <button id="btn-get-feedback" class="btn" style="background:white;border:1.5px solid var(--primary);color:var(--primary);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
-                        Get AI Feedback
+                    <button id="btn-save-continue" class="btn" style="background:white;border:1.5px solid var(--gray-300);color:var(--gray-600);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
+                        💾 Save &amp; Continue Later
                     </button>
                     <button id="btn-mark-complete" class="btn btn-primary" style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
                         Mark Complete &amp; Continue →
@@ -353,9 +371,6 @@
 
         <!-- Feedback display (populated by JS) -->
         <div class="feedback-panel" id="feedback-panel">
-            <!-- Bullets from "Get AI Feedback" -->
-            <div class="feedback-bullets" id="feedback-bullets" style="display:none;"></div>
-            <!-- Result from "Mark Complete" -->
             <div id="complete-result" style="display:none;"></div>
         </div>
 
@@ -375,24 +390,14 @@
             <div class="feedback-block-text">{{ latest_submission.ai_feedback }}</div>
         </div>
         {% elif latest_submission and not is_publisher_ready and latest_submission.ai_feedback %}
-        <!-- Needs-work feedback preserved on page reload, with upsell -->
-        <div class="feedback-revision-block" style="margin-top:0.5rem;">
-            <strong style="color:#854d0e;">⚠️ This section needs more work before it's publisher-ready</strong>
-            <div class="feedback-block-text">{{ latest_submission.ai_feedback }}</div>
-        </div>
-        <div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.75rem;">
-            <p style="margin:0 0 0.5rem;font-size:0.875rem;font-weight:600;color:#9a3412;">Want to get this section to the next level?</p>
-            <p style="margin:0 0 0.875rem;font-size:0.8375rem;color:#78350f;line-height:1.6;">Our team can work through this with you directly — either in a focused one-hour session or as part of ongoing coaching.</p>
-            <div style="display:flex;gap:0.625rem;flex-wrap:wrap;">
-                <a href="https://www.writeitgreat.com/services/author-coaching" target="_blank"
-                   style="display:inline-block;padding:0.5rem 1rem;background:#9a3412;color:white;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
-                    Explore 1-on-1 Coaching →
-                </a>
-                <a href="mailto:hello@writeitgreat.com?subject=1-Hour%20Brainstorm%20Session&body=Hi%2C%20I%27d%20love%20to%20book%20a%201-hour%20brainstorm%20session%20to%20work%20on%20my%20book%20proposal."
-                   style="display:inline-block;padding:0.5rem 1rem;background:white;border:1.5px solid #9a3412;color:#9a3412;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
-                    Book a 1-Hour Brainstorm
-                </a>
-            </div>
+        <!-- Needs-work feedback preserved on page reload -->
+        <div style="background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.5rem;">
+            <strong style="font-size:0.875rem;color:var(--gray-700);">Room for growth</strong>
+            <ul style="margin:0.5rem 0 0;padding-left:1.25rem;">
+                {% for bullet in latest_submission.ai_feedback.split('\n') if bullet.strip() %}
+                <li style="font-size:0.8375rem;line-height:1.65;color:var(--gray-700);margin-bottom:0.35rem;">{{ bullet.strip() }}</li>
+                {% endfor %}
+            </ul>
         </div>
         {% if module_progress.status == 'approved' and module_info.order < total_modules %}
         <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}" class="next-mod-btn" style="margin-top:0.75rem;">
@@ -409,6 +414,16 @@
         </div>
 
     </div>
+
+    <!-- Persistent coaching upsell widget — shown from module 6 onwards -->
+    {% if module_info.order >= 6 %}
+    <div class="coaching-upsell-widget" id="coaching-upsell">
+        <button class="coaching-upsell-close" onclick="document.getElementById('coaching-upsell').style.display='none'" aria-label="Close">✕</button>
+        <p>Want to take your ideas further? Work with a coach.</p>
+        <a href="https://www.writeitgreat.com/services/author-coaching" target="_blank">Explore 1-on-1 Coaching →</a><br>
+        <a href="mailto:hello@writeitgreat.com?subject=1-Hour%20Brainstorm%20Session&body=Hi%2C%20I%27d%20love%20to%20book%20a%201-hour%20brainstorm%20session." style="margin-top:0.25rem;display:inline-block;">Book a 1-Hour Brainstorm</a>
+    </div>
+    {% endif %}
 
     <!-- RIGHT: Brainstorm chat sidebar -->
     <div class="chat-sidebar">
@@ -462,6 +477,7 @@
     const BOOK_TITLE     = '{{ (enrollment.book_title or '') | e }}';
     const TOTAL_MODULES  = {{ total_modules }};
     const IS_APPROVED    = {{ 'true' if (latest_submission and latest_submission.ai_approved) else 'false' }};
+    const HOOK_CONTENT   = {{ hook_content | tojson }};
 
     /* ── Helpers ─────────────────────────────────────── */
     function esc(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -538,150 +554,111 @@
         updateWordCount();
     }
 
-    /* ── Get AI Feedback ─────────────────────────────── */
-    const feedbackPanel  = document.getElementById('feedback-panel');
-    const feedbackBullets = document.getElementById('feedback-bullets');
-    const getFeedbackBtn = document.getElementById('btn-get-feedback');
-
-    if (getFeedbackBtn) {
-        getFeedbackBtn.addEventListener('click', async () => {
-            const content = textarea ? textarea.value.trim() : '';
-            if (content.length < 50) {
-                alert('Write at least a paragraph before requesting feedback.');
-                return;
-            }
-            getFeedbackBtn.disabled = true;
-            getFeedbackBtn.textContent = 'Analysing…';
-            feedbackPanel.style.display = 'block';
-            feedbackBullets.style.display = 'block';
-            feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--gray-500);font-size:0.875rem;">Reading your draft…</p>';
-
-            try {
-                const r = await fetch('/api/coach-feedback', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                        section: SECTION_KEY,
-                        text: content,
-                        book_title: BOOK_TITLE
-                    })
-                });
-                const d = await r.json();
-                if (d.success && d.bullets && d.bullets.length) {
-                    feedbackBullets.innerHTML = '<h4>AI Feedback on your draft</h4><ul>' +
-                        d.bullets.map(b => `<li>${fmt(b)}</li>`).join('') + '</ul>';
-                } else {
-                    feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--gray-500);font-size:0.875rem;">Could not generate feedback. Try again.</p>';
-                }
-            } catch(e) {
-                feedbackBullets.innerHTML = '<h4>AI Feedback</h4><p style="color:var(--error);font-size:0.875rem;">Network error. Please try again.</p>';
-            }
-            getFeedbackBtn.disabled = false;
-            getFeedbackBtn.textContent = 'Get AI Feedback';
-            feedbackBullets.scrollIntoView({behavior:'smooth', block:'nearest'});
-        });
+    /* ── Auto-expand textarea ────────────────────────── */
+    function autoExpand(el) {
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+    }
+    if (textarea) {
+        textarea.addEventListener('input', () => autoExpand(textarea));
+        autoExpand(textarea); // expand on load for pre-filled content
     }
 
-    /* ── Mark Complete ───────────────────────────────── */
+    /* ── Mark Complete & Continue (includes AI review) ── */
+    const feedbackPanel   = document.getElementById('feedback-panel');
     const markCompleteBtn = document.getElementById('btn-mark-complete');
     const completeResult  = document.getElementById('complete-result');
+
+    function renderBullets(bullets, publisher_ready) {
+        const heading = publisher_ready
+            ? `<strong style="font-size:0.875rem;color:#14532d;">✓ Publisher-ready</strong>`
+            : `<strong style="font-size:0.875rem;color:var(--gray-700);">Room for growth</strong>`;
+        const wrapClass = publisher_ready ? 'feedback-approved-block' : '';
+        const wrapStyle = publisher_ready ? '' : 'background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;';
+        const items = (bullets || []).map(b => `<li>${fmt(b)}</li>`).join('');
+        return `<div class="${wrapClass}" style="${wrapStyle}">${heading}<ul class="feedback-bullets-list">${items}</ul></div>`;
+    }
 
     if (markCompleteBtn) {
         markCompleteBtn.addEventListener('click', async () => {
             const content = textarea ? textarea.value.trim() : '';
             if (content.length < 100) {
-                alert('Please write more before marking this section complete. The more detail you provide, the better the final proposal.');
+                alert('Please write more before marking this section complete.');
                 return;
             }
-            if (!confirm('Submit this section for AI review? The AI will check if it\'s ready to advance.')) return;
 
             markCompleteBtn.disabled = true;
             markCompleteBtn.textContent = 'Reviewing…';
-            if (getFeedbackBtn) getFeedbackBtn.disabled = true;
             feedbackPanel.style.display = 'block';
-            feedbackBullets.style.display = 'none';
             completeResult.style.display = 'block';
             completeResult.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem;padding:0.5rem 0;">Reviewing your section…</p>';
 
-            // Save first, then submit
             await saveContent();
 
             try {
                 const r = await fetch('/api/coaching/homework', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                        enrollment_id: ENROLLMENT_ID,
-                        module_order: MODULE_ORDER,
-                        content: content
-                    })
+                    body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, content })
                 });
                 const d = await r.json();
 
                 if (!d.success) {
                     markCompleteBtn.disabled = false;
                     markCompleteBtn.textContent = 'Mark Complete & Continue →';
-                    if (getFeedbackBtn) getFeedbackBtn.disabled = false;
                     completeResult.innerHTML = `<p style="color:var(--error);font-size:0.875rem;">${esc(d.error || 'Something went wrong.')}</p>`;
                     return;
                 }
 
-                if (d.approved) {
-                    const nextLink = d.program_complete
-                        ? `<a href="/author/coaching/proposal" class="next-mod-btn">🎉 View Your Complete Draft Proposal →</a>`
-                        : d.next_module
-                            ? `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Module ${d.next_module} →</a>`
-                            : `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
+                const nextLink = d.program_complete
+                    ? `<a href="/author/coaching/proposal" class="next-mod-btn">View Your Complete Draft Proposal →</a>`
+                    : d.next_module
+                        ? `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Module ${d.next_module} →</a>`
+                        : `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
 
-                    if (d.publisher_ready) {
-                        completeResult.innerHTML = `
-                            <div class="feedback-approved-block">
-                                <strong style="color:#14532d;">✓ Publisher-ready!</strong>
-                                <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
-                            </div>
-                            ${nextLink}`;
-                    } else {
-                        completeResult.innerHTML = `
-                            <div class="feedback-revision-block">
-                                <strong style="color:#854d0e;">⚠️ This section needs more work before it's publisher-ready</strong>
-                                <div class="feedback-block-text">${d.feedback ? fmt(d.feedback) : ''}</div>
-                            </div>
-                            <div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.75rem;">
-                                <p style="margin:0 0 0.5rem;font-size:0.875rem;font-weight:600;color:#9a3412;">Want to get this section to the next level?</p>
-                                <p style="margin:0 0 0.875rem;font-size:0.8375rem;color:#78350f;line-height:1.6;">Our team can work through this with you directly — either in a focused one-hour session or as part of ongoing coaching.</p>
-                                <div style="display:flex;gap:0.625rem;flex-wrap:wrap;">
-                                    <a href="https://www.writeitgreat.com/services/author-coaching" target="_blank"
-                                       style="display:inline-block;padding:0.5rem 1rem;background:#9a3412;color:white;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
-                                        Explore 1-on-1 Coaching →
-                                    </a>
-                                    <a href="mailto:hello@writeitgreat.com?subject=1-Hour%20Brainstorm%20Session&body=Hi%2C%20I%27d%20love%20to%20book%20a%201-hour%20brainstorm%20session%20to%20work%20on%20my%20book%20proposal."
-                                       style="display:inline-block;padding:0.5rem 1rem;background:white;border:1.5px solid #9a3412;color:#9a3412;border-radius:var(--radius);font-size:0.8125rem;font-weight:600;text-decoration:none;">
-                                        Book a 1-Hour Brainstorm
-                                    </a>
-                                </div>
-                            </div>
-                            ${nextLink}`;
-                    }
-                    if (d.publisher_ready) {
-                        // Only lock editing when publisher-ready
-                        if (textarea) textarea.disabled = true;
-                        markCompleteBtn.style.display = 'none';
-                        if (getFeedbackBtn) getFeedbackBtn.style.display = 'none';
-                        if (researchBtn) researchBtn.style.display = 'none';
-                    } else {
-                        // Not publisher-ready: keep editing open, re-enable buttons
-                        markCompleteBtn.disabled = false;
-                        markCompleteBtn.textContent = 'Mark Complete & Continue →';
-                        if (getFeedbackBtn) getFeedbackBtn.disabled = false;
-                    }
+                completeResult.innerHTML = renderBullets(d.feedback_bullets, d.publisher_ready) + nextLink;
+
+                if (d.publisher_ready) {
+                    if (textarea) textarea.disabled = true;
+                    markCompleteBtn.style.display = 'none';
+                    if (researchBtn) researchBtn.style.display = 'none';
+                    const scBtn = document.getElementById('btn-save-continue');
+                    if (scBtn) scBtn.style.display = 'none';
+                } else {
+                    markCompleteBtn.disabled = false;
+                    markCompleteBtn.textContent = 'Mark Complete & Continue →';
                 }
                 completeResult.scrollIntoView({behavior:'smooth', block:'nearest'});
             } catch(e) {
                 markCompleteBtn.disabled = false;
                 markCompleteBtn.textContent = 'Mark Complete & Continue →';
-                if (getFeedbackBtn) getFeedbackBtn.disabled = false;
                 completeResult.innerHTML = '<p style="color:var(--error);font-size:0.875rem;">Network error. Please try again.</p>';
             }
+        });
+    }
+
+    /* ── Save & Continue Later ───────────────────────── */
+    const saveContinueBtn = document.getElementById('btn-save-continue');
+    if (saveContinueBtn) {
+        saveContinueBtn.addEventListener('click', async () => {
+            await saveContent();
+            saveContinueBtn.disabled = true;
+            saveContinueBtn.textContent = 'Saving…';
+            try {
+                const r = await fetch('/api/coaching/save-continue', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, content: textarea ? textarea.value : '' })
+                });
+                const d = await r.json();
+                saveContinueBtn.textContent = d.email_sent ? '✓ Saved — check your email' : '✓ Progress saved';
+            } catch(e) {
+                saveContinueBtn.textContent = '✓ Saved locally';
+            }
+            setTimeout(() => {
+                saveContinueBtn.disabled = false;
+                saveContinueBtn.textContent = '💾 Save & Continue Later';
+            }, 3000);
         });
     }
 
@@ -791,7 +768,10 @@
 
     if (researchBtn) {
         researchBtn.addEventListener('click', async () => {
-            const hook = textarea ? textarea.value.trim() : '';
+            // Use current textarea content; fall back to module 1 hook if this module is empty
+            const hook = (textarea && textarea.value.trim().length >= 20)
+                ? textarea.value.trim()
+                : HOOK_CONTENT.trim();
             if (hook.length < 20) {
                 alert('Write a bit about your book concept first — even a rough sentence — so the research agent knows what to look for.');
                 return;

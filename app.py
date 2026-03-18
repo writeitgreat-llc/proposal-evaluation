@@ -4949,6 +4949,19 @@ with app.app_context():
         run_migrations()
     except Exception as e:
         print(f"Migration note: {e}")
+    # Report actual coaching_enrollment schema so logs show what happened
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+        _cols = [c['name'] for c in _sa_inspect(db.engine).get_columns('coaching_enrollment')]
+        print(f"STARTUP schema coaching_enrollment columns: {_cols}")
+        _required = {'book_title', 'completed_at', 'current_module', 'welcome_email_sent', 'complete_email_sent'}
+        _missing = _required - set(_cols)
+        if _missing:
+            print(f"STARTUP WARNING: coaching_enrollment is missing columns: {_missing}")
+        else:
+            print("STARTUP schema OK: all coaching_enrollment columns present")
+    except Exception as _se:
+        print(f"STARTUP schema check error: {_se}")
 
 
 if __name__ == '__main__':

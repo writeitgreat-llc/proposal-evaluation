@@ -140,8 +140,23 @@ COACHING_MODULES = [
         'order': 1,
         'title': 'Your Book Concept & Hook',
         'subtitle': 'Craft a compelling 1-2 sentence pitch',
-        'description': "Every great book starts with a hook — a clear, compelling statement that tells an editor exactly what the book is, who it's for, and why it matters now. We'll develop your core concept and refine it until it's unforgettable.",
-        'homework_prompt': "Write your book hook: 1-2 sentences that describe your book, who it's for, and why it matters now. Aim for clarity and specificity. A strong hook sounds like something an editor would quote back to a colleague.",
+        'description': (
+            "Every great book starts with a hook — a clear, compelling statement that tells "
+            "an editor exactly what the book is, who it's for, and why it matters now. "
+            "At Write It Great we use this framework:\n\n"
+            "\"Most people believe [common misconception]. But actually, [reframe]. "
+            "And it's a much bigger deal than you think because [stakes/consequence].\"\n\n"
+            "Use this as a starting point, not a rigid template. We'll develop your core "
+            "concept and refine it until it's unforgettable."
+        ),
+        'homework_prompt': (
+            "Write your book hook: 1-2 sentences that describe your book, who it's for, "
+            "and why it matters now. Try the WIG framework as a starting point:\n"
+            "\"Most people believe [misconception]. But actually, [reframe]. And it's a much "
+            "bigger deal than you think because [stakes].\"\n\n"
+            "Adapt it freely — a strong hook sounds like something an editor would quote "
+            "back to a colleague."
+        ),
         'homework_label': 'Book Hook',
         'icon': '🎯',
         'chat_context': 'developing the book concept and hook',
@@ -160,21 +175,41 @@ COACHING_MODULES = [
         'order': 3,
         'title': 'Comparable Titles',
         'subtitle': 'Find the right market benchmarks',
-        'description': "Comp titles show publishers where your book lives in the market and give them realistic sales benchmarks. Getting this right demonstrates industry knowledge and separates serious proposals from amateur ones.",
-        'homework_prompt': "List 3-5 comparable titles published in the last 5 years. For each one, include the title and author, why it's a strong comp (same audience, similar topic or tone), and what your book offers that this one doesn't. Be realistic — choose books whose sales figures align with your current platform size.",
+        'description': (
+            "Comp titles show publishers where your book lives in the market. "
+            "Getting this right demonstrates industry knowledge and separates serious proposals from amateur ones.\n\n"
+            "Pro tip: Browse Amazon bestseller lists in your genre filtered by publication date. "
+            "Check Goodreads ratings and review counts for popularity signals. "
+            "You don't need sales figures — focus on audience overlap and tone."
+        ),
+        'homework_prompt': (
+            "List 3-5 comparable titles published in the last 5 years. For each one, include:\n"
+            "• Title and author\n"
+            "• Why it's a strong comp (same audience, similar topic or tone)\n"
+            "• What your book offers that this one doesn't\n\n"
+            "Note: sales figures are not required. Focus on audience fit and market positioning. "
+            "Titles older than 5 years are fine as secondary comps but flag them as such."
+        ),
         'homework_label': 'Comparable Titles',
         'icon': '📚',
         'chat_context': 'comparable titles and market positioning',
     },
     {
         'order': 4,
-        'title': 'Author Platform & Credentials',
-        'subtitle': 'Make the case for why YOU should write this book',
-        'description': "Nonfiction publishers buy the author first and the book idea second. Your credentials and platform — your ability to reach your audience — can make or break any proposal, regardless of how strong the idea is.",
-        'homework_prompt': "Write your author credentials section. Cover: your professional background and expertise relevant to this topic, any media appearances or speaking history, and your platform numbers across every channel (email list, each social platform, podcast listeners, YouTube subscribers, etc.). Be specific with numbers.",
-        'homework_label': 'Author Credentials & Platform',
+        'title': 'Author Bio',
+        'subtitle': 'Tell the story of why you are the right person to write this book',
+        'description': "Nonfiction publishers buy the author first and the book idea second. Your bio needs to establish credibility, humanity, and a clear throughline to your book's topic.",
+        'homework_prompt': (
+            "Write your author bio (2-4 paragraphs). Cover:\n"
+            "• Your professional background and expertise relevant to this topic\n"
+            "• The personal story or experience that brought you to this subject\n"
+            "• Any media appearances, speaking history, or notable achievements\n"
+            "• Why you — specifically — are the right person to write this book\n\n"
+            "Write in third person. Be specific and human, not just a list of credentials."
+        ),
+        'homework_label': 'Author Bio',
         'icon': '🏆',
-        'chat_context': 'author credentials and platform numbers',
+        'chat_context': 'author background, credentials, and personal story',
     },
     {
         'order': 5,
@@ -198,13 +233,27 @@ COACHING_MODULES = [
     },
     {
         'order': 7,
-        'title': 'Marketing Strategy & Platform',
-        'subtitle': "Build your path to the first 1,000 buyers",
-        'description': "Publishers want to know you can help sell this book. Your marketing section must show specific, credible plans — not generic promises about 'using social media.' This section often determines whether a borderline proposal gets a deal.",
-        'homework_prompt': "Write your marketing and platform section. Include: specific marketing activities you'll do (with realistic scale and timeline), your full platform numbers across all channels, any pre-order or bulk sales opportunities, speaking or event plans, media contacts, and any partnerships or endorsements you can leverage. Numbers and specificity are everything here.",
-        'homework_label': 'Marketing Strategy & Platform',
+        'title': 'Marketing & Platform',
+        'subtitle': "Show publishers you can help sell this book",
+        'description': "Publishers want to know you can help sell this book. Your marketing section must show specific, credible plans and real platform numbers — not generic promises about 'using social media.'",
+        'homework_prompt': (
+            "Complete your marketing and platform section with specific numbers and plans.\n\n"
+            "PLATFORM (fill in what applies):\n"
+            "• Email newsletter: ___ subscribers\n"
+            "• Instagram: ___ followers\n"
+            "• TikTok / YouTube / Facebook: ___ followers/subscribers\n"
+            "• Podcast (yours or as guest): ___ listeners / appearances\n"
+            "• Speaking engagements: ___ per year, typical audience size\n"
+            "• Other (newsletter swaps, Substack, community, etc.): ___\n\n"
+            "MARKETING ACTIVITIES:\n"
+            "Describe the specific, realistic marketing you will do: pre-order campaigns, "
+            "launch events, media pitches, partnerships, bulk-sale opportunities, "
+            "endorsements you can secure, and any existing media contacts. "
+            "Numbers and specificity are everything — avoid vague promises."
+        ),
+        'homework_label': 'Marketing & Platform',
         'icon': '📣',
-        'chat_context': 'marketing strategy and platform',
+        'chat_context': 'marketing strategy and platform numbers',
     },
 ]
 
@@ -1934,7 +1983,8 @@ def _build_module_system_prompt(module_info, author_name, book_title):
 FOCUS FOR THIS MODULE: {module_info['description']}
 
 YOUR COACHING APPROACH IN THIS MODULE:
-- Stay focused on {module_info['chat_context']} — don't jump ahead to other sections
+- Stay STRICTLY focused on {module_info['chat_context']}. Do NOT bring up topics from other modules (comparable titles, credentials, marketing, etc.) unless the author explicitly asks.
+- If the author asks about something outside this module's scope, acknowledge it briefly and redirect: "Great question — we'll tackle that properly in Module X. For now, let's stay focused on your {module_info['title']}."
 - Ask ONE focused question at a time. Never ask two questions at once
 - Give 2-3 sentences of specific, expert feedback after each author response, then ask your next question
 - When something is strong, say so clearly with specific praise. When something needs work, explain WHY and HOW to fix it with a concrete example
@@ -1984,11 +2034,13 @@ Evaluate this homework submission. Consider:
 Respond with a JSON object:
 {{
     "publisher_ready": true or false,
-    "feedback": "2-4 paragraphs of specific, actionable feedback. If publisher_ready, lead with genuine praise of the strongest elements and note 1-2 things to polish further. If not publisher_ready, be honest and direct about what's missing or weak, and give concrete instructions for revision.",
+    "feedback_bullets": ["bullet 1", "bullet 2", "bullet 3"],
     "word_count_adequate": true or false
 }}
 
-Set publisher_ready=true only if the submission is genuinely strong enough that an editor would take it seriously. Be honest — authors benefit from knowing where they really stand."""
+Set publisher_ready=true if the submission is genuinely strong enough that an editor would take it seriously.
+Return feedback as a JSON array of concise bullet points (3-6 bullets), not as prose paragraphs.
+Be honest but encouraging — focus on specific, actionable next steps."""
 
     try:
         response = client.chat.completions.create(
@@ -2000,13 +2052,15 @@ Set publisher_ready=true only if the submission is genuinely strong enough that 
         )
         result = json.loads(response.choices[0].message.content)
         publisher_ready = bool(result.get('publisher_ready', False))
-        feedback = result.get('feedback', 'Review complete.')
+        bullets = result.get('feedback_bullets', [])
+        if not bullets:
+            bullets = ['Review complete. Keep refining and resubmit when ready.']
         # Always advance — authors can always move to the next module.
         # publisher_ready signals quality without being a gate.
-        return True, feedback, publisher_ready
+        return True, bullets, publisher_ready
     except Exception as e:
         print(f"AI homework review error: {e}")
-        return True, 'We encountered an issue reviewing your submission. Please try again.', False
+        return True, ['We encountered an issue reviewing your submission. Please try again.'], False
 
 
 @app.route('/author/coaching')
@@ -2032,7 +2086,7 @@ def author_coaching_dashboard():
                 enrollment_id=enrollment.id,
                 module_order=enrollment.current_module,
                 status='approved').first()
-            if days_since_unlock >= 3 and reminder_overdue and not approved_hw:
+            if days_since_unlock >= 7 and reminder_overdue and not approved_hw:
                 module_info = _get_module_info(enrollment.current_module)
                 if module_info:
                     try:
@@ -2170,6 +2224,11 @@ def author_coaching_module(module_order):
     }
     approved_count = sum(1 for s in all_module_progress.values() if s == 'approved')
 
+    # Module 1 hook content — used by research agent on any module
+    m1_content = CoachingModuleContent.query.filter_by(
+        enrollment_id=enrollment.id, module_order=1).first()
+    hook_content = (m1_content.content or '') if m1_content else ''
+
     return render_template(
         'author_coaching_module.html',
         enrollment=enrollment,
@@ -2182,6 +2241,7 @@ def author_coaching_module(module_order):
         total_modules=len(COACHING_MODULES),
         all_module_progress=all_module_progress,
         approved_count=approved_count,
+        hook_content=hook_content,
     )
 
 
@@ -2334,6 +2394,68 @@ def author_coaching_proposal():
                            total_words=total_words)
 
 
+@app.route('/author/coaching/evaluate', methods=['POST'])
+@login_required
+def author_coaching_evaluate():
+    """Submit coaching proposal for full evaluation without requiring a PDF upload.
+    Assembles all saved module content, creates a Proposal record, and kicks off
+    the background evaluation pipeline. Returns JSON with submission_id."""
+    if not getattr(current_user, 'is_author', False):
+        return jsonify({'success': False, 'error': 'Not authorised.'})
+
+    enrollment = CoachingEnrollment.query.filter_by(
+        author_id=current_user.id).order_by(
+        CoachingEnrollment.enrolled_at.desc()).first()
+    if not enrollment:
+        return jsonify({'success': False, 'error': 'No coaching enrollment found.'})
+
+    # Assemble all module content into a structured proposal text
+    lines = [f"BOOK PROPOSAL — {enrollment.book_title or 'Untitled'}\n"]
+    for m in COACHING_MODULES:
+        mc = CoachingModuleContent.query.filter_by(
+            enrollment_id=enrollment.id, module_order=m['order']).first()
+        content_text = (mc.content or '').strip() if mc else ''
+        lines.append(f"\n{'='*60}")
+        lines.append(f"Section {m['order']}: {m['title']}")
+        lines.append('='*60)
+        lines.append(content_text if content_text else '[Not yet completed]')
+
+    proposal_text = '\n'.join(lines)
+
+    if len(proposal_text.strip()) < 200:
+        return jsonify({'success': False, 'error': 'Please complete at least a few sections before submitting for evaluation.'})
+
+    proposal = Proposal(
+        submission_id=generate_submission_id(),
+        author_id=current_user.id,
+        author_name=current_user.name,
+        author_email=current_user.email,
+        book_title=enrollment.book_title or 'Untitled',
+        proposal_type='full',
+        ownership_confirmed=True,
+        proposal_text=proposal_text[:50000],
+        original_filename='coaching_proposal.txt',
+        status='processing',
+    )
+    db.session.add(proposal)
+    db.session.commit()
+
+    thread = threading.Thread(
+        target=process_evaluation_background,
+        args=(app, proposal.submission_id, proposal_text,
+              'full', current_user.name, enrollment.book_title or 'Untitled')
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'submission_id': proposal.submission_id,
+        'status_url': url_for('check_status', submission_id=proposal.submission_id),
+        'results_url': url_for('author_proposal_detail', submission_id=proposal.submission_id),
+    })
+
+
 @app.route('/api/coaching/homework', methods=['POST'])
 def api_coaching_homework_submit():
     """Submit homework for AI review"""
@@ -2387,7 +2509,8 @@ def api_coaching_homework_submit():
         approved, feedback, publisher_ready = _review_homework_with_ai(
             module_info, content, current_user.name, enrollment.book_title or '')
 
-        submission.ai_feedback = feedback
+        # feedback is a list of bullet strings; store as newline-separated for DB
+        submission.ai_feedback = '\n'.join(feedback) if isinstance(feedback, list) else feedback
         submission.ai_approved = publisher_ready   # store actual quality assessment
         submission.ai_reviewed_at = datetime.utcnow()
         submission.status = 'approved'             # always advance
@@ -2406,14 +2529,6 @@ def api_coaching_homework_submit():
                     next_mp.unlocked_at = datetime.utcnow()
                 enrollment.current_module = next_order
 
-                # Send module unlocked email
-                next_module_info = _get_module_info(next_order)
-                if next_module_info:
-                    try:
-                        if send_coaching_module_unlocked_email(current_user, next_module_info, enrollment):
-                            next_mp.module_unlock_email_sent = True
-                    except Exception:
-                        pass
             else:
                 # All modules complete
                 enrollment.status = 'completed'
@@ -2426,19 +2541,11 @@ def api_coaching_homework_submit():
 
         db.session.commit()
 
-        # Send homework reviewed email
-        try:
-            if send_coaching_homework_reviewed_email(current_user, module_info, submission):
-                submission.review_email_sent = True
-                db.session.commit()
-        except Exception:
-            pass
-
         return jsonify({
             'success': True,
             'approved': approved,
             'publisher_ready': publisher_ready,
-            'feedback': feedback,
+            'feedback_bullets': feedback if isinstance(feedback, list) else [feedback],
             'status': submission.status,
             'next_module': next_order if approved and next_order <= len(COACHING_MODULES) else None,
             'program_complete': approved and module_order == len(COACHING_MODULES),
@@ -2501,6 +2608,61 @@ Be specific and credible. Avoid generic advice. Think like a smart literary agen
     except Exception as e:
         print(f"Research agent error: {e}")
         return jsonify({'success': False, 'error': 'Research agent encountered an error. Please try again.'})
+
+
+@app.route('/api/coaching/save-continue', methods=['POST'])
+@login_required
+def api_coaching_save_continue():
+    """Save current module content and send the author a 'come back' reminder email."""
+    if not getattr(current_user, 'is_author', False):
+        return jsonify({'success': False, 'error': 'Not authorised.'})
+
+    data = request.get_json() or {}
+    enrollment_id = data.get('enrollment_id')
+    module_order = int(data.get('module_order', 0))
+    content = (data.get('content') or '').strip()
+
+    enrollment = CoachingEnrollment.query.filter_by(
+        id=enrollment_id, author_id=current_user.id).first()
+    if not enrollment:
+        return jsonify({'success': False, 'error': 'Enrollment not found.'})
+
+    # Upsert content
+    mc = CoachingModuleContent.query.filter_by(
+        enrollment_id=enrollment_id, module_order=module_order).first()
+    if mc:
+        mc.content = content
+        mc.word_count = len(content.split()) if content else 0
+        mc.last_saved_at = datetime.utcnow()
+    elif content:
+        mc = CoachingModuleContent(
+            enrollment_id=enrollment_id,
+            module_order=module_order,
+            content=content,
+            word_count=len(content.split()),
+            last_saved_at=datetime.utcnow(),
+        )
+        db.session.add(mc)
+
+    db.session.commit()
+
+    # Send reminder email (uses existing homework reminder function, rate-limited to once per module)
+    module_info = _get_module_info(module_order)
+    mp = AuthorModuleProgress.query.filter_by(
+        enrollment_id=enrollment_id, module_order=module_order).first()
+    email_sent = False
+    if module_info and mp:
+        last_reminder = mp.homework_reminder_sent_at
+        if not last_reminder or (datetime.utcnow() - last_reminder).days >= 1:
+            try:
+                send_coaching_homework_reminder_email(current_user, module_info, enrollment)
+                mp.homework_reminder_sent_at = datetime.utcnow()
+                db.session.commit()
+                email_sent = True
+            except Exception:
+                pass
+
+    return jsonify({'success': True, 'email_sent': email_sent})
 
 
 @app.route('/api/evaluate', methods=['POST'])

@@ -134,10 +134,33 @@
 
     <!-- CTA if complete -->
     {% if done_count == sections|length %}
-    <div class="cta-bar no-print">
-        <h3>🎉 All sections complete — your proposal is ready!</h3>
-        <p>Submit it now for a full professional evaluation including tier rating, score breakdown, and advance estimate.</p>
-        <a href="{{ url_for('index') }}" class="btn btn-accent" style="text-decoration:none;font-weight:700;">Submit for Full Evaluation →</a>
+    <div class="cta-bar no-print" id="eval-cta">
+        <h3>All sections complete — your proposal is ready!</h3>
+        <p>Submit for a full professional evaluation: tier rating, score breakdown, and advance estimate.</p>
+        <button id="btn-submit-eval" class="btn btn-accent" style="font-weight:700;cursor:pointer;">Submit for Full Evaluation →</button>
+    </div>
+    <!-- Evaluation processing panel (hidden until submission) -->
+    <div id="eval-processing" style="display:none;background:white;border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1.5rem;margin-bottom:2rem;text-align:center;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:0.75rem;margin-bottom:1rem;">
+            <div id="eval-spinner" style="width:24px;height:24px;border:3px solid var(--gray-200);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;flex-shrink:0;"></div>
+            <span id="eval-status-text" style="font-size:0.9375rem;color:var(--gray-700);font-weight:500;">Submitting your proposal…</span>
+        </div>
+        <p id="eval-substatus" style="font-size:0.8125rem;color:var(--gray-400);margin:0 0 1rem;"></p>
+        <button id="btn-cancel-eval" style="background:none;border:1px solid var(--gray-300);color:var(--gray-500);border-radius:var(--radius);padding:0.35rem 0.875rem;font-size:0.8125rem;cursor:pointer;">✕ Cancel</button>
+    </div>
+    {% else %}
+    <!-- Submit anyway even if not all sections done -->
+    <div class="no-print" style="background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem;text-align:center;" id="eval-cta">
+        <p style="margin:0 0 0.75rem;font-size:0.875rem;color:var(--gray-600);">{{ done_count }}/{{ sections|length }} sections complete. You can still submit for a partial evaluation.</p>
+        <button id="btn-submit-eval" class="btn btn-primary" style="cursor:pointer;font-size:0.875rem;">Submit for Evaluation →</button>
+    </div>
+    <div id="eval-processing" style="display:none;background:white;border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1.5rem;margin-bottom:2rem;text-align:center;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:0.75rem;margin-bottom:1rem;">
+            <div id="eval-spinner" style="width:24px;height:24px;border:3px solid var(--gray-200);border-top-color:var(--primary);border-radius:50%;animation:spin 0.9s linear infinite;flex-shrink:0;"></div>
+            <span id="eval-status-text" style="font-size:0.9375rem;color:var(--gray-700);font-weight:500;">Submitting your proposal…</span>
+        </div>
+        <p id="eval-substatus" style="font-size:0.8125rem;color:var(--gray-400);margin:0 0 1rem;"></p>
+        <button id="btn-cancel-eval" style="background:none;border:1px solid var(--gray-300);color:var(--gray-500);border-radius:var(--radius);padding:0.35rem 0.875rem;font-size:0.8125rem;cursor:pointer;">✕ Cancel</button>
     </div>
     {% endif %}
 
@@ -187,18 +210,84 @@
     </div>
     {% endfor %}
 
-    <!-- Bottom CTA -->
+    <!-- Back link -->
     <div class="no-print" style="text-align:center;padding-top:1rem;">
-        {% if done_count == sections|length %}
-        <a href="{{ url_for('index') }}" class="btn btn-primary" style="text-decoration:none;padding:0.875rem 2rem;font-size:1rem;">
-            Submit for Full Evaluation →
-        </a>
-        {% else %}
-        <a href="{{ url_for('author_coaching_dashboard') }}" class="btn btn-primary" style="text-decoration:none;padding:0.75rem 1.5rem;">
-            Continue Building Your Proposal →
-        </a>
-        {% endif %}
+        <a href="{{ url_for('author_coaching_dashboard') }}" style="font-size:0.8125rem;color:var(--gray-400);text-decoration:none;">← Back to Program Overview</a>
     </div>
 
 </div>
+
+{% block extra_js %}
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+<script>
+(function () {
+    const submitBtn  = document.getElementById('btn-submit-eval');
+    const cancelBtn  = document.getElementById('btn-cancel-eval');
+    const ctaBlock   = document.getElementById('eval-cta');
+    const processing = document.getElementById('eval-processing');
+    const statusText = document.getElementById('eval-status-text');
+    const subStatus  = document.getElementById('eval-substatus');
+
+    let pollTimer = null;
+    let cancelled = false;
+
+    if (submitBtn) {
+        submitBtn.addEventListener('click', async () => {
+            ctaBlock.style.display = 'none';
+            processing.style.display = 'block';
+            cancelled = false;
+            statusText.textContent = 'Submitting your proposal…';
+            subStatus.textContent = '';
+
+            try {
+                const r = await fetch('/author/coaching/evaluate', { method: 'POST' });
+                const d = await r.json();
+
+                if (!d.success) {
+                    processing.style.display = 'none';
+                    ctaBlock.style.display = 'block';
+                    alert(d.error || 'Submission failed. Please try again.');
+                    return;
+                }
+
+                statusText.textContent = 'Evaluating your proposal…';
+                subStatus.textContent = 'This usually takes 30–60 seconds.';
+
+                // Poll for completion
+                const submissionId = d.submission_id;
+                const resultsUrl   = d.results_url;
+
+                pollTimer = setInterval(async () => {
+                    if (cancelled) { clearInterval(pollTimer); return; }
+                    try {
+                        const sr = await fetch(d.status_url);
+                        const sd = await sr.json();
+                        if (sd.ready) {
+                            clearInterval(pollTimer);
+                            statusText.textContent = 'Evaluation complete!';
+                            subStatus.textContent = 'Redirecting to your results…';
+                            setTimeout(() => { window.location.href = resultsUrl; }, 800);
+                        }
+                    } catch(e) {}
+                }, 3000);
+
+            } catch(e) {
+                processing.style.display = 'none';
+                ctaBlock.style.display = 'block';
+                alert('Network error. Please try again.');
+            }
+        });
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            cancelled = true;
+            clearInterval(pollTimer);
+            processing.style.display = 'none';
+            ctaBlock.style.display = 'block';
+        });
+    }
+})();
+</script>
+{% endblock %}
 {% endblock %}

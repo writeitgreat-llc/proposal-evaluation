@@ -4752,19 +4752,15 @@ def run_migrations():
         CoachingEnrollment.__table__.create(db.engine)
         print("Migration: created coaching_enrollment table")
     else:
-        # Add columns added in v2 that may be missing from the first-deployed schema
-        ce_cols = [c['name'] for c in inspector.get_columns('coaching_enrollment')]
+        # Ensure all columns exist (ADD COLUMN IF NOT EXISTS is idempotent)
         with db.engine.connect() as conn:
-            if 'book_title' not in ce_cols:
-                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN book_title VARCHAR(500)'))
-                print("Migration: added coaching_enrollment.book_title")
-            if 'welcome_email_sent' not in ce_cols:
-                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN welcome_email_sent BOOLEAN DEFAULT FALSE'))
-                print("Migration: added coaching_enrollment.welcome_email_sent")
-            if 'complete_email_sent' not in ce_cols:
-                conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN complete_email_sent BOOLEAN DEFAULT FALSE'))
-                print("Migration: added coaching_enrollment.complete_email_sent")
+            conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS book_title VARCHAR(500)'))
+            conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP'))
+            conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS current_module INTEGER DEFAULT 1'))
+            conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS welcome_email_sent BOOLEAN DEFAULT FALSE'))
+            conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS complete_email_sent BOOLEAN DEFAULT FALSE'))
             conn.commit()
+        print("Migration: coaching_enrollment columns verified")
 
     if not inspector.has_table('author_module_progress'):
         AuthorModuleProgress.__table__.create(db.engine)

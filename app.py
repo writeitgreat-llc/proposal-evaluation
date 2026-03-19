@@ -2245,28 +2245,35 @@ def author_coaching_enroll():
 
     if request.method == 'POST':
         book_title = request.form.get('book_title', '').strip()
-        enrollment = CoachingEnrollment(
-            author_id=current_user.id,
-            book_title=book_title or None,
-            status='active',
-            current_module=1,
-        )
-        db.session.add(enrollment)
-        db.session.flush()
-
-        # Create module progress rows: module 1 = in_progress, rest = locked
-        for m in COACHING_MODULES:
-            status = 'in_progress' if m['order'] == 1 else 'locked'
-            unlocked_at = datetime.utcnow() if m['order'] == 1 else None
-            mp = AuthorModuleProgress(
-                enrollment_id=enrollment.id,
-                module_order=m['order'],
-                status=status,
-                unlocked_at=unlocked_at,
+        try:
+            enrollment = CoachingEnrollment(
+                author_id=current_user.id,
+                book_title=book_title or None,
+                status='active',
+                current_module=1,
             )
-            db.session.add(mp)
+            db.session.add(enrollment)
+            db.session.flush()
 
-        db.session.commit()
+            # Create module progress rows: module 1 = in_progress, rest = locked
+            for m in COACHING_MODULES:
+                mp_status = 'in_progress' if m['order'] == 1 else 'locked'
+                unlocked_at = datetime.utcnow() if m['order'] == 1 else None
+                mp = AuthorModuleProgress(
+                    enrollment_id=enrollment.id,
+                    module_order=m['order'],
+                    status=mp_status,
+                    unlocked_at=unlocked_at,
+                )
+                db.session.add(mp)
+
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            import traceback
+            print(f"Enrollment error: {e}\n{traceback.format_exc()}")
+            flash('Something went wrong creating your enrollment. Please try again.', 'error')
+            return render_template('author_coaching_enroll.html')
 
         # Send welcome email
         try:
@@ -4474,6 +4481,8 @@ def admin_coaching_detail(enrollment_id):
     module_data = []
     for mp in all_mp:
         m_info = _get_module_info(mp.module_order)
+        if not m_info:
+            continue
         submissions = (HomeworkSubmission.query
                        .filter_by(enrollment_id=enrollment_id, module_order=mp.module_order)
                        .order_by(HomeworkSubmission.submitted_at.desc()).all())
@@ -4632,276 +4641,136 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
 # ============================================================================
 
 def run_migrations():
-    """Add new columns to existing tables if they don't exist"""
-    from sqlalchemy import inspect, text
-    inspector = inspect(db.engine)
-    is_postgres = 'postgresql' in str(db.engine.url)
-    blob_type = 'BYTEA' if is_postgres else 'BLOB'
+    """Ensure all DB columns and tables exist. Safe to run multiple times.
 
-    # Proposal table migrations
-    try:
-        proposal_cols = [col['name'] for col in inspector.get_columns('proposal')]
-        with db.engine.begin() as conn:
-            if 'original_filename' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN original_filename VARCHAR(500)'))
-                print("Migration: added proposal.original_filename")
-            if 'original_file' not in proposal_cols:
-                conn.execute(text(f'ALTER TABLE proposal ADD COLUMN original_file {blob_type}'))
-                print("Migration: added proposal.original_file")
-            if 'content_hash' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN content_hash VARCHAR(64)'))
-                print("Migration: added proposal.content_hash")
-            if 'is_archived' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN is_archived BOOLEAN DEFAULT FALSE'))
-                print("Migration: added proposal.is_archived")
-            if 'platform_data' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN platform_data TEXT'))
-                print("Migration: added proposal.platform_data")
-            if 'marketing_strategy' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN marketing_strategy TEXT'))
-                print("Migration: added proposal.marketing_strategy")
-            if 'author_id' not in proposal_cols:
-                conn.execute(text('ALTER TABLE proposal ADD COLUMN author_id INTEGER'))
-                print("Migration: added proposal.author_id")
-    except Exception as e:
-        print(f"Migration warning (proposal): {e}")
+    Each ALTER TABLE runs in its own transaction with IF NOT EXISTS so a
+    single failure cannot block other columns from being added.
+    """
+    from sqlalchemy import text
 
-    # AdminUser table migrations
-    try:
-        admin_cols = [col['name'] for col in inspector.get_columns('admin_user')]
-        with db.engine.begin() as conn:
-            if 'password_reset_token' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN password_reset_token VARCHAR(100)'))
-                print("Migration: added admin_user.password_reset_token")
-            if 'password_reset_expires' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN password_reset_expires TIMESTAMP'))
-                print("Migration: added admin_user.password_reset_expires")
-            if 'totp_secret' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN totp_secret VARCHAR(64)'))
-                print("Migration: added admin_user.totp_secret")
-            if 'totp_enabled' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN totp_enabled BOOLEAN DEFAULT FALSE'))
-                print("Migration: added admin_user.totp_enabled")
-            if 'failed_login_attempts' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN failed_login_attempts INTEGER DEFAULT 0'))
-                print("Migration: added admin_user.failed_login_attempts")
-            if 'locked_until' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN locked_until TIMESTAMP'))
-                print("Migration: added admin_user.locked_until")
-            if 'role' not in admin_cols:
-                conn.execute(text(f"ALTER TABLE admin_user ADD COLUMN role VARCHAR(20) DEFAULT '{ROLE_MEMBER}'"))
-                conn.execute(text(f"UPDATE admin_user SET role = '{ROLE_ADMIN}' WHERE email = 'anna@writeitgreat.com'"))
-                print("Migration: added admin_user.role, set anna as admin")
-            if 'is_active_account' not in admin_cols:
-                conn.execute(text('ALTER TABLE admin_user ADD COLUMN is_active_account BOOLEAN DEFAULT TRUE'))
-                print("Migration: added admin_user.is_active_account")
-    except Exception as e:
-        print(f"Migration warning (admin_user): {e}")
+    is_pg = 'postgresql' in str(db.engine.url)
 
-    # ProposalNote table (new table)
-    try:
-        if not inspector.has_table('proposal_note'):
-            ProposalNote.__table__.create(db.engine)
-            print("Migration: created proposal_note table")
-    except Exception as e:
-        print(f"Migration warning (proposal_note): {e}")
-
-    # Author table (new table for author portal)
-    try:
-        if not inspector.has_table('author'):
-            Author.__table__.create(db.engine)
-            print("Migration: created author table")
-    except Exception as e:
-        print(f"Migration warning (author): {e}")
-
-    # Publisher table
-    try:
-        if not inspector.has_table('publisher'):
-            Publisher.__table__.create(db.engine)
-            print("Migration: created publisher table")
+    def _add(table, col_def):
+        """Add one column to a table — each call is an independent transaction."""
+        if is_pg:
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'))
+            except Exception as e:
+                print(f'Migration ({table}): {e}')
         else:
-            publisher_cols = [col['name'] for col in inspector.get_columns('publisher')]
-            with db.engine.begin() as conn:
-                if 'bio' not in publisher_cols:
-                    conn.execute(text('ALTER TABLE publisher ADD COLUMN bio TEXT'))
-                    print("Migration: added publisher.bio")
-                if 'preferred_genres' not in publisher_cols:
-                    conn.execute(text('ALTER TABLE publisher ADD COLUMN preferred_genres TEXT'))
-                    print("Migration: added publisher.preferred_genres")
-                if 'preferred_topics' not in publisher_cols:
-                    conn.execute(text('ALTER TABLE publisher ADD COLUMN preferred_topics TEXT'))
-                    print("Migration: added publisher.preferred_topics")
-                if 'website' not in publisher_cols:
-                    conn.execute(text('ALTER TABLE publisher ADD COLUMN website VARCHAR(300)'))
-                    print("Migration: added publisher.website")
-    except Exception as e:
-        print(f"Migration warning (publisher): {e}")
-
-    # PublisherProposal table
-    try:
-        if not inspector.has_table('publisher_proposal'):
-            PublisherProposal.__table__.create(db.engine)
-            print("Migration: created publisher_proposal table")
-        else:
-            pp_cols = [col['name'] for col in inspector.get_columns('publisher_proposal')]
-            with db.engine.begin() as conn:
-                if 'publisher_status' not in pp_cols:
-                    conn.execute(text("ALTER TABLE publisher_proposal ADD COLUMN publisher_status VARCHAR(50) DEFAULT 'new'"))
-                    print("Migration: added publisher_proposal.publisher_status")
-                if 'status_updated_at' not in pp_cols:
-                    conn.execute(text('ALTER TABLE publisher_proposal ADD COLUMN status_updated_at TIMESTAMP'))
-                    print("Migration: added publisher_proposal.status_updated_at")
-    except Exception as e:
-        print(f"Migration warning (publisher_proposal): {e}")
-
-    # Coaching enrollment table
-    try:
-        if not inspector.has_table('coaching_enrollment'):
-            CoachingEnrollment.__table__.create(db.engine)
-            print("Migration: created coaching_enrollment table")
-        else:
-            # Retry up to 5 times with lock_timeout so zombie Postgres connections
-            # do not silently block this ALTER TABLE indefinitely.
-            import time as _time
-            _ce_alter_ok = False
-            for _attempt in range(5):
-                try:
+            # SQLite < 3.37 has no IF NOT EXISTS on ADD COLUMN — check first
+            from sqlalchemy import inspect as _insp
+            try:
+                existing = [c['name'] for c in _insp(db.engine).get_columns(table)]
+                col_name = col_def.split()[0]
+                if col_name not in existing:
                     with db.engine.begin() as conn:
-                        conn.execute(text('SET lock_timeout = 4000'))  # 4 seconds
-                        conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS book_title VARCHAR(500)'))
-                        conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP'))
-                        conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS current_module INTEGER DEFAULT 1'))
-                        conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS welcome_email_sent BOOLEAN DEFAULT FALSE'))
-                        conn.execute(text('ALTER TABLE coaching_enrollment ADD COLUMN IF NOT EXISTS complete_email_sent BOOLEAN DEFAULT FALSE'))
-                    _ce_alter_ok = True
-                    print(f"Migration: coaching_enrollment columns verified (attempt {_attempt + 1})")
-                    break
-                except Exception as _ce_err:
-                    print(f"Migration: coaching_enrollment attempt {_attempt + 1} failed: {_ce_err}")
-                    if _attempt < 4:
-                        _time.sleep(3)
-            if not _ce_alter_ok:
-                print("Migration ERROR: could not alter coaching_enrollment after 5 attempts — schema may be incomplete")
-    except Exception as e:
-        print(f"Migration warning (coaching_enrollment): {e}")
+                        conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {col_def}'))
+            except Exception as e:
+                print(f'Migration ({table}): {e}')
 
-    # AuthorModuleProgress table
+    blob = 'BYTEA' if is_pg else 'BLOB'
+
+    # ── proposal ──────────────────────────────────────────────────────────────
+    _add('proposal', 'original_filename VARCHAR(500)')
+    _add('proposal', f'original_file {blob}')
+    _add('proposal', 'content_hash VARCHAR(64)')
+    _add('proposal', 'is_archived BOOLEAN DEFAULT FALSE')
+    _add('proposal', 'platform_data TEXT')
+    _add('proposal', 'marketing_strategy TEXT')
+    _add('proposal', 'author_id INTEGER')
+
+    # ── admin_user ─────────────────────────────────────────────────────────────
+    _add('admin_user', 'password_reset_token VARCHAR(100)')
+    _add('admin_user', 'password_reset_expires TIMESTAMP')
+    _add('admin_user', 'totp_secret VARCHAR(64)')
+    _add('admin_user', 'totp_enabled BOOLEAN DEFAULT FALSE')
+    _add('admin_user', 'failed_login_attempts INTEGER DEFAULT 0')
+    _add('admin_user', 'locked_until TIMESTAMP')
+    _add('admin_user', f"role VARCHAR(20) DEFAULT '{ROLE_MEMBER}'")
+    _add('admin_user', 'is_active_account BOOLEAN DEFAULT TRUE')
     try:
-        if not inspector.has_table('author_module_progress'):
-            AuthorModuleProgress.__table__.create(db.engine)
-            print("Migration: created author_module_progress table")
-        else:
-            amp_cols = [c['name'] for c in inspector.get_columns('author_module_progress')]
-            with db.engine.begin() as conn:
-                if 'unlocked_at' not in amp_cols:
-                    conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN unlocked_at TIMESTAMP'))
-                    print("Migration: added author_module_progress.unlocked_at")
-                if 'completed_at' not in amp_cols:
-                    conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN completed_at TIMESTAMP'))
-                    print("Migration: added author_module_progress.completed_at")
-                if 'admin_notes' not in amp_cols:
-                    conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN admin_notes TEXT'))
-                    print("Migration: added author_module_progress.admin_notes")
-                if 'module_unlock_email_sent' not in amp_cols:
-                    conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN module_unlock_email_sent BOOLEAN DEFAULT FALSE'))
-                    print("Migration: added author_module_progress.module_unlock_email_sent")
-                if 'homework_reminder_sent_at' not in amp_cols:
-                    conn.execute(text('ALTER TABLE author_module_progress ADD COLUMN homework_reminder_sent_at TIMESTAMP'))
-                    print("Migration: added author_module_progress.homework_reminder_sent_at")
-    except Exception as e:
-        print(f"Migration warning (author_module_progress): {e}")
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                f"UPDATE admin_user SET role = '{ROLE_ADMIN}'"
+                f" WHERE email = 'anna@writeitgreat.com' AND (role IS NULL OR role != '{ROLE_ADMIN}')"
+            ))
+    except Exception:
+        pass
 
+    # ── publisher ──────────────────────────────────────────────────────────────
+    _add('publisher', 'bio TEXT')
+    _add('publisher', 'preferred_genres TEXT')
+    _add('publisher', 'preferred_topics TEXT')
+    _add('publisher', 'website VARCHAR(300)')
+
+    # ── publisher_proposal ─────────────────────────────────────────────────────
+    _add('publisher_proposal', "publisher_status VARCHAR(50) DEFAULT 'new'")
+    _add('publisher_proposal', 'status_updated_at TIMESTAMP')
+
+    # ── coaching_enrollment ────────────────────────────────────────────────────
+    _add('coaching_enrollment', 'book_title VARCHAR(500)')
+    _add('coaching_enrollment', 'completed_at TIMESTAMP')
+    _add('coaching_enrollment', 'current_module INTEGER DEFAULT 1')
+    _add('coaching_enrollment', 'welcome_email_sent BOOLEAN DEFAULT FALSE')
+    _add('coaching_enrollment', 'complete_email_sent BOOLEAN DEFAULT FALSE')
+
+    # ── author_module_progress ─────────────────────────────────────────────────
+    _add('author_module_progress', 'unlocked_at TIMESTAMP')
+    _add('author_module_progress', 'completed_at TIMESTAMP')
+    _add('author_module_progress', 'admin_notes TEXT')
+    _add('author_module_progress', 'module_unlock_email_sent BOOLEAN DEFAULT FALSE')
+    _add('author_module_progress', 'homework_reminder_sent_at TIMESTAMP')
+
+    # ── homework_submission ────────────────────────────────────────────────────
+    _add('homework_submission', 'revision_number INTEGER DEFAULT 1')
+    _add('homework_submission', 'ai_approved BOOLEAN')
+    _add('homework_submission', 'ai_reviewed_at TIMESTAMP')
+    _add('homework_submission', 'admin_reviewed_by VARCHAR(200)')
+    _add('homework_submission', 'admin_reviewed_at TIMESTAMP')
+    _add('homework_submission', 'review_email_sent BOOLEAN DEFAULT FALSE')
+    _add('homework_submission', 'ai_feedback TEXT')
+    _add('homework_submission', 'admin_feedback TEXT')
+    _add('homework_submission', "status VARCHAR(30) DEFAULT 'pending_review'")
+    # Back-fill status for rows inserted before this column existed
     try:
-        if not inspector.has_table('coaching_chat_message'):
-            CoachingChatMessage.__table__.create(db.engine)
-            print("Migration: created coaching_chat_message table")
-    except Exception as e:
-        print(f"Migration warning (coaching_chat_message): {e}")
+        with db.engine.begin() as conn:
+            conn.execute(text("UPDATE homework_submission SET status = 'pending_review' WHERE status IS NULL"))
+    except Exception:
+        pass
 
+    # ── Repair: ensure every active enrollment has a row for each module ───────
     try:
-        if not inspector.has_table('homework_submission'):
-            HomeworkSubmission.__table__.create(db.engine)
-            print("Migration: created homework_submission table")
-        else:
-            hw_cols = [c['name'] for c in inspector.get_columns('homework_submission')]
-            with db.engine.begin() as conn:
-                if 'revision_number' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN revision_number INTEGER DEFAULT 1'))
-                    print("Migration: added homework_submission.revision_number")
-                if 'ai_approved' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN ai_approved BOOLEAN'))
-                    print("Migration: added homework_submission.ai_approved")
-                if 'ai_reviewed_at' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN ai_reviewed_at TIMESTAMP'))
-                    print("Migration: added homework_submission.ai_reviewed_at")
-                if 'admin_reviewed_by' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN admin_reviewed_by VARCHAR(200)'))
-                    print("Migration: added homework_submission.admin_reviewed_by")
-                if 'admin_reviewed_at' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN admin_reviewed_at TIMESTAMP'))
-                    print("Migration: added homework_submission.admin_reviewed_at")
-                if 'review_email_sent' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN review_email_sent BOOLEAN DEFAULT FALSE'))
-                    print("Migration: added homework_submission.review_email_sent")
-                if 'ai_feedback' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN ai_feedback TEXT'))
-                    print("Migration: added homework_submission.ai_feedback")
-                if 'admin_feedback' not in hw_cols:
-                    conn.execute(text('ALTER TABLE homework_submission ADD COLUMN admin_feedback TEXT'))
-                    print("Migration: added homework_submission.admin_feedback")
-                if 'status' not in hw_cols:
-                    conn.execute(text("ALTER TABLE homework_submission ADD COLUMN status VARCHAR(30) DEFAULT 'pending_review'"))
-                    print("Migration: added homework_submission.status")
+        active_enrollments = CoachingEnrollment.query.filter_by(status='active').all()
+        repaired = 0
+        for enr in active_enrollments:
+            existing_orders = {
+                mp.module_order
+                for mp in AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).all()
+            }
+            for m in COACHING_MODULES:
+                order = m['order']
+                if order not in existing_orders:
+                    if order < enr.current_module:
+                        row_status, unlocked_at = 'approved', datetime.utcnow()
+                    elif order == enr.current_module:
+                        row_status, unlocked_at = 'in_progress', datetime.utcnow()
+                    else:
+                        row_status, unlocked_at = 'locked', None
+                    db.session.add(AuthorModuleProgress(
+                        enrollment_id=enr.id,
+                        module_order=order,
+                        status=row_status,
+                        unlocked_at=unlocked_at,
+                    ))
+                    repaired += 1
+        if repaired:
+            db.session.commit()
+            print(f'Migration: created {repaired} missing module progress row(s)')
     except Exception as e:
-        print(f"Migration warning (homework_submission): {e}")
-
-    try:
-        if not inspector.has_table('coaching_module_content'):
-            CoachingModuleContent.__table__.create(db.engine)
-            print("Migration: created coaching_module_content table")
-    except Exception as e:
-        print(f"Migration warning (coaching_module_content): {e}")
-
-    # Back to 7 modules — repair any enrollments that have missing progress rows
-    # (caused by the 6-module migration that deleted module-7 rows).
-    if inspector.has_table('coaching_enrollment') and inspector.has_table('author_module_progress'):
-        try:
-            from sqlalchemy.orm import joinedload
-            active_enrollments = CoachingEnrollment.query.filter_by(status='active').all()
-            total_modules = len(COACHING_MODULES)
-            repaired = 0
-            for enr in active_enrollments:
-                existing = {
-                    mp.module_order: mp
-                    for mp in AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).all()
-                }
-                for m in COACHING_MODULES:
-                    order = m['order']
-                    if order not in existing:
-                        # Determine what status this missing row should have
-                        if order < enr.current_module:
-                            status = 'approved'
-                            unlocked_at = datetime.utcnow()
-                        elif order == enr.current_module:
-                            status = 'in_progress'
-                            unlocked_at = datetime.utcnow()
-                        else:
-                            status = 'locked'
-                            unlocked_at = None
-                        new_mp = AuthorModuleProgress(
-                            enrollment_id=enr.id,
-                            module_order=order,
-                            status=status,
-                            unlocked_at=unlocked_at,
-                        )
-                        db.session.add(new_mp)
-                        repaired += 1
-            if repaired:
-                db.session.commit()
-                print(f"Migration: created {repaired} missing module progress row(s)")
-        except Exception as e:
-            db.session.rollback()
-            print(f"Migration repair warning: {e}")
+        db.session.rollback()
+        print(f'Migration repair warning: {e}')
 
 
 # ============================================================================
@@ -4958,19 +4827,6 @@ with app.app_context():
         run_migrations()
     except Exception as e:
         print(f"Migration note: {e}")
-    # Report actual coaching_enrollment schema so logs show what happened
-    try:
-        from sqlalchemy import inspect as _sa_inspect
-        _cols = [c['name'] for c in _sa_inspect(db.engine).get_columns('coaching_enrollment')]
-        print(f"STARTUP schema coaching_enrollment columns: {_cols}")
-        _required = {'book_title', 'completed_at', 'current_module', 'welcome_email_sent', 'complete_email_sent'}
-        _missing = _required - set(_cols)
-        if _missing:
-            print(f"STARTUP WARNING: coaching_enrollment is missing columns: {_missing}")
-        else:
-            print("STARTUP schema OK: all coaching_enrollment columns present")
-    except Exception as _se:
-        print(f"STARTUP schema check error: {_se}")
 
 
 if __name__ == '__main__':

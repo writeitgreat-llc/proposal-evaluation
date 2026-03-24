@@ -3047,7 +3047,9 @@ def results(submission_id):
     evaluation = json.loads(proposal.evaluation_json) if proposal.evaluation_json else {}
     if evaluation:
         compute_advance_estimate(evaluation)
-    return render_template('results.html', proposal=proposal, evaluation=evaluation, processing=processing)
+    word_count = len(proposal.proposal_text.split()) if proposal.proposal_text else 0
+    return render_template('results.html', proposal=proposal, evaluation=evaluation,
+                           processing=processing, word_count=word_count)
 
 
 @app.route('/download/<submission_id>')

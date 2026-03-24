@@ -34,30 +34,18 @@
 /* Results Page Styles */
 .results-container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
 .results-card { background: white; border-radius: 12px; box-shadow: 0 10px 30px rgba(91, 75, 138, 0.15); padding: 40px; margin-bottom: 30px; }
-.results-header-inner { text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e0e0e0; }
-.submission-id { color: #6B6B7B; font-size: 0.9rem; }
 
-/* Score Display */
-.score-display { display: flex; justify-content: center; gap: 30px; margin: 30px 0; flex-wrap: wrap; }
-.score-box { text-align: center; padding: 25px 35px; background: #f5f5f5; border-radius: 12px; min-width: 150px; }
-.score-box.tier-a { border-top: 4px solid #10B981; }
-.score-box.tier-b { border-top: 4px solid #3B82F6; }
-.score-box.tier-c { border-top: 4px solid #F59E0B; }
-.score-box.tier-d { border-top: 4px solid #EF4444; }
-.score-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #6B6B7B; margin-bottom: 8px; }
-.score-value { font-size: 3rem; font-weight: 700; }
-.tier-a .score-value { color: #10B981; }
-.tier-b .score-value { color: #3B82F6; }
-.tier-c .score-value { color: #F59E0B; }
-.tier-d .score-value { color: #EF4444; }
-.tier-description { text-align: center; padding: 15px; background: #f5f5f5; border-radius: 8px; margin-bottom: 25px; font-weight: 500; }
-.tier-description.tier-a { color: #10B981; }
-.tier-description.tier-b { color: #3B82F6; }
-.tier-description.tier-c { color: #F59E0B; }
-.tier-description.tier-d { color: #EF4444; }
+/* Celebration Header */
+.celebration-header { text-align: center; padding: 2rem 1rem 1.5rem; }
+.celebration-icon { font-size: 3rem; margin-bottom: 0.75rem; display: block; }
+.celebration-header h1 { font-size: 2rem; color: #1E1E2E; margin-bottom: 0.5rem; }
+.celebration-subtitle { color: #6B6B7B; font-size: 1.05rem; margin-bottom: 1.25rem; }
+.milestone-chips { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.milestone-chip { display: inline-flex; align-items: center; gap: 6px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 6px 14px; border-radius: 20px; font-size: 0.875rem; font-weight: 600; }
+.milestone-chip.purple { background: #f5f3ff; border-color: #c4b5fd; color: #5b21b6; }
 
 /* Book Info */
-.book-info { text-align: center; margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid #e0e0e0; }
+.book-info { text-align: center; margin: 1.5rem 0; padding: 1.25rem 0; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; }
 .book-info h2 { font-size: 1.5rem; color: #1E1E2E; margin-bottom: 5px; }
 .book-info .author { color: #6B6B7B; }
 .proposal-type-badge { display: inline-block; background: #2D1B69; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; margin-top: 10px; }
@@ -81,15 +69,6 @@
 .section-header { font-size: 1.2rem; color: #1E1E2E; margin: 30px 0 15px; padding-bottom: 10px; border-bottom: 2px solid #2D1B69; }
 .executive-summary { line-height: 1.8; color: #2D2D3F; font-size: 1.05rem; }
 
-/* Score Breakdown */
-.score-breakdown { margin: 20px 0; }
-.score-bar-item { margin-bottom: 18px; }
-.score-bar-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
-.score-bar-label { font-weight: 500; color: #2D2D3F; }
-.score-bar-value { font-weight: 600; color: #2D1B69; }
-.score-bar { height: 12px; background: #e0e0e0; border-radius: 6px; overflow: hidden; }
-.score-bar-fill { height: 100%; background: linear-gradient(90deg, #8ad98a, #B8F2B8); border-radius: 6px; transition: width 0.5s ease; }
-
 /* Strengths & Improvements Grid */
 .two-column-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin: 20px 0; }
 @media (max-width: 768px) { .two-column-grid { grid-template-columns: 1fr; } }
@@ -100,34 +79,34 @@
 .strengths-card li::before { content: '\2713'; position: absolute; left: 0; color: #10B981; font-weight: bold; }
 .improvements-card li::before { content: '\2192'; position: absolute; left: 0; color: #F59E0B; font-weight: bold; }
 
-/* Detailed Analysis */
-.detailed-section { background: #f5f5f5; border-radius: 12px; padding: 25px; margin: 20px 0; }
-.detailed-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid #e0e0e0; }
-.detailed-section-header h4 { font-size: 1.1rem; color: #1E1E2E; margin: 0; }
-.section-score-badge { background: #2D1B69; color: white; padding: 5px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
-.current-state { background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; line-height: 1.7; }
-.analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
-@media (max-width: 768px) { .analysis-grid { grid-template-columns: 1fr; } }
-.analysis-box { background: white; padding: 15px; border-radius: 8px; }
-.analysis-box h5 { font-size: 0.85rem; color: #2D1B69; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-.analysis-box p { color: #2D2D3F; line-height: 1.6; font-size: 0.95rem; }
-
-.excellence-box { background: linear-gradient(135deg, #f0fdf4, #dcfce7); border-left: 4px solid #10B981; padding: 15px; border-radius: 0 8px 8px 0; margin-bottom: 15px; }
-.excellence-box h5 { color: #10B981; font-size: 0.9rem; margin-bottom: 8px; }
-.excellence-box p { color: #166534; font-style: italic; line-height: 1.6; }
-
-.action-items { background: white; padding: 15px; border-radius: 8px; }
-.action-items h5 { font-size: 0.85rem; color: #2D1B69; margin-bottom: 10px; }
-.action-items ul { list-style: none; padding: 0; margin: 0; }
-.action-items li { padding: 6px 0 6px 20px; position: relative; font-size: 0.95rem; }
-.action-items li::before { content: '\2022'; position: absolute; left: 6px; color: #2D1B69; font-weight: bold; }
-
-/* Writing Examples */
-.writing-example { background: white; padding: 15px; border-radius: 8px; margin-top: 15px; }
-.writing-example h5 { font-size: 0.85rem; margin-bottom: 10px; }
+/* Accordion Sections */
+.accordion-section { background: #f5f5f5; border-radius: 12px; margin: 16px 0; overflow: hidden; }
+.accordion-section summary { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; cursor: pointer; list-style: none; font-size: 1.05rem; font-weight: 600; color: #1E1E2E; user-select: none; }
+.accordion-section summary::-webkit-details-marker { display: none; }
+.accordion-section summary:hover { background: #ececec; }
+.accordion-arrow { transition: transform 0.25s ease; font-size: 0.85rem; color: #6B6B7B; }
+.accordion-section[open] .accordion-arrow { transform: rotate(180deg); }
+.accordion-section[open] summary { background: #ececec; border-bottom: 1px solid #e0e0e0; }
+.accordion-body { padding: 20px 24px; }
+.accordion-narrative { background: white; padding: 15px; border-radius: 8px; margin-bottom: 14px; line-height: 1.7; color: #2D2D3F; font-size: 0.95rem; }
+.accordion-narrative strong { color: #2D1B69; }
+.accordion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+@media (max-width: 640px) { .accordion-grid { grid-template-columns: 1fr; } }
+.accordion-box { background: white; padding: 14px; border-radius: 8px; }
+.accordion-box h5 { font-size: 0.82rem; color: #2D1B69; margin-bottom: 7px; text-transform: uppercase; letter-spacing: 0.5px; }
+.accordion-box p { color: #2D2D3F; line-height: 1.6; font-size: 0.93rem; margin: 0; }
+.accordion-actions { background: white; padding: 14px; border-radius: 8px; margin-bottom: 14px; }
+.accordion-actions h5 { font-size: 0.82rem; color: #2D1B69; margin-bottom: 9px; }
+.accordion-actions ul { list-style: none; padding: 0; margin: 0; }
+.accordion-actions li { padding: 5px 0 5px 18px; position: relative; font-size: 0.93rem; color: #2D2D3F; line-height: 1.5; }
+.accordion-actions li::before { content: '\2022'; position: absolute; left: 5px; color: #2D1B69; font-weight: bold; }
+.writing-example { background: white; padding: 14px; border-radius: 8px; margin-bottom: 14px; }
+.writing-example h5 { font-size: 0.82rem; margin-bottom: 9px; }
 .writing-example.strong h5 { color: #10B981; }
 .writing-example.improve h5 { color: #F59E0B; }
-.writing-example blockquote { background: #f5f5f5; padding: 12px 15px; border-left: 3px solid #2D1B69; margin: 0; font-style: italic; color: #2D2D3F; }
+.writing-example blockquote { background: #f5f5f5; padding: 11px 14px; border-left: 3px solid #2D1B69; margin: 0; font-style: italic; color: #2D2D3F; font-size: 0.92rem; }
+.btn-improve { display: inline-block; margin-top: 10px; padding: 9px 18px; background: #2D1B69; color: white; border-radius: 7px; font-size: 0.9rem; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+.btn-improve:hover { background: #3d2b7a; color: white; }
 
 /* Priority Action Plan */
 .priority-action { background: white; border-radius: 8px; padding: 18px; margin-bottom: 15px; border-left: 4px solid #2D1B69; }
@@ -138,15 +117,9 @@
 .priority-timeline { color: #2D1B69; font-weight: 600; }
 .priority-impact { color: #6B6B7B; }
 
-/* Path to A-Tier */
-.path-to-a { background: linear-gradient(135deg, #f0fdf4, #dcfce7); border: 1px solid #10B981; border-radius: 8px; padding: 20px; margin: 20px 0; }
-.path-to-a h4 { color: #10B981; margin-bottom: 12px; }
-.path-to-a p { color: #166534; line-height: 1.7; }
-
 /* Advance Estimate */
 .advance-est { background: linear-gradient(135deg, #2D1B69, #3d2b7a); color: white; border-radius: 8px; padding: 25px; margin: 20px 0; }
-.advance-est h4 { color: #B8F2B8; }
-.advance-est h4 { margin-bottom: 15px; font-size: 1.1rem; }
+.advance-est h4 { color: #B8F2B8; margin-bottom: 15px; font-size: 1.1rem; }
 .estimate-range { font-size: 1.8rem; font-weight: 700; margin: 10px 0; }
 .estimate-confidence { opacity: 0.9; margin-bottom: 10px; }
 .estimate-reasoning { opacity: 0.9; line-height: 1.6; font-size: 0.95rem; }
@@ -205,24 +178,38 @@
     </div>
 
     {% else %}
-    {# Set up variables for both old and new data formats #}
-    {% set tier = proposal.tier or 'C' %}
-    {% set tier_lower = tier|lower %}
-    {% set total_score = evaluation.get('total_score', evaluation.get('overall_score', proposal.overall_score or 0)) %}
+    {# Data extraction — support both old and new JSON formats #}
     {% set exec_summary = evaluation.get('executiveSummary', '') or evaluation.get('summary', 'Your proposal has been evaluated.') %}
-    {% set tier_desc = evaluation.get('tierDescription', '') %}
     {% set scores = evaluation.get('scores', {}) %}
     {% set detailed = evaluation.get('detailedAnalysis', {}) %}
     {% set red_flags = evaluation.get('redFlags', []) or evaluation.get('red_flags', []) %}
     {% set strengths = evaluation.get('strengths', []) %}
     {% set improvements = evaluation.get('improvements', []) %}
     {% set priority_plan = evaluation.get('priorityActionPlan', []) %}
-    {% set path_a = evaluation.get('pathToATier', '') %}
     {% set adv_est = evaluation.get('advanceEstimate', {}) %}
     {% set adv_old = evaluation.get('advance_estimate', {}) %}
     {% set next_steps = evaluation.get('recommendedNextSteps', []) or evaluation.get('next_steps', []) %}
     {% set contradictions = evaluation.get('contradictions', []) %}
     {% set old_categories = evaluation.get('categories', {}) %}
+
+    {# Map evaluation sections → coaching module numbers #}
+    {% set module_map = {
+        'overview':     1,
+        'comps':        3,
+        'credentials':  4,
+        'outline':      5,
+        'writing':      6,
+        'marketing':    7
+    } %}
+    {% set section_labels = [
+        ('marketing',    'Marketing & Platform'),
+        ('overview',     'Overview & Concept'),
+        ('credentials',  'Author Credentials'),
+        ('comps',        'Comparative Titles'),
+        ('writing',      'Sample Writing'),
+        ('outline',      'Book Outline'),
+        ('completeness', 'Completeness')
+    ] %}
 
     <div class="results-card">
         {% if proposal.author_email_sent %}
@@ -232,27 +219,24 @@
         </div>
         {% endif %}
 
-        <!-- Header -->
-        <div class="results-header-inner">
-            <h1>Evaluation Complete</h1>
-            <p class="submission-id">Submission ID: {{ proposal.submission_id }}</p>
-        </div>
-
-        <!-- Score Display -->
-        <div class="score-display">
-            <div class="score-box tier-{{ tier_lower }}">
-                <div class="score-label">Tier</div>
-                <div class="score-value">{{ tier }}</div>
+        <!-- Celebration Header -->
+        <div class="celebration-header" id="celebration-header">
+            <span class="celebration-icon">🎉</span>
+            <h1>Your Proposal Has Been Evaluated!</h1>
+            <p class="celebration-subtitle">
+                Expert AI feedback on every section — ready to help you reach the next level.
+            </p>
+            <div class="milestone-chips">
+                {% if word_count > 0 %}
+                <span class="milestone-chip">
+                    ✅ {{ "{:,}".format(word_count) }}-word proposal reviewed
+                </span>
+                {% endif %}
+                <span class="milestone-chip purple">
+                    🏆 Major milestone reached
+                </span>
             </div>
-            <div class="score-box" style="border-top: 4px solid #2D1B69;">
-                <div class="score-label">Overall Score</div>
-                <div class="score-value" style="color: #2D1B69;">{{ total_score|round|int }}</div>
-            </div>
         </div>
-
-        {% if tier_desc %}
-        <div class="tier-description tier-{{ tier_lower }}">{{ tier_desc }}</div>
-        {% endif %}
 
         <!-- Book Info -->
         <div class="book-info">
@@ -290,52 +274,6 @@
         <h3 class="section-header">Executive Summary</h3>
         <p class="executive-summary">{{ exec_summary }}</p>
 
-        <!-- Score Breakdown (new format with bars) -->
-        {% if scores %}
-        <h3 class="section-header">Score Breakdown</h3>
-        <div class="score-breakdown">
-            {% set category_labels = [
-                ('marketing', 'Marketing & Platform'),
-                ('overview', 'Overview & Concept'),
-                ('credentials', 'Author Credentials'),
-                ('comps', 'Comparative Titles'),
-                ('writing', 'Sample Writing'),
-                ('outline', 'Book Outline'),
-                ('completeness', 'Completeness')
-            ] %}
-            {% for key, label in category_labels %}
-            {% set score_data = scores.get(key, {}) %}
-            {% set score = score_data.get('score', 0) if score_data is mapping else (score_data or 0) %}
-            <div class="score-bar-item">
-                <div class="score-bar-header">
-                    <span class="score-bar-label">{{ label }}</span>
-                    <span class="score-bar-value">{{ score|int }}/100</span>
-                </div>
-                <div class="score-bar">
-                    <div class="score-bar-fill" style="width: {{ score|int }}%"></div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% elif old_categories %}
-        <!-- Fallback: old format category display -->
-        <h3 class="section-header">Score Breakdown</h3>
-        <div class="score-breakdown">
-            {% for key, cat in old_categories.items() %}
-            {% set score = cat.get('score', 0)|float %}
-            <div class="score-bar-item">
-                <div class="score-bar-header">
-                    <span class="score-bar-label">{{ key|replace('_', ' ')|title }}</span>
-                    <span class="score-bar-value">{{ score|round|int }}/100</span>
-                </div>
-                <div class="score-bar">
-                    <div class="score-bar-fill" style="width: {{ score|int }}%"></div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
         <!-- Strengths & Improvements -->
         {% if strengths or improvements %}
         <div class="two-column-grid">
@@ -362,110 +300,105 @@
         </div>
         {% endif %}
 
-        <!-- Detailed Section Analysis (new format) -->
+        <!-- Detailed Section Feedback (Accordion) -->
+        {% if detailed or old_categories %}
+        <h3 class="section-header">Section-by-Section Feedback</h3>
+
         {% if detailed %}
-        <h3 class="section-header">Detailed Section Analysis</h3>
-        {% set analysis_categories = [
-            ('marketing', 'Marketing & Platform'),
-            ('overview', 'Overview & Concept'),
-            ('credentials', 'Author Credentials'),
-            ('comps', 'Comparative Titles'),
-            ('writing', 'Sample Writing'),
-            ('outline', 'Book Outline'),
-            ('completeness', 'Completeness')
-        ] %}
-        {% for key, label in analysis_categories %}
+        {% for key, label in section_labels %}
         {% set analysis = detailed.get(key, {}) %}
-        {% set score_data = scores.get(key, {}) %}
-        {% set score = score_data.get('score', 0) if score_data is mapping else (score_data or 0) %}
         {% if analysis %}
-        <div class="detailed-section">
-            <div class="detailed-section-header">
-                <h4>{{ label }}</h4>
-                <span class="section-score-badge">{{ score|int }}/100</span>
-            </div>
+        <details class="accordion-section">
+            <summary>
+                <span>{{ label }}</span>
+                <span class="accordion-arrow">▾</span>
+            </summary>
+            <div class="accordion-body">
 
-            {% if analysis.get('currentState') %}
-            <div class="current-state">
-                <strong>Current State:</strong> {{ analysis.currentState }}
-            </div>
-            {% endif %}
-
-            <div class="analysis-grid">
-                {% if analysis.get('strengths') %}
-                <div class="analysis-box">
-                    <h5>Strengths</h5>
-                    <p>{{ analysis.strengths }}</p>
+                {% if analysis.get('currentState') %}
+                <div class="accordion-narrative">
+                    <strong>Current State:</strong> {{ analysis.currentState }}
                 </div>
                 {% endif %}
-                {% if analysis.get('gaps') %}
-                <div class="analysis-box">
-                    <h5>Areas for Improvement</h5>
-                    <p>{{ analysis.gaps }}</p>
+
+                {% if analysis.get('strengths') or analysis.get('gaps') %}
+                <div class="accordion-grid">
+                    {% if analysis.get('strengths') %}
+                    <div class="accordion-box">
+                        <h5>Strengths</h5>
+                        <p>{{ analysis.strengths }}</p>
+                    </div>
+                    {% endif %}
+                    {% if analysis.get('gaps') %}
+                    <div class="accordion-box">
+                        <h5>Areas for Improvement</h5>
+                        <p>{{ analysis.gaps }}</p>
+                    </div>
+                    {% endif %}
                 </div>
                 {% endif %}
-            </div>
 
-            {% if analysis.get('exampleOfExcellence') and analysis.exampleOfExcellence != 'N/A' %}
-            <div class="excellence-box">
-                <h5>What A-Tier Looks Like</h5>
-                <p>{{ analysis.exampleOfExcellence }}</p>
-            </div>
-            {% endif %}
+                {% if analysis.get('actionItems') and analysis.actionItems|length > 0 %}
+                <div class="accordion-actions">
+                    <h5>Action Items</h5>
+                    <ul>
+                        {% for item in analysis.actionItems %}
+                        <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
 
-            {% if analysis.get('actionItems') and analysis.actionItems|length > 0 %}
-            <div class="action-items">
-                <h5>Action Items</h5>
-                <ul>
-                    {% for item in analysis.actionItems %}
-                    <li>{{ item }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% endif %}
+                {% if key == 'writing' and analysis.get('writingExamples') %}
+                {% set we = analysis.writingExamples %}
+                {% if we.get('strongPassage') %}
+                <div class="writing-example strong">
+                    <h5>Strong Passage from Your Proposal</h5>
+                    <blockquote>{{ we.strongPassage }}</blockquote>
+                </div>
+                {% endif %}
+                {% if we.get('improvementExample') %}
+                <div class="writing-example improve">
+                    <h5>Passage to Improve</h5>
+                    <blockquote>{{ we.improvementExample }}</blockquote>
+                </div>
+                {% endif %}
+                {% endif %}
 
-            <!-- Writing Examples (only for writing section) -->
-            {% if key == 'writing' and analysis.get('writingExamples') %}
-            {% set we = analysis.writingExamples %}
-            {% if we.get('strongPassage') %}
-            <div class="writing-example strong">
-                <h5>Strong Passage from Your Proposal</h5>
-                <blockquote>{{ we.strongPassage }}</blockquote>
+                {% if key in module_map %}
+                <a href="{{ url_for('author_coaching_module', module_order=module_map[key]) }}" class="btn-improve">
+                    Improve This Section &rarr;
+                </a>
+                {% endif %}
+
             </div>
-            {% endif %}
-            {% if we.get('improvementExample') %}
-            <div class="writing-example improve">
-                <h5>Passage to Improve</h5>
-                <blockquote>{{ we.improvementExample }}</blockquote>
-            </div>
-            {% endif %}
-            {% endif %}
-        </div>
+        </details>
         {% endif %}
         {% endfor %}
 
         {% elif old_categories %}
-        <!-- Fallback: old format category details -->
-        <h3 class="section-header">Category Details</h3>
         {% for key, cat in old_categories.items() %}
-        <div class="detailed-section">
-            <div class="detailed-section-header">
-                <h4>{{ key|replace('_', ' ')|title }}</h4>
-                <span class="section-score-badge">{{ cat.get('score', 0)|float|round|int }}/100</span>
+        <details class="accordion-section">
+            <summary>
+                <span>{{ key|replace('_', ' ')|title }}</span>
+                <span class="accordion-arrow">▾</span>
+            </summary>
+            <div class="accordion-body">
+                <div class="accordion-narrative">{{ cat.get('feedback', 'No feedback available.') }}</div>
+                {% if cat.get('priority_actions') %}
+                <div class="accordion-actions">
+                    <h5>Priority Actions</h5>
+                    <ul>
+                        {% for action in cat.priority_actions %}
+                        <li>{{ action }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
             </div>
-            <div class="current-state">{{ cat.get('feedback', 'No feedback available.') }}</div>
-            {% if cat.get('priority_actions') %}
-            <div class="action-items">
-                <h5>Priority Actions</h5>
-                <ul>
-                    {% for action in cat.priority_actions %}
-                    <li>{{ action }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% endif %}
-        </div>
+        </details>
         {% endfor %}
+        {% endif %}
         {% endif %}
 
         <!-- Priority Action Plan -->
@@ -485,15 +418,7 @@
         {% endfor %}
         {% endif %}
 
-        <!-- Path to A-Tier -->
-        {% if path_a %}
-        <div class="path-to-a">
-            <h4>Your Path to A-Tier</h4>
-            <p>{{ path_a }}</p>
-        </div>
-        {% endif %}
-
-        <!-- Advance Estimate (new format) -->
+        <!-- Advance Estimate -->
         {% if adv_est and adv_est.get('reasoning') %}
         <div class="advance-est {% if not adv_est.get('viable', true) %}not-viable{% endif %}">
             <h4>Advance Estimate</h4>
@@ -501,12 +426,11 @@
             <div class="estimate-range">${{ "{:,}".format(adv_est.get('lowRange', 0)|int) }} - ${{ "{:,}".format(adv_est.get('highRange', 0)|int) }}</div>
             <div class="estimate-confidence"><strong>Confidence:</strong> {{ adv_est.get('confidence', 'N/A') }}</div>
             {% else %}
-            <p><strong>Current Status:</strong> Not yet viable for traditional publishing advance</p>
+            <p><strong>Current Status:</strong> Not yet viable for a traditional publishing advance</p>
             {% endif %}
             <p class="estimate-reasoning">{{ adv_est.get('reasoning', '') }}</p>
         </div>
         {% elif adv_old and (adv_old.get('low') or adv_old.get('high')) %}
-        <!-- Fallback: old advance estimate format -->
         <div class="advance-est">
             <h4>Advance Estimate</h4>
             <div class="estimate-range">${{ "{:,}".format(adv_old.get('low', 0)|int) }} - ${{ "{:,}".format(adv_old.get('high', 0)|int) }}</div>
@@ -542,11 +466,11 @@
 
         <!-- CTA Section -->
         <div class="cta-section">
-            <h3>Need Help Improving Your Proposal?</h3>
-            <p>Our expert ghostwriters can help you create a publisher-ready proposal.</p>
+            <h3>Ready to Take It Further?</h3>
+            <p>Work through the coaching program to strengthen every section of your proposal.</p>
             <div class="cta-buttons">
-                <a href="https://www.writeitgreat.com/services" class="btn-cta btn-cta-primary">Explore Our Services</a>
-                <a href="mailto:hello@writeitgreat.com" class="btn-cta btn-cta-secondary">Schedule a Consultation</a>
+                <a href="{{ url_for('author_coaching_dashboard') }}" class="btn-cta btn-cta-primary">Start Coaching Program</a>
+                <a href="mailto:hello@writeitgreat.com" class="btn-cta btn-cta-secondary">Talk to an Expert</a>
             </div>
         </div>
 
@@ -582,6 +506,19 @@
     }
 
     setTimeout(checkStatus, pollInterval);
+})();
+</script>
+{% else %}
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+<script>
+(function() {
+    if (typeof confetti === 'undefined') return;
+    // Burst from both sides
+    confetti({ particleCount: 80, angle: 60, spread: 55, origin: { x: 0, y: 0.65 } });
+    confetti({ particleCount: 80, angle: 120, spread: 55, origin: { x: 1, y: 0.65 } });
+    setTimeout(function() {
+        confetti({ particleCount: 40, angle: 90, spread: 70, origin: { x: 0.5, y: 0.5 }, gravity: 0.8 });
+    }, 400);
 })();
 </script>
 {% endif %}

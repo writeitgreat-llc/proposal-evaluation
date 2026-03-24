@@ -191,15 +191,19 @@ COACHING_MODULES = [
             "Publishers need to know exactly who they're selling to. Vague audiences kill "
             "proposals. Specific, well-defined readers win deals.\n\n"
             "Not 'adults interested in business' — but 'mid-career professionals facing "
-            "their first leadership role.' The more specific, the more credible."
+            "their first leadership role who have never managed a team before.'\n\n"
+            "Describe the type of reader — their occupation, life stage, specific problem, "
+            "and motivation. Do not invent a fictional named character; describe the real "
+            "category of person this book is written for."
         ),
         'homework_prompt': (
-            "Write a 1-2 paragraph description of your ideal reader. Include:\n\n"
-            "• Their age range, life situation, or profession\n"
-            "• The specific problem or desire that brings them to your book\n"
-            "• Why they would buy YOUR book over others\n"
-            "• Why this book is timely and relevant for them RIGHT NOW\n\n"
-            "Avoid vague categories — describe a real, specific person."
+            "Write a 1-2 paragraph description of your target reader. Include:\n\n"
+            "• Their occupation, life stage, or professional context\n"
+            "• The specific problem, frustration, or aspiration that brings them to your book\n"
+            "• Why they would choose YOUR book over alternatives\n"
+            "• Why this book is especially relevant for them right now\n\n"
+            "Describe the type of reader — the real category of person who will buy this book. "
+            "Use demographic and psychographic language, not a fictional named character."
         ),
         'homework_label': 'Target Reader Profile',
         'icon': '👤',
@@ -212,22 +216,24 @@ COACHING_MODULES = [
         'description': (
             "Comp titles show publishers where your book lives in the market. "
             "You're not competing with these books — you're joining a conversation.\n\n"
-            "Pro tip: browse Amazon bestseller lists in your genre by publication date. "
-            "Check Goodreads ratings and review counts for popularity signals. "
-            "Sales figures are not required — focus on audience overlap and tone.\n\n"
-            "Consider pitching your book as \u201cTitle A meets Title B.\u201d"
+            "📌 Pro Tip: Go to Amazon, search your genre, then filter by \"New Releases\" or "
+            "sort by publication date to find recent titles. Check Goodreads ratings and "
+            "review counts to gauge popularity. Sales figures are never required — focus on "
+            "audience overlap, tone, and the gap your book fills.\n\n"
+            "Consider pitching your book as \u201cTitle A meets Title B.\u201d\n\n"
+            "All primary comps should be published within the last 3 years."
         ),
         'homework_prompt': (
-            "List 3-5 comparable titles published in the last 5 years. "
+            "List 3-5 comparable titles published in the last 3 years. "
             "For each one include:\n\n"
             "**[Book Title] by [Author] ([Year])**\n"
-            "What it covers: brief description of the book's focus.\n"
-            "What it does well: what makes it successful?\n"
-            "How your book is different: what gap does YOUR book fill?\n\n"
+            "What it covers: a brief description of the book's focus.\n"
+            "What it does well: what makes it resonate with readers?\n"
+            "How your book is different: what specific gap does YOUR book fill?\n\n"
             "Then add a **Market Gap** paragraph: what unique angle, methodology, or "
             "perspective do you bring that none of these titles offer?\n\n"
-            "Note: sales figures are not required. Titles older than 5 years are fine "
-            "as secondary comps — flag them as such."
+            "Note: sales figures are NOT required and should not be included. "
+            "Titles older than 3 years may be used as secondary comps — flag them as such."
         ),
         'homework_label': 'Comparative Analysis',
         'icon': '📚',
@@ -236,24 +242,29 @@ COACHING_MODULES = [
     {
         'order': 4,
         'title': 'Author Bio',
-        'subtitle': 'Why you are the perfect person to write this book',
+        'subtitle': 'Why you are the right person to write this book',
         'description': (
             "Nonfiction publishers buy the author first and the book idea second. "
             "Your bio needs to establish credibility, humanity, and a clear "
-            "throughline to your book's topic. Aim for 200-300 words (one page maximum)."
+            "throughline to your book's topic. Aim for 200-300 words (one page maximum).\n\n"
+            "This section is about your STORY and CREDENTIALS — why you are uniquely "
+            "qualified to write this book. It is NOT about your platform size or social "
+            "media following (those belong in the Marketing & Platform section)."
         ),
         'homework_prompt': (
             "Write your Author Bio (200-300 words, one page maximum). Include:\n\n"
-            "• Your professional credentials and expertise relevant to this topic\n"
-            "• Relevant life experiences that inform the book\n"
-            "• Previous publications or media appearances\n"
-            "• What makes you uniquely qualified to write this book\n\n"
+            "• Your professional credentials and expertise directly relevant to this topic\n"
+            "• Relevant life experiences or turning points that inform the book\n"
+            "• Previous publications, media appearances, or speaking credentials\n"
+            "• The specific perspective or methodology only you can bring\n\n"
+            "Keep this focused on WHO YOU ARE and WHY YOU — not your follower counts "
+            "or platform statistics (save those for the Marketing & Platform section).\n\n"
             "Suggested structure:\n"
-            "Paragraph 1: [Your Name] is a [role/expertise] who has [relevant experience]. "
-            "Through [your work/platform], you have [demonstrated expertise or reach].\n"
-            "Paragraph 2: Featured in [media/publications], speaks at [venues/conferences].\n"
+            "Paragraph 1: [Your Name] is a [role/expertise] who [relevant experience]. "
+            "Through [your work], you have [demonstrated expertise or insight].\n"
+            "Paragraph 2: [Media appearances, publications, speaking, or notable credentials].\n"
             "Paragraph 3: Your approach to [topic] comes from [unique perspective], making "
-            "you uniquely positioned to address [audience need].\n\n"
+            "you the right person to write this book for [audience].\n\n"
             "Write in third person."
         ),
         'homework_label': 'Author Bio',
@@ -315,30 +326,38 @@ COACHING_MODULES = [
             "Publishers want to know there will be a return on their investment. "
             "Breakeven for most publishers is around 3,000 copies sold — 10,000 means "
             "they've made their money back and then some.\n\n"
+            "This section is distinct from your Author Bio. Here, publishers want NUMBERS "
+            "and a concrete marketing strategy — not credentials or story.\n\n"
             "Three sections to cover:\n"
-            "1. Your Current Platform — real numbers\n"
+            "1. Your Current Platform — real numbers (email list, social, website, speaking)\n"
             "2. Marketing Opportunities — media, speaking, bulk sales, endorsements\n"
-            "3. Your Marketing Commitment — what YOU will personally do"
+            "3. Your Marketing Commitment — what YOU will personally do to sell this book\n\n"
+            "No huge platform yet? Lead with engagement quality and growth trajectory."
         ),
         'homework_prompt': (
             "Write your Marketing & Platform section (2+ pages). Use these three headings:\n\n"
             "**Your Current Platform**\n"
             "Email list: ___ subscribers\n"
-            "Social media: Instagram ___ · TikTok ___ · LinkedIn ___ · Facebook ___ · other ___\n"
+            "Instagram: ___ followers\n"
+            "TikTok: ___ followers\n"
+            "LinkedIn: ___ connections/followers\n"
+            "Facebook: ___ followers\n"
+            "YouTube / Podcast: ___ subscribers / ___ monthly listeners\n"
             "Website: ___ monthly visitors\n"
-            "Podcast / YouTube: ___ listeners/subscribers\n"
             "Speaking: ___ events per year, typical audience size ___\n"
-            "(No huge platform yet? Focus on engagement and growth potential.)\n\n"
+            "(No huge platform yet? Note your engagement rate and growth trajectory.)\n\n"
             "**Marketing Opportunities**\n"
             "Personal network: who in your network can help promote this? "
-            "Influencers, professional associations, potential foreword writer or blurb providers.\n"
-            "Media: podcasts, publications, or outlets that are natural fits.\n"
-            "Speaking & events: conferences, workshops, events you could speak at.\n"
+            "Name specific influencers, professional associations, potential foreword "
+            "writers or blurb providers.\n"
+            "Media: specific podcasts, publications, or outlets that are natural fits.\n"
+            "Speaking & events: named conferences, workshops, or events you could speak at.\n"
             "Corporate / bulk sales: organisations or companies that might buy in bulk.\n\n"
             "**Your Marketing Commitment**\n"
-            "Describe specifically what YOU will do to market this book. "
-            "Podcast interviews, social media campaigns, speaking engagements, "
-            "newsletter promotions — be concrete and committed. Publishers want enthusiasm."
+            "Describe specifically what YOU will do to market this book — concrete actions, "
+            "not vague promises. Podcast tour, social media launch, speaking engagements, "
+            "newsletter campaign — be specific and enthusiastic. Publishers invest in "
+            "authors who invest in their own books."
         ),
         'homework_label': 'Marketing & Platform',
         'icon': '📣',
@@ -2003,22 +2022,24 @@ def api_coach_feedback():
             context_parts.append(f'Hook: "{book_hook}"')
         context_line = ('Context — ' + ', '.join(context_parts) + '.\n') if context_parts else ''
 
-        prompt = f"""You are a literary agent with 25+ years of experience reviewing nonfiction book proposals.
+        prompt = f"""You are a warm, experienced literary agent reviewing a section of a nonfiction book proposal.
 {context_line}
 The author has written the following for their "{label}" section:
 ---
 {text[:3000]}
 ---
 
-Evaluate this using these criteria: {guide}
+Criteria to evaluate against: {guide}
 
-Give exactly 3-5 specific, actionable bullet points. Each bullet must:
-- Start with a short bold label: **Strong:**, **Missing:**, **Improve:**, **Add:**, or **Watch out:**
-- Reference something specific from what they actually wrote
-- Tell them exactly what to keep, add, or change — no generic advice
+Give exactly 3-5 specific, actionable bullet points. Rules:
+- The FIRST bullet must be a genuine strength — start it with **Strong:**
+- Remaining bullets use: **Strong:**, **Improve:**, **Add:**, or **Watch out:** as appropriate
+- Every bullet must reference something specific from what the author actually wrote
+- Be encouraging and direct — tell them exactly what to keep, what to add, what to sharpen
+- No generic advice — if it could apply to any proposal, rewrite it to be specific
 
 Return a JSON object with a single key "bullets" containing an array of strings.
-Example: {{"bullets": ["**Strong:** Your opening sentence immediately names the reader...", "**Missing:** You do not mention your publishing credentials..."]}}"""
+Example: {{"bullets": ["**Strong:** Your opening sentence immediately names a specific reader pain point...", "**Improve:** The credentials paragraph lists titles but doesn't explain why each qualifies you for THIS book..."]}}"""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -2064,34 +2085,64 @@ def _get_or_create_module_progress(enrollment_id, module_order):
 
 def _build_module_system_prompt(module_info, author_name, book_title):
     """Build a module-specific coaching system prompt"""
-    title_line = f'The author\'s working book title is: "{book_title}".\n\n' if book_title else ''
-    return f"""You are an expert book proposal coach at Write It Great — an elite literary agency and ghostwriting consultancy.
+    order = module_info['order']
 
-{title_line}You are currently helping {author_name} work on Section {module_info['order']} of 7: **{module_info['title']}** — {module_info['subtitle']}.
+    # Only surface the working title in Module 1 (Hook & Concept).
+    # In all other modules, referencing the title by name distracts from the
+    # actual content being developed and can lead to off-topic conversation.
+    if order == 1 and book_title:
+        title_line = (
+            f'The author\'s working book title is: "{book_title}". '
+            f'Treat this as a working title — a starting point, not a fixed identity.\n\n'
+        )
+    else:
+        title_line = ''
 
-FOCUS FOR THIS MODULE: {module_info['description']}
+    # Module-specific guardrails injected before the shared coaching style block
+    module_extra = ''
+    if order == 2:
+        module_extra = (
+            '\nIMPORTANT — TARGET READER: Help the author describe the *type* of reader '
+            'using real demographic and psychographic language (occupation, life stage, '
+            'specific problem, motivation to buy). Do NOT suggest or use fictional named '
+            'personas (e.g. "Meet Sarah, 42, a mid-career manager…"). Real book proposals '
+            'describe reader types, not invented characters. If the author drifts toward '
+            'naming a fictional person, gently steer them back to the category of reader.\n'
+        )
+    elif order == 3:
+        module_extra = (
+            '\nIMPORTANT — COMP TITLES: All primary comp titles must be published within '
+            'the last 3 years. Titles older than 3 years may only be used as secondary '
+            'comps and must be flagged as such. Sales figures are NOT required and should '
+            'never be asked for or mentioned — focus entirely on audience overlap, tone, '
+            'market positioning, and the specific gap the author\'s book fills. '
+            'Use the format: **Title by Author (Year)** — one sentence on relevance, '
+            'one sentence on how this book is different.\n'
+        )
 
-YOUR COACHING APPROACH IN THIS MODULE:
-- Stay STRICTLY focused on {module_info['chat_context']}. Do NOT bring up topics from other modules (comparable titles, credentials, marketing, etc.) unless the author explicitly asks.
-- If the author asks about something outside this module's scope, acknowledge it briefly and redirect: "Great question — we'll tackle that properly in Module X. For now, let's stay focused on your {module_info['title']}."
-- Ask ONE focused question at a time. Never ask two questions at once
-- Give 2-3 sentences of specific, expert feedback after each author response, then ask your next question
-- When something is strong, say so clearly with specific praise. When something needs work, explain WHY and HOW to fix it with a concrete example
-- Keep responses to 3-4 short paragraphs — this is a conversation, not a lecture
-- Use the author's own words when reflecting back what you heard
-- If the author seems stuck, offer two concrete options or a before/after example
+    return f"""You are an expert book proposal coach at Write It Great — a literary agency and ghostwriting consultancy that has helped authors land deals with major publishers worldwide.
 
-PUBLISHING INDUSTRY KNOWLEDGE TO APPLY:
-- Nonfiction publishers buy the author's platform first, the book idea second
-- Comp titles must be realistic: match the author's platform size
-- A strong hook can open doors a weak platform can't; a weak hook closes doors a strong platform can't
-- Sample writing quality is non-negotiable — a weak sample kills strong proposals
-- Marketing sections need specific numbers and activities, not vague promises
+{title_line}You are coaching {author_name} on Section {order} of 7: **{module_info['title']}** — {module_info['subtitle']}.
+{module_extra}
+WHAT THIS MODULE IS ABOUT:
+{module_info['description']}
+
+YOUR COACHING STYLE:
+- Warm, encouraging, and specific — be the best mentor this author has ever had
+- ALWAYS lead with what is working before addressing anything that needs improvement
+- Use short bullet points for feedback, not long paragraphs of critique
+- Ask ONE focused question at a time — never two questions at once
+- After each author response: give 1-2 sentences of specific, genuine praise for what's strong, then one clear direction for what to strengthen next
+- Keep your responses to 3-4 short paragraphs maximum — this is a conversation, not a lecture
+- Reflect the author's own words back to them when you can
+- If the author seems stuck or unsure, offer two concrete options or a quick before/after example
+- Stay focused on {module_info['chat_context']} — do NOT raise topics that belong to other modules
+- If the author asks about something outside this module (e.g. credentials, marketing numbers, comp titles when this isn't that module), respond warmly: "That's definitely worth working through — we'll give it proper attention in its own section. For now, let's keep building your {module_info['title']}."
 
 HOMEWORK FOR THIS MODULE:
 {module_info['homework_prompt']}
 
-When the author feels ready to write their homework, encourage them to do so using the homework section below the chat. You don't need to tell them to submit — they can see the homework section on screen."""
+When the author is ready to write their homework, encourage them warmly. They can see the homework area below the chat — you don't need to direct them to it explicitly."""
 
 
 def _review_homework_with_ai(module_info, content, author_name, book_title):
@@ -2101,12 +2152,12 @@ def _review_homework_with_ai(module_info, content, author_name, book_title):
     publisher_ready reflects the AI's honest assessment of submission quality.
     """
     title_line = f'Book title: "{book_title}"\n' if book_title else ''
-    prompt = f"""You are an expert literary agent reviewing homework for a book proposal coaching program.
+    prompt = f"""You are a warm, encouraging literary agent reviewing a homework submission for a book proposal coaching program.
 
-Module: {module_info['order']} — {module_info['title']}
+Module {module_info['order']}: {module_info['title']}
 {title_line}Author: {author_name}
 
-HOMEWORK PROMPT THEY WERE GIVEN:
+HOMEWORK PROMPT GIVEN TO THE AUTHOR:
 {module_info['homework_prompt']}
 
 AUTHOR'S SUBMISSION:
@@ -2114,22 +2165,23 @@ AUTHOR'S SUBMISSION:
 {content[:30000]}
 ---
 
-Evaluate this homework submission. Consider:
-- Does it fully address what was asked?
-- Is it specific enough for a real book proposal?
-- Would an editor find this section credible and compelling?
-- Are there major gaps or weak areas that need revision?
+Review this submission with a constructive, encouraging eye. Your feedback must:
+1. LEAD with what is working — be specific and genuine, not generic praise
+2. Identify 1-2 specific areas to strengthen with clear direction
+3. Be actionable — tell the author exactly what to add, change, or sharpen
 
-Respond with a JSON object:
+Return a JSON object:
 {{
     "publisher_ready": true or false,
     "feedback_bullets": ["bullet 1", "bullet 2", "bullet 3"],
     "word_count_adequate": true or false
 }}
 
-Set publisher_ready=true if the submission is genuinely strong enough that an editor would take it seriously.
-Return feedback as a JSON array of concise bullet points (3-6 bullets), not as prose paragraphs.
-Be honest but encouraging — focus on specific, actionable next steps."""
+Rules:
+- publisher_ready = true if an editor would find this section credible and compelling as written
+- feedback_bullets = 3-5 concise bullets. The FIRST 1-2 bullets MUST begin with "✓ " and highlight what's genuinely strong. Remaining bullets begin with "→ " and give specific improvement direction. Reference what the author actually wrote — no generic advice.
+- word_count_adequate = true if the submission is substantive enough for a real proposal section
+- Tone: honest but warm — this author is doing the hard work of writing a real book"""
 
     try:
         response = client.chat.completions.create(

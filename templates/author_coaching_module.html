@@ -278,6 +278,33 @@
 .fmt-toolbar-sep { width: 1px; height: 16px; background: var(--gray-200); margin: 0 3px; }
 #btn-send-chat:disabled { background: var(--gray-300); cursor: not-allowed; }
 #btn-send-chat svg { width: 14px; height: 14px; }
+
+/* ── Platform number fields (Module 7) ─────────────────── */
+.platform-fields {
+    margin: 0.875rem 1rem 0;
+    background: #f8f7ff; border: 1.5px solid #c4b5fd;
+    border-radius: 8px; padding: 0.875rem 1rem;
+}
+.platform-fields-header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.75rem;
+}
+.platform-fields-header span:first-child { font-size: 0.875rem; font-weight: 700; color: #5b21b6; }
+.platform-fields-hint { font-size: 0.75rem; color: #7c3aed; }
+.platform-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.6rem;
+}
+.platform-field label {
+    display: block; font-size: 0.725rem; font-weight: 600; color: var(--gray-600);
+    margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.platform-field input[type="number"] {
+    width: 100%; padding: 0.375rem 0.5rem; border: 1.5px solid #c4b5fd;
+    border-radius: 5px; font-size: 0.875rem; font-family: inherit;
+    background: white; color: var(--gray-900); box-sizing: border-box;
+}
+.platform-field input[type="number"]:focus { outline: none; border-color: #7c3aed; }
 {% endblock %}
 
 {% block content %}
@@ -359,6 +386,61 @@
                 <strong>What to write</strong>
                 {{ module_info.homework_prompt | format_prompt | safe }}
             </div>
+
+            {% if module_info.order == 7 %}
+            {# ── Platform number fields (Module 7 only) ─────────────────── #}
+            <div class="platform-fields" id="platform-fields">
+                <div class="platform-fields-header">
+                    <span>📊 Your Platform Numbers</span>
+                    <span class="platform-fields-hint">Fill in what you have — leave blank if not applicable</span>
+                </div>
+                <div class="platform-grid">
+                    <div class="platform-field">
+                        <label for="pf-email">Email subscribers</label>
+                        <input type="number" id="pf-email" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-instagram">Instagram followers</label>
+                        <input type="number" id="pf-instagram" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-tiktok">TikTok followers</label>
+                        <input type="number" id="pf-tiktok" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-linkedin">LinkedIn connections</label>
+                        <input type="number" id="pf-linkedin" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-facebook">Facebook followers</label>
+                        <input type="number" id="pf-facebook" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-youtube">YouTube subscribers</label>
+                        <input type="number" id="pf-youtube" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-podcast">Podcast listeners/mo</label>
+                        <input type="number" id="pf-podcast" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-website">Website visitors/mo</label>
+                        <input type="number" id="pf-website" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-speaking">Speaking events/yr</label>
+                        <input type="number" id="pf-speaking" min="0" placeholder="0">
+                    </div>
+                    <div class="platform-field">
+                        <label for="pf-audience">Avg audience size</label>
+                        <input type="number" id="pf-audience" min="0" placeholder="0">
+                    </div>
+                </div>
+                <button type="button" id="btn-insert-platform" class="btn" style="margin-top:0.75rem;background:white;border:1.5px solid var(--primary);color:var(--primary);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
+                    Insert Numbers into Draft →
+                </button>
+            </div>
+            {% endif %}
 
             {# Publisher-ready = ai_approved=True on latest submission. Always editable otherwise. #}
             {% set is_publisher_ready = latest_submission and latest_submission.ai_approved %}
@@ -906,4 +988,77 @@
 
 })();
 </script>
+
+{% if module_info.order == 7 %}
+<script>
+(function() {
+    var btn = document.getElementById('btn-insert-platform');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+        function val(id) {
+            var el = document.getElementById(id);
+            return el ? (parseInt(el.value, 10) || 0) : 0;
+        }
+        function fmt(n) { return n.toLocaleString(); }
+
+        var email     = val('pf-email');
+        var instagram = val('pf-instagram');
+        var tiktok    = val('pf-tiktok');
+        var linkedin  = val('pf-linkedin');
+        var facebook  = val('pf-facebook');
+        var youtube   = val('pf-youtube');
+        var podcast   = val('pf-podcast');
+        var website   = val('pf-website');
+        var speaking  = val('pf-speaking');
+        var audience  = val('pf-audience');
+
+        var lines = ['Your Current Platform', ''];
+        lines.push('Email list: ' + fmt(email) + ' subscribers');
+        lines.push('Instagram: ' + fmt(instagram) + ' followers');
+        lines.push('TikTok: ' + fmt(tiktok) + ' followers');
+        lines.push('LinkedIn: ' + fmt(linkedin) + ' connections/followers');
+        lines.push('Facebook: ' + fmt(facebook) + ' followers');
+        if (youtube > 0) lines.push('YouTube: ' + fmt(youtube) + ' subscribers');
+        if (podcast > 0) lines.push('Podcast: ' + fmt(podcast) + ' monthly listeners');
+        lines.push('Website: ' + fmt(website) + ' monthly visitors');
+        lines.push('Speaking: ' + fmt(speaking) + ' events per year' + (audience > 0 ? ', typical audience ' + fmt(audience) : ''));
+
+        var block = lines.join('\n');
+        var ta = document.getElementById('content-textarea');
+        if (!ta) return;
+
+        // Prepend to textarea if empty, else append after existing content
+        if (ta.value.trim() === '') {
+            ta.value = block + '\n\n';
+        } else {
+            // Replace existing platform block if present, otherwise append
+            var marker = 'Your Current Platform';
+            var existing = ta.value;
+            var idx = existing.indexOf(marker);
+            if (idx !== -1) {
+                // Find end of platform block (two newlines or end of string)
+                var end = existing.indexOf('\n\n', idx);
+                ta.value = existing.slice(0, idx) + block + (end !== -1 ? existing.slice(end) : '');
+            } else {
+                ta.value = existing.trimEnd() + '\n\n' + block + '\n\n';
+            }
+        }
+
+        // Trigger autosave
+        ta.dispatchEvent(new Event('input'));
+        ta.focus();
+
+        // Visual confirmation
+        btn.textContent = '✓ Numbers inserted';
+        btn.style.color = '#16a34a';
+        btn.style.borderColor = '#86efac';
+        setTimeout(function() {
+            btn.textContent = 'Insert Numbers into Draft →';
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }, 2500);
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

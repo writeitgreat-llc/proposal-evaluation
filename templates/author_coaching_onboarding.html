@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Welcome to the Coaching Program — Write It Great{% endblock %}
+
+{% block extra_css %}
+.onboard-wrap {
+    max-width: 760px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+}
+.onboard-hero {
+    text-align: center; margin-bottom: 2.5rem;
+}
+.onboard-hero h1 { font-size: 1.9rem; color: var(--primary); margin-bottom: 0.5rem; }
+.onboard-hero p  { color: var(--gray-600); font-size: 1.05rem; max-width: 520px; margin: 0 auto; }
+
+.onboard-card {
+    background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); padding: 1.5rem 1.75rem;
+    margin-bottom: 1.25rem;
+}
+.onboard-card h2 {
+    font-size: 1rem; color: var(--primary); margin: 0 0 0.875rem;
+    display: flex; align-items: center; gap: 0.5rem;
+}
+
+/* What is a proposal */
+.proposal-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem;
+}
+.proposal-piece {
+    background: var(--gray-50); border-radius: 8px;
+    padding: 0.75rem 1rem; font-size: 0.875rem;
+}
+.proposal-piece strong { display: block; color: var(--primary); margin-bottom: 0.2rem; }
+.proposal-piece span   { color: var(--gray-600); line-height: 1.5; }
+
+/* Module roadmap */
+.module-road {
+    display: flex; flex-direction: column; gap: 0.5rem;
+}
+.module-road-row {
+    display: flex; align-items: flex-start; gap: 0.875rem;
+    padding: 0.625rem 0; border-bottom: 1px solid var(--gray-100);
+}
+.module-road-row:last-child { border-bottom: none; }
+.mod-num {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    background: var(--primary); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700; margin-top: 2px;
+}
+.mod-road-text strong { font-size: 0.9rem; color: var(--gray-900); }
+.mod-road-text span   { display: block; font-size: 0.8125rem; color: var(--gray-500); line-height: 1.45; }
+
+/* Button guide */
+.btn-guide { display: flex; flex-direction: column; gap: 0.625rem; }
+.btn-guide-row {
+    display: flex; align-items: flex-start; gap: 0.875rem;
+    padding: 0.625rem 0.875rem; background: var(--gray-50);
+    border-radius: 8px;
+}
+.btn-guide-badge {
+    flex-shrink: 0; padding: 0.25rem 0.75rem; border-radius: 5px;
+    font-size: 0.75rem; font-weight: 700; white-space: nowrap;
+}
+.badge-primary { background: var(--primary); color: white; }
+.badge-outline { background: white; border: 1.5px solid var(--gray-300); color: var(--gray-700); }
+.badge-purple  { background: #7c3aed; color: white; }
+.badge-green   { background: #16a34a; color: white; }
+.btn-guide-row p { margin: 0; font-size: 0.8375rem; color: var(--gray-700); line-height: 1.55; }
+
+/* CTA */
+.onboard-cta {
+    text-align: center; padding: 2rem 1rem 0;
+}
+.onboard-cta a.btn-start {
+    display: inline-block; padding: 0.875rem 2.5rem;
+    background: var(--primary); color: white;
+    border-radius: var(--radius); font-weight: 700; font-size: 1rem;
+    text-decoration: none; transition: background 0.2s;
+}
+.onboard-cta a.btn-start:hover { background: var(--primary-light); }
+.onboard-cta p {
+    margin-top: 0.875rem; font-size: 0.8375rem; color: var(--gray-400);
+}
+{% endblock %}
+
+{% block content %}
+<div class="onboard-wrap">
+
+    <div class="onboard-hero">
+        <h1>Welcome to your Book Proposal Program 🎉</h1>
+        <p>Before you dive in, here's exactly what you'll be building and how everything works.</p>
+    </div>
+
+    <!-- What is a book proposal? -->
+    <div class="onboard-card">
+        <h2>📖 What is a book proposal?</h2>
+        <p style="font-size:0.9rem;color:var(--gray-600);margin:0 0 1rem;line-height:1.65;">
+            A nonfiction book proposal is the document you send to literary agents and publishers
+            <em>before</em> the book is written. It's typically 20–50 pages and answers one question:
+            <strong>"Why will this book sell?"</strong>
+        </p>
+        <div class="proposal-grid">
+            <div class="proposal-piece">
+                <strong>Hook &amp; Concept</strong>
+                <span>The one-sentence pitch that makes an editor lean forward</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Target Reader</strong>
+                <span>Who will buy this book — and why they need it now</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Comp Titles</strong>
+                <span>Similar books that prove the market exists</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Author Bio</strong>
+                <span>Why YOU are the right person to write this book</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Chapter Outline</strong>
+                <span>A map of the book, chapter by chapter</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Sample Writing</strong>
+                <span>1–3 chapters showing your voice and depth</span>
+            </div>
+            <div class="proposal-piece">
+                <strong>Marketing &amp; Platform</strong>
+                <span>Your reach and your plan to help sell the book</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- How the program works -->
+    <div class="onboard-card">
+        <h2>🗺️ How this program works</h2>
+        <div class="module-road">
+            {% for m in modules %}
+            <div class="module-road-row">
+                <div class="mod-num">{{ m.order }}</div>
+                <div class="mod-road-text">
+                    <strong>{{ m.icon }} {{ m.title }}</strong>
+                    <span>{{ m.subtitle }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <p style="margin:1rem 0 0;font-size:0.8375rem;color:var(--gray-500);line-height:1.6;">
+            Each section unlocks after you submit your writing for review.
+            Your work saves automatically as you type. You can chat with the
+            AI brainstorm assistant in every section — it knows exactly what
+            each module needs.
+        </p>
+    </div>
+
+    <!-- What each button does -->
+    <div class="onboard-card">
+        <h2>🖱️ What each button does</h2>
+        <div class="btn-guide">
+            <div class="btn-guide-row">
+                <span class="btn-guide-badge badge-primary">Submit for Review →</span>
+                <p>Submits your writing for AI review. The AI reads what you've written,
+                   gives you specific feedback, and unlocks the next section when it's ready.
+                   You can always revise and resubmit.</p>
+            </div>
+            <div class="btn-guide-row">
+                <span class="btn-guide-badge badge-purple">🔍 Research</span>
+                <p>Pulls up tailored research for your topic — relevant books, market insights,
+                   compelling statistics, and viral angles. Appears in the writing area.</p>
+            </div>
+            <div class="btn-guide-row">
+                <span class="btn-guide-badge badge-outline">📚 Resources</span>
+                <p>Opens the knowledge base drawer for the current section — examples,
+                   templates, and pro tips specific to what you're writing.</p>
+            </div>
+            <div class="btn-guide-row">
+                <span class="btn-guide-badge badge-green">Brainstorm Assistant</span>
+                <p>The AI chat on the right side of every module. Talk through your ideas
+                   before writing, get unstuck, or ask questions about your section.
+                   It's scoped to the current module so it stays focused.</p>
+            </div>
+            <div class="btn-guide-row">
+                <span class="btn-guide-badge badge-outline" style="font-size:0.7rem;color:var(--gray-500);">● Autosave</span>
+                <p>Your draft saves automatically every time you pause typing.
+                   No need to manually save — the green dot means everything is safe.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="onboard-cta">
+        {% if enrollment %}
+        <a href="{{ url_for('author_coaching_module', module_order=enrollment.current_module or 1) }}" class="btn-start">
+            Start Section 1 →
+        </a>
+        {% else %}
+        <a href="{{ url_for('author_coaching_enroll') }}" class="btn-start">
+            Enroll &amp; Start →
+        </a>
+        {% endif %}
+        <p>You can come back to this page any time from your <a href="{{ url_for('author_coaching_dashboard') }}" style="color:var(--primary);">Program Overview</a>.</p>
+    </div>
+
+</div>
+{% endblock %}

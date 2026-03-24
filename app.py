@@ -365,6 +365,111 @@ COACHING_MODULES = [
     },
 ]
 
+# Per-module knowledge base: tips, examples, and templates shown in the
+# collapsible drawer on each module page.
+COACHING_MODULE_RESOURCES = {
+    1: {
+        'tips': [
+            'A great hook survives the "so what?" test — read it aloud to someone unfamiliar with your topic.',
+            'Specificity beats cleverness. "Habits compound" is weaker than "1% better every day adds up to 37x improvement in a year."',
+            'The best hooks name both the reader AND the payoff in one breath.',
+        ],
+        'examples': [
+            '**Atomic Habits**: "Tiny changes, remarkable results — the proven system for building good habits and breaking bad ones."',
+            '**The Body Keeps the Score**: "Trauma reshapes the brain and body. Here is the science — and the path to healing."',
+            '**Dare to Lead**: "Courage is a skill, not a trait. Here is how to build it in yourself and your team."',
+        ],
+        'templates': [
+            'WIG Framework: "Most people believe [misconception]. But actually, [reframe]. And it\'s a much bigger deal than you think because [stakes]."',
+            'Simple format: "[This book] helps [specific reader] [achieve outcome] by [unique method/insight]."',
+        ],
+    },
+    2: {
+        'tips': [
+            'The more specific the reader, the more an editor trusts you understand the market.',
+            'Ask yourself: "What was happening in my reader\'s life the week before they picked up this book?"',
+            'Avoid "anyone who…" — if your reader is everyone, your reader is no one.',
+        ],
+        'examples': [
+            '**Narrow example**: "Mid-career professionals in their first leadership role who were never trained to manage people — they\'re good at their craft but overwhelmed by the human side of the job."',
+            '**Motivation example**: "Parents of children with ADHD who are exhausted by school conflict and desperate for a framework that works at home, not just in a clinic."',
+        ],
+        'templates': [
+            'Reader template: "[Job/life stage] who [specific problem/frustration] and want [desired outcome] — especially [timely reason this matters now]."',
+        ],
+    },
+    3: {
+        'tips': [
+            'Go to Amazon → Books → your genre → filter "New Releases" to find titles from the last 3 years.',
+            'Check Goodreads review counts and star ratings to understand which comps actually connected with readers.',
+            'The "meets" format is a shortcut: "Think [Title A] meets [Title B] — but for [specific audience]."',
+            'Sales figures are never required. Publishers know their own market.',
+        ],
+        'examples': [
+            '**Good comp entry**: "**Never Split the Difference** by Chris Voss (2016) — covers negotiation psychology for high-stakes situations. My book applies the same principles specifically to salary and freelance contract conversations."',
+            '**Market gap**: "No current title addresses this for the freelance economy specifically — the existing books assume a corporate context."',
+        ],
+        'templates': [
+            'Comp entry: "**[Title]** by [Author] ([Year]) — [1 sentence: what it covers and why it sells]. My book differs because [1 sentence: specific gap you fill]."',
+        ],
+    },
+    4: {
+        'tips': [
+            'Write in third person — "Jane Smith is a…" not "I am a…"',
+            'Credentials relevant to the TOPIC matter most. A surgeon writing about leadership needs different credentials than a surgeon writing about surgery.',
+            'Personal story > job title. The "why I had to write this book" moment is often the strongest credential of all.',
+            'Keep it to 200-300 words — editors skim long bios.',
+        ],
+        'examples': [
+            '**Opening example**: "Sarah Chen is a cognitive neuroscientist who spent 12 years studying decision fatigue at Stanford before burning out at 34. That experience became the catalyst for *The Clarity Method*."',
+            '**Credentials example**: "Featured in Harvard Business Review, The Guardian, and NPR\'s Hidden Brain. Her TEDx talk on burnout has 2.1M views."',
+        ],
+        'templates': [
+            'Bio template: "[Name] is a [role/expertise] who [key experience relevant to topic]. Through [work/platform], [what they\'ve demonstrated or achieved]. [Media/publications]. [Why uniquely positioned to write this book]."',
+        ],
+    },
+    5: {
+        'tips': [
+            'Your chapter structure IS your argument. Read the titles alone — does the arc make sense?',
+            'Each chapter summary should answer: what does the reader know/feel at the END of this chapter that they didn\'t at the start?',
+            'Aim for 25-75 words per chapter summary. Vague summaries signal underdeveloped thinking.',
+            'Show momentum: each chapter should make the next one feel inevitable.',
+        ],
+        'examples': [
+            '**Strong chapter summary**: "Chapter 3: The Permission Trap. Most people wait for external validation before pursuing their goals. This chapter exposes the neuroscience of approval-seeking, then introduces the Permission Audit — a 20-minute exercise that breaks the pattern for good."',
+        ],
+        'templates': [
+            'Chapter entry: "**Chapter [N]: [Title]**. [What problem/question this chapter addresses]. [Key concept, story, or exercise]. [What reader understands/can do by the end]."',
+        ],
+    },
+    6: {
+        'tips': [
+            'Your first page is everything. If it doesn\'t pull an editor in, nothing else will.',
+            'Show range: if possible, include one narrative chapter and one more practical/concept-driven chapter.',
+            'Voice is not style — it\'s the feeling that a specific, irreplaceable person is speaking.',
+            '3,000–5,000 words is usually enough to demonstrate your range. More is rarely better.',
+        ],
+        'examples': [
+            '**Strong opening**: Drop the reader into a scene or moment before explaining anything. Let them feel the stakes before they understand the thesis.',
+        ],
+        'templates': [],
+    },
+    7: {
+        'tips': [
+            'Publishers care more about list quality than social follower counts. 5,000 engaged email subscribers beats 50,000 passive Instagram followers.',
+            'Be specific about WHO in your network can help — name organisations, podcasts, or influencers.',
+            'Bulk sales potential (corporate training, conferences, universities) can be more compelling than individual sales reach.',
+            'Growth trajectory matters: "500 subscribers, growing 20% month-on-month" is a strong signal.',
+        ],
+        'examples': [
+            '**Platform example**: "Email list: 4,200 subscribers (38% open rate). LinkedIn: 12,000 followers. Speaks at 6-8 HR conferences per year, avg audience 300. Podcast guest: appeared on WorkLife with Adam Grant, Dare to Lead, and HBR IdeaCast."',
+            '**Marketing commitment example**: "Will launch a 6-week podcast tour (15+ shows confirmed), run a pre-order campaign to her list, and pitch a 3-part series to Harvard Business Review online."',
+        ],
+        'templates': [],
+    },
+}
+
+
 # ============================================================================
 # DATABASE MODELS
 # ============================================================================
@@ -2350,9 +2455,81 @@ def author_coaching_enroll():
             pass
 
         flash('Welcome to the coaching program! Module 1 is ready for you.', 'success')
-        return redirect(url_for('author_coaching_dashboard'))
+        return redirect(url_for('author_coaching_onboarding'))
 
     return render_template('author_coaching_enroll.html')
+
+
+@app.route('/author/coaching/onboarding')
+def author_coaching_onboarding():
+    """First-time onboarding screen: what a proposal is, how the platform works, button guide"""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return redirect(url_for('author_login'))
+    enrollment = CoachingEnrollment.query.filter_by(
+        author_id=current_user.id, status='active').first()
+    return render_template('author_coaching_onboarding.html',
+                           enrollment=enrollment,
+                           modules=COACHING_MODULES)
+
+
+@app.route('/author/coaching/quickstart', methods=['GET', 'POST'])
+def author_coaching_quickstart():
+    """Quick One-Pager Mode — 5-question entry point for early-stage authors.
+    Generates a lightweight one-page proposal summary they can download or use
+    to seed the full coaching program."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return redirect(url_for('author_login'))
+
+    if request.method == 'POST':
+        answers = {
+            'concept':    request.form.get('concept', '').strip(),
+            'reader':     request.form.get('reader', '').strip(),
+            'why_you':    request.form.get('why_you', '').strip(),
+            'comps':      request.form.get('comps', '').strip(),
+            'platform':   request.form.get('platform', '').strip(),
+            'book_title': request.form.get('book_title', '').strip(),
+        }
+        if not all([answers['concept'], answers['reader'], answers['why_you']]):
+            flash('Please fill in at least the first three questions.', 'error')
+            return render_template('author_coaching_quickstart.html', answers=answers)
+
+        try:
+            prompt = f"""You are an expert book proposal coach. An author has answered 5 quick questions about their nonfiction book. Generate a clean, one-page proposal summary they can use as a starting point.
+
+AUTHOR'S ANSWERS:
+Book title (working): {answers['book_title'] or 'Not yet decided'}
+1. What is the book about? {answers['concept']}
+2. Target reader: {answers['reader']}
+3. Why this author? {answers['why_you']}
+4. Comparable titles: {answers['comps'] or 'Not provided'}
+5. Platform / reach: {answers['platform'] or 'Not provided'}
+
+Write a one-page proposal summary with these sections:
+- **The Book** (2-3 sentences: hook, concept, why now)
+- **The Reader** (1-2 sentences: specific target audience)
+- **The Author** (2-3 sentences: credentials and unique position)
+- **The Market** (1-2 sentences: comp titles and gap)
+- **Platform Snapshot** (1-2 sentences: reach and marketing potential)
+- **Next Steps** (2-3 bullet points: what to strengthen before a full submission)
+
+Tone: professional but warm. Be specific and encouraging. Use their actual words where possible."""
+
+            response = client.chat.completions.create(
+                model='gpt-4o-mini',
+                messages=[{'role': 'user', 'content': prompt}],
+                temperature=0.7,
+                max_tokens=900,
+            )
+            summary = response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f'Quickstart AI error: {e}')
+            summary = None
+
+        return render_template('author_coaching_quickstart.html',
+                               answers=answers,
+                               summary=summary)
+
+    return render_template('author_coaching_quickstart.html', answers={}, summary=None)
 
 
 @app.route('/author/coaching/module/<int:module_order>')
@@ -2419,6 +2596,7 @@ def author_coaching_module(module_order):
         all_module_progress=all_module_progress,
         approved_count=approved_count,
         hook_content=hook_content,
+        module_resources=COACHING_MODULE_RESOURCES.get(module_order, {}),
     )
 
 
@@ -2494,6 +2672,32 @@ def api_coaching_chat():
     except Exception as e:
         print(f'/api/coaching/chat error: {e}')
         return jsonify({'success': False, 'error': 'Could not get a response. Please try again.'})
+
+
+@app.route('/api/coaching/update-title', methods=['POST'])
+def api_coaching_update_title():
+    """Update the working book title on an enrollment (AJAX, author-only)"""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'success': False, 'error': 'Not authenticated.'})
+    try:
+        data = request.get_json(force=True) or {}
+        enrollment_id = data.get('enrollment_id')
+        new_title = (data.get('book_title') or '').strip()
+
+        if not enrollment_id:
+            return jsonify({'success': False, 'error': 'Missing enrollment_id.'})
+
+        enrollment = CoachingEnrollment.query.filter_by(
+            id=enrollment_id, author_id=current_user.id).first()
+        if not enrollment:
+            return jsonify({'success': False, 'error': 'Enrollment not found.'})
+
+        enrollment.book_title = new_title or None
+        db.session.commit()
+        return jsonify({'success': True, 'book_title': enrollment.book_title or ''})
+    except Exception as e:
+        print(f'/api/coaching/update-title error: {e}')
+        return jsonify({'success': False, 'error': 'Could not update title.'})
 
 
 @app.route('/api/coaching/content/save', methods=['POST'])
@@ -4701,6 +4905,42 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
             pass
 
     db.session.commit()
+    return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
+
+
+@app.route('/admin/coaching/<int:enrollment_id>/reset', methods=['POST'])
+@team_required
+def admin_coaching_reset_enrollment(enrollment_id):
+    """Reset an author's coaching enrollment — wipes all progress, content, chat, homework.
+    Use this to let a tester start fresh without deleting the account."""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    author_name = enrollment.author.name
+
+    # Delete all child records
+    CoachingChatMessage.query.filter_by(enrollment_id=enrollment_id).delete()
+    HomeworkSubmission.query.filter_by(enrollment_id=enrollment_id).delete()
+    CoachingModuleContent.query.filter_by(enrollment_id=enrollment_id).delete()
+    AuthorModuleProgress.query.filter_by(enrollment_id=enrollment_id).delete()
+
+    # Reset enrollment state
+    enrollment.current_module = 1
+    enrollment.status = 'active'
+    enrollment.completed_at = None
+    enrollment.complete_email_sent = False
+    # welcome_email_sent kept True so the welcome email isn't re-sent
+
+    # Re-create clean module progress rows
+    for m in COACHING_MODULES:
+        mp = AuthorModuleProgress(
+            enrollment_id=enrollment_id,
+            module_order=m['order'],
+            status='in_progress' if m['order'] == 1 else 'locked',
+            unlocked_at=datetime.utcnow() if m['order'] == 1 else None,
+        )
+        db.session.add(mp)
+
+    db.session.commit()
+    flash(f'Enrollment for {author_name} has been fully reset to Module 1.', 'success')
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
 
 

@@ -156,10 +156,20 @@
                 <li>AI reviews each section and unlocks the next when it's ready</li>
                 <li>At the end, you have a complete proposal draft ready for submission</li>
             </ul>
-            <a href="{{ url_for('author_coaching_enroll') }}"
-               style="display:inline-block;padding:0.75rem 1.75rem;background:var(--accent);color:var(--accent-text);font-weight:700;border-radius:var(--radius);text-decoration:none;font-size:0.9375rem;">
-                Start Building Your Proposal →
-            </a>
+            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;justify-content:flex-start;margin-top:0.25rem;">
+                <a href="{{ url_for('author_coaching_enroll') }}"
+                   style="display:inline-block;padding:0.75rem 1.75rem;background:var(--accent);color:var(--accent-text);font-weight:700;border-radius:var(--radius);text-decoration:none;font-size:0.9375rem;">
+                    Start Building Your Proposal →
+                </a>
+                <a href="{{ url_for('author_coaching_quickstart') }}"
+                   style="display:inline-block;padding:0.75rem 1.25rem;background:white;border:1.5px solid var(--gray-300);color:var(--gray-700);font-weight:600;border-radius:var(--radius);text-decoration:none;font-size:0.875rem;">
+                    ⚡ Quick One-Pager
+                </a>
+                <a href="{{ url_for('author_coaching_onboarding') }}"
+                   style="font-size:0.85rem;color:var(--gray-400);text-decoration:none;">
+                    How it works →
+                </a>
+            </div>
         </div>
         {% endif %}
     </div>

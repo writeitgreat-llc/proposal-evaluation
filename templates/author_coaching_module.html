@@ -305,6 +305,62 @@
     background: white; color: var(--gray-900); box-sizing: border-box;
 }
 .platform-field input[type="number"]:focus { outline: none; border-color: #7c3aed; }
+
+/* ── Editable title ─────────────────────────────────────── */
+.editable-title-wrap {
+    margin-top: 0.5rem; display: flex; align-items: center; gap: 0.375rem;
+}
+#editable-title {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 5px; padding: 0.2rem 0.5rem;
+    font-size: 0.85rem; color: white; font-family: inherit;
+    min-width: 140px; max-width: 340px; width: auto;
+}
+#editable-title:focus { outline: none; background: rgba(255,255,255,0.18); border-color: var(--accent); }
+#editable-title::placeholder { color: rgba(255,255,255,0.45); }
+.title-save-indicator { font-size: 0.7rem; color: rgba(255,255,255,0.5); }
+.title-save-indicator.saved  { color: var(--accent); }
+.title-save-indicator.saving { color: rgba(255,255,255,0.7); }
+
+/* ── Knowledge base drawer ──────────────────────────────── */
+.kb-drawer-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+    z-index: 200;
+}
+.kb-drawer-overlay.open { display: block; }
+.kb-drawer {
+    position: fixed; top: 0; right: -420px; width: 420px; max-width: 100vw;
+    height: 100%; background: white; z-index: 201;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+    display: flex; flex-direction: column;
+    transition: right 0.28s cubic-bezier(0.4,0,0.2,1);
+    overflow: hidden;
+}
+.kb-drawer.open { right: 0; }
+.kb-drawer-header {
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--gray-200);
+    background: var(--gray-50); display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+}
+.kb-drawer-header h3 { margin: 0; font-size: 0.9375rem; color: var(--primary); }
+.kb-drawer-close {
+    background: none; border: none; font-size: 1.125rem; cursor: pointer;
+    color: var(--gray-400); padding: 0 0.25rem; line-height: 1;
+}
+.kb-drawer-close:hover { color: var(--gray-700); }
+.kb-drawer-body { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; }
+.kb-section { margin-bottom: 1.5rem; }
+.kb-section h4 {
+    font-size: 0.725rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--primary); margin: 0 0 0.625rem;
+}
+.kb-item {
+    background: var(--gray-50); border-radius: 7px;
+    padding: 0.625rem 0.875rem; margin-bottom: 0.5rem;
+    font-size: 0.8375rem; line-height: 1.6; color: var(--gray-700);
+}
+.kb-item strong { color: var(--gray-900); }
+.kb-item em { color: var(--gray-500); font-style: normal; }
 {% endblock %}
 
 {% block content %}
@@ -313,12 +369,23 @@
     <div class="mod-header-inner">
         <div class="mod-breadcrumb">
             <a href="{{ url_for('author_coaching_dashboard') }}">← Program Overview</a>
+            &nbsp;·&nbsp;
+            <a href="{{ url_for('author_coaching_onboarding') }}" style="color:rgba(255,255,255,0.55);">How it works</a>
         </div>
         <div class="mod-title-row">
             <div class="mod-big-icon">{{ module_info.icon }}</div>
             <div class="mod-title-text">
                 <h1>Section {{ module_info.order }}: {{ module_info.title }}</h1>
                 <p>{{ module_info.subtitle }}</p>
+                <!-- Editable working title -->
+                <div class="editable-title-wrap">
+                    <span style="font-size:0.75rem;color:rgba(255,255,255,0.5);">Working title:</span>
+                    <input id="editable-title" type="text"
+                           value="{{ enrollment.book_title | e if enrollment.book_title else '' }}"
+                           placeholder="Add working title…"
+                           autocomplete="off">
+                    <span class="title-save-indicator" id="title-save-indicator"></span>
+                </div>
             </div>
         </div>
         <!-- Stepper -->
@@ -449,7 +516,8 @@
                       {% if is_publisher_ready %}disabled{% endif %}>{{ saved_content.content if saved_content and saved_content.content else '' }}</textarea>
 
             <div class="writing-footer">
-                <span class="word-count"><span id="word-count">{{ saved_content.word_count if saved_content else 0 }}</span> words</span>
+                {# Word count — always computed from textarea value on load (bug fix) #}
+                <span class="word-count"><span id="word-count">0</span> words</span>
                 {% if not is_publisher_ready %}
                 <div class="fmt-toolbar" id="fmt-toolbar">
                     <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
@@ -463,14 +531,19 @@
                 {% endif %}
                 <div class="writing-actions">
                     {% if not is_publisher_ready %}
+                    {% if module_resources %}
+                    <button id="btn-kb" class="btn" title="Examples, templates &amp; tips for this section"
+                            style="background:white;border:1.5px solid var(--gray-300);color:var(--gray-700);font-size:0.875rem;padding:0.45rem 0.875rem;cursor:pointer;border-radius:var(--radius);">
+                        📚 Resources
+                    </button>
+                    {% endif %}
                     <button id="btn-research" class="btn" style="background:white;border:1.5px solid #7c3aed;color:#7c3aed;font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
                         🔍 Research
                     </button>
-                    <button id="btn-save-continue" class="btn" style="background:white;border:1.5px solid var(--gray-300);color:var(--gray-600);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
-                        💾 Save &amp; Continue Later
-                    </button>
-                    <button id="btn-mark-complete" class="btn btn-primary" style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
-                        Mark Complete &amp; Continue →
+                    <button id="btn-mark-complete" class="btn btn-primary"
+                            title="Submits your writing for AI review. The AI gives specific feedback and unlocks the next section when ready."
+                            style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
+                        Submit for Review →
                     </button>
                     {% else %}
                     <span style="font-size:0.875rem;color:#16a34a;font-weight:600;">✓ Publisher-ready</span>
@@ -530,6 +603,43 @@
         </div>
 
     </div>
+
+    <!-- Knowledge base drawer (slides in from the right) -->
+    {% if module_resources %}
+    <div class="kb-drawer-overlay" id="kb-overlay"></div>
+    <div class="kb-drawer" id="kb-drawer">
+        <div class="kb-drawer-header">
+            <h3>📚 {{ module_info.title }} — Resources</h3>
+            <button class="kb-drawer-close" id="kb-close" aria-label="Close">✕</button>
+        </div>
+        <div class="kb-drawer-body">
+            {% if module_resources.get('tips') %}
+            <div class="kb-section">
+                <h4>💡 Pro Tips</h4>
+                {% for tip in module_resources.tips %}
+                <div class="kb-item">{{ tip }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if module_resources.get('examples') %}
+            <div class="kb-section">
+                <h4>✍️ Examples</h4>
+                {% for ex in module_resources.examples %}
+                <div class="kb-item">{{ ex | replace('**', '') }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if module_resources.get('templates') %}
+            <div class="kb-section">
+                <h4>📋 Templates</h4>
+                {% for tpl in module_resources.templates %}
+                <div class="kb-item">{{ tpl }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Persistent coaching upsell widget — shown from module 6 onwards -->
     {% if module_info.order >= 6 %}
@@ -660,6 +770,9 @@
         } catch(e) { setSaveStatus(''); }
     }
 
+    // Word count fix: always compute from textarea value on load, regardless of approval state
+    updateWordCount();
+
     if (textarea && !IS_APPROVED) {
         textarea.addEventListener('input', () => {
             updateWordCount();
@@ -667,7 +780,6 @@
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveContent, 1500);
         });
-        updateWordCount();
     }
 
     /* ── Auto-expand textarea ────────────────────────── */
@@ -986,6 +1098,70 @@
         });
     }
 
+})();
+</script>
+
+<script>
+/* ── Editable working title ─────────────────────────────── */
+(function() {
+    var input = document.getElementById('editable-title');
+    var indicator = document.getElementById('title-save-indicator');
+    if (!input) return;
+    var timer = null;
+
+    function setIndicator(state) {
+        if (!indicator) return;
+        if (state === 'saving') { indicator.className = 'title-save-indicator saving'; indicator.textContent = 'saving…'; }
+        else if (state === 'saved') { indicator.className = 'title-save-indicator saved'; indicator.textContent = '✓ saved'; setTimeout(function(){ indicator.textContent = ''; }, 2000); }
+        else { indicator.className = 'title-save-indicator'; indicator.textContent = ''; }
+    }
+
+    input.addEventListener('input', function() {
+        setIndicator('saving');
+        clearTimeout(timer);
+        timer = setTimeout(function() {
+            fetch('/api/coaching/update-title', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ enrollment_id: {{ enrollment.id }}, book_title: input.value })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) { setIndicator(d.success ? 'saved' : ''); })
+            .catch(function() { setIndicator(''); });
+        }, 900);
+    });
+})();
+
+/* ── Knowledge base drawer ──────────────────────────────── */
+(function() {
+    var kbBtn     = document.getElementById('btn-kb');
+    var drawer    = document.getElementById('kb-drawer');
+    var overlay   = document.getElementById('kb-overlay');
+    var closeBtn  = document.getElementById('kb-close');
+    if (!kbBtn || !drawer) return;
+
+    function open()  { drawer.classList.add('open'); overlay.classList.add('open'); }
+    function close() { drawer.classList.remove('open'); overlay.classList.remove('open'); }
+
+    kbBtn.addEventListener('click', open);
+    if (closeBtn)  closeBtn.addEventListener('click', close);
+    if (overlay)   overlay.addEventListener('click', close);
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close(); });
+})();
+
+/* ── Coaching upsell — remember dismiss per session ─────── */
+(function() {
+    var widget = document.getElementById('coaching-upsell');
+    if (!widget) return;
+    var key = 'wig_upsell_dismissed_m{{ module_info.order }}';
+    if (localStorage.getItem(key)) { widget.style.display = 'none'; return; }
+    var closeBtn = widget.querySelector('.coaching-upsell-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            widget.style.display = 'none';
+            localStorage.setItem(key, '1');
+        });
+    }
 })();
 </script>
 

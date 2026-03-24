@@ -51,7 +51,15 @@
     <div style="max-width:1000px;margin:0 auto;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
             <a href="{{ url_for('admin_coaching_list') }}" style="color:rgba(255,255,255,0.7);font-size:0.875rem;text-decoration:none;">← All Enrollments</a>
-            <span class="mod-status-badge {{ enrollment.status }}" style="font-size:0.8rem;">{{ enrollment.status | title }}</span>
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+                <span class="mod-status-badge {{ enrollment.status }}" style="font-size:0.8rem;">{{ enrollment.status | title }}</span>
+                <form method="POST" action="{{ url_for('admin_coaching_reset_enrollment', enrollment_id=enrollment.id) }}"
+                      onsubmit="return confirm('⚠️ This will DELETE all progress, chat, homework, and drafts for {{ enrollment.author.name }}. They will restart from Module 1. Continue?')">
+                    <button type="submit" style="background:#dc2626;color:white;border:none;padding:0.3rem 0.75rem;border-radius:5px;font-size:0.75rem;font-weight:700;cursor:pointer;">
+                        Reset Enrollment
+                    </button>
+                </form>
+            </div>
         </div>
         <h1>{{ enrollment.author.name }}</h1>
         <p>{{ enrollment.author.email }}

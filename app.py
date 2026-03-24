@@ -4925,8 +4925,11 @@ def admin_coaching_delete_author(enrollment_id):
         AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).delete()
         db.session.delete(enr)
 
-    # Delete proposals
-    Proposal.query.filter_by(author_id=author.id).delete()
+    # Delete proposals and their child records
+    for proposal in Proposal.query.filter_by(author_id=author.id).all():
+        ProposalNote.query.filter_by(proposal_id=proposal.id).delete()
+        PublisherProposal.query.filter_by(proposal_id=proposal.id).delete()
+        db.session.delete(proposal)
 
     # Delete the author account itself
     db.session.delete(author)

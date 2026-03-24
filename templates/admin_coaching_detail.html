@@ -59,6 +59,12 @@
                         Reset Enrollment
                     </button>
                 </form>
+                <form method="POST" action="{{ url_for('admin_coaching_delete_author', enrollment_id=enrollment.id) }}"
+                      onsubmit="return confirm('⛔ PERMANENTLY DELETE the account for {{ enrollment.author.email }}? This removes the author account, all proposals, all coaching data, and cannot be undone.')">
+                    <button type="submit" style="background:#7f1d1d;color:white;border:none;padding:0.3rem 0.75rem;border-radius:5px;font-size:0.75rem;font-weight:700;cursor:pointer;">
+                        Delete Author Account
+                    </button>
+                </form>
             </div>
         </div>
         <h1>{{ enrollment.author.name }}</h1>

@@ -4908,6 +4908,34 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
 
 
+@app.route('/admin/coaching/<int:enrollment_id>/delete-author', methods=['POST'])
+@team_required
+def admin_coaching_delete_author(enrollment_id):
+    """Permanently delete an author account and all associated data."""
+    enrollment = CoachingEnrollment.query.get_or_404(enrollment_id)
+    author = enrollment.author
+    author_name = author.name
+    author_email = author.email
+
+    # Delete all coaching data for every enrollment this author has
+    for enr in CoachingEnrollment.query.filter_by(author_id=author.id).all():
+        CoachingChatMessage.query.filter_by(enrollment_id=enr.id).delete()
+        HomeworkSubmission.query.filter_by(enrollment_id=enr.id).delete()
+        CoachingModuleContent.query.filter_by(enrollment_id=enr.id).delete()
+        AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).delete()
+        db.session.delete(enr)
+
+    # Delete proposals
+    Proposal.query.filter_by(author_id=author.id).delete()
+
+    # Delete the author account itself
+    db.session.delete(author)
+    db.session.commit()
+
+    flash(f'Author account for {author_name} ({author_email}) has been permanently deleted.', 'success')
+    return redirect(url_for('admin_coaching_list'))
+
+
 @app.route('/admin/coaching/<int:enrollment_id>/reset', methods=['POST'])
 @team_required
 def admin_coaching_reset_enrollment(enrollment_id):

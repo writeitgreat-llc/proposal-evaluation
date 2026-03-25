@@ -32,7 +32,8 @@
 }
 .step-dot.done    { background: var(--accent); color: var(--accent-text); }
 .step-dot.current { background: white; color: var(--primary); }
-.step-dot.todo    { background: rgba(255,255,255,0.18); color: rgba(255,255,255,0.55); cursor: default; }
+.step-dot.todo    { background: rgba(255,255,255,0.18); color: rgba(255,255,255,0.55); }
+.step-dot.todo:hover { opacity: 0.85; transform: scale(1.12); }
 .step-dot.done:hover, .step-dot.current:hover { opacity: 0.85; transform: scale(1.12); }
 .step-line { flex: 1; height: 2px; background: rgba(255,255,255,0.18); min-width: 10px; max-width: 28px; }
 .step-line.done-line { background: var(--accent); }
@@ -391,17 +392,13 @@
         <!-- Stepper -->
         <div class="mod-stepper">
             {% for n in range(1, total_modules + 1) %}
-                {% set step_status = all_module_progress.get(n, 'locked') %}
+                {% set step_status = all_module_progress.get(n, 'todo') %}
                 {% if n > 1 %}<div class="step-line {% if step_status in ('approved', 'in_progress') or n <= module_info.order %}done-line{% endif %}"></div>{% endif %}
-                {% if step_status in ('approved', 'in_progress') %}
-                    <a href="{{ url_for('author_coaching_module', module_order=n) }}"
-                       class="step-dot {% if n < module_info.order %}done{% elif n == module_info.order %}current{% else %}done{% endif %}"
-                       title="Section {{ n }}: {{ step_status }}">
-                        {% if step_status == 'approved' and n != module_info.order %}✓{% else %}{{ n }}{% endif %}
-                    </a>
-                {% else %}
-                    <span class="step-dot todo" title="Section {{ n }}: locked">{{ n }}</span>
-                {% endif %}
+                <a href="{{ url_for('author_coaching_module', module_order=n) }}"
+                   class="step-dot {% if step_status == 'approved' and n != module_info.order %}done{% elif n == module_info.order %}current{% else %}todo{% endif %}"
+                   title="Section {{ n }}{% if step_status == 'approved' %}: Complete{% endif %}">
+                    {% if step_status == 'approved' and n != module_info.order %}✓{% else %}{{ n }}{% endif %}
+                </a>
             {% endfor %}
         </div>
         <!-- Progress bar -->
@@ -511,6 +508,17 @@
 
             {# Publisher-ready = ai_approved=True on latest submission. Always editable otherwise. #}
             {% set is_publisher_ready = latest_submission and latest_submission.ai_approved %}
+            {% if not is_publisher_ready %}
+            <div class="fmt-toolbar" id="fmt-toolbar" style="padding:0.5rem 1rem;border-bottom:1px solid var(--gray-100);">
+                <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
+                <button class="fmt-btn italic" data-action="italic"  title="Italic (Ctrl+I)"><i>I</i></button>
+                <div class="fmt-toolbar-sep"></div>
+                <button class="fmt-btn" data-action="h2" title="Heading 2" style="font-size:0.75rem;font-weight:700;">H2</button>
+                <button class="fmt-btn" data-action="h3" title="Heading 3" style="font-size:0.75rem;">H3</button>
+                <div class="fmt-toolbar-sep"></div>
+                <button class="fmt-btn" data-action="bullet" title="Bullet list" style="font-size:1rem;line-height:1;">•</button>
+            </div>
+            {% endif %}
             <textarea id="content-textarea"
                       placeholder="Start writing here… your draft saves automatically as you type."
                       {% if is_publisher_ready %}disabled{% endif %}>{{ saved_content.content if saved_content and saved_content.content else '' }}</textarea>
@@ -518,17 +526,6 @@
             <div class="writing-footer">
                 {# Word count — always computed from textarea value on load (bug fix) #}
                 <span class="word-count"><span id="word-count">0</span> words</span>
-                {% if not is_publisher_ready %}
-                <div class="fmt-toolbar" id="fmt-toolbar">
-                    <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
-                    <button class="fmt-btn italic" data-action="italic"  title="Italic (Ctrl+I)"><i>I</i></button>
-                    <div class="fmt-toolbar-sep"></div>
-                    <button class="fmt-btn" data-action="h2" title="Heading 2" style="font-size:0.75rem;font-weight:700;">H2</button>
-                    <button class="fmt-btn" data-action="h3" title="Heading 3" style="font-size:0.75rem;">H3</button>
-                    <div class="fmt-toolbar-sep"></div>
-                    <button class="fmt-btn" data-action="bullet" title="Bullet list" style="font-size:1rem;line-height:1;">•</button>
-                </div>
-                {% endif %}
                 <div class="writing-actions">
                     {% if not is_publisher_ready %}
                     {% if module_resources %}

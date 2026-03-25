@@ -2426,15 +2426,14 @@ def author_coaching_enroll():
                 db.session.add(enrollment)
                 db.session.flush()
 
-            # Create module progress rows: module 1 = in_progress, rest = locked
+            # Create module progress rows: all modules unlocked from the start
+            now = datetime.utcnow()
             for m in COACHING_MODULES:
-                mp_status = 'in_progress' if m['order'] == 1 else 'locked'
-                unlocked_at = datetime.utcnow() if m['order'] == 1 else None
                 mp = AuthorModuleProgress(
                     enrollment_id=enrollment.id,
                     module_order=m['order'],
-                    status=mp_status,
-                    unlocked_at=unlocked_at,
+                    status='in_progress',
+                    unlocked_at=now,
                 )
                 db.session.add(mp)
 
@@ -2548,10 +2547,9 @@ def author_coaching_module(module_order):
         flash('Module not found.', 'error')
         return redirect(url_for('author_coaching_dashboard'))
 
-    mp = AuthorModuleProgress.query.filter_by(
-        enrollment_id=enrollment.id, module_order=module_order).first()
-    if not mp or mp.status == 'locked':
-        flash('This module is not yet unlocked. Complete the previous module first.', 'error')
+    mp = _get_or_create_module_progress(enrollment.id, module_order)
+    if not mp:
+        flash('Module not found.', 'error')
         return redirect(url_for('author_coaching_dashboard'))
 
     # Load chat history for this module

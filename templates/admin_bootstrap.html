@@ -1,33 +1,42 @@
 {% extends "base.html" %}
-{% block title %}First-Time Setup - Write It Great{% endblock %}
+{% block title %}{% if has_admins %}Reset Admin Password{% else %}First-Time Setup{% endif %} - Write It Great{% endblock %}
 {% block content %}
 <div class="login-container">
     <div class="login-card">
-        <h1>First-Time Setup</h1>
+        <h1>{% if has_admins %}Reset Admin Password{% else %}First-Time Setup{% endif %}</h1>
         <p style="color: var(--gray-500); font-size: 0.9rem; margin-bottom: 1.5rem;">
-            Create the first admin account. This page will disappear once an account exists.
+            {% if has_admins %}
+                Enter the email of the admin account you want to reset, then choose a new password.
+            {% else %}
+                Create the first admin account. This page disappears once an account exists.
+            {% endif %}
         </p>
         {% if error %}
             <div class="login-error">{{ error }}</div>
         {% endif %}
         <form method="POST">
+            <input type="hidden" name="secret" value="{{ secret }}">
+            {% if not has_admins %}
             <div class="form-group">
                 <label for="name">Full Name</label>
                 <input type="text" id="name" name="name" required placeholder="Andy Smith">
             </div>
+            {% endif %}
             <div class="form-group">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" required placeholder="andy@writeitgreat.com">
             </div>
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">{% if has_admins %}New Password{% else %}Password{% endif %}</label>
                 <input type="password" id="password" name="password" required placeholder="Min. 8 characters">
             </div>
             <div class="form-group">
                 <label for="confirm">Confirm Password</label>
                 <input type="password" id="confirm" name="confirm" required placeholder="Repeat password">
             </div>
-            <button type="submit" class="btn btn-primary login-btn">Create Admin Account</button>
+            <button type="submit" class="btn btn-primary login-btn">
+                {% if has_admins %}Reset Password{% else %}Create Admin Account{% endif %}
+            </button>
         </form>
     </div>
 </div>

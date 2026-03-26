@@ -5927,34 +5927,64 @@ def create_admin():
 
 @app.route('/admin/bootstrap', methods=['GET', 'POST'])
 def admin_bootstrap():
-    """One-time admin account creation — only works when no admin users exist.
-    Automatically disabled once any AdminUser row is present in the database."""
-    if AdminUser.query.count() > 0:
-        # Already have at least one admin — disable this route permanently
-        abort(404)
+    """First-run setup (no admins) OR emergency password reset (admins exist).
+
+    Password-reset mode is activated by setting the ADMIN_RESET_SECRET env var
+    in Heroku config vars and visiting /admin/bootstrap?secret=<value>.
+    Remove the env var after use to disable this route again.
+    """
+    reset_secret = os.environ.get('ADMIN_RESET_SECRET', '')
+    provided_secret = request.args.get('secret', '') or request.form.get('secret', '')
+    has_admins = AdminUser.query.count() > 0
+
+    # Gate: no admins → open; has admins → require matching secret
+    if has_admins:
+        if not reset_secret or provided_secret != reset_secret:
+            abort(404)
 
     error = None
     if request.method == 'POST':
-        name     = request.form.get('name', '').strip()
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
         confirm  = request.form.get('confirm', '')
 
-        if not name or not email or not password:
-            error = 'All fields are required.'
+        if not email or not password:
+            error = 'Email and password are required.'
         elif password != confirm:
             error = 'Passwords do not match.'
         elif len(password) < 8:
             error = 'Password must be at least 8 characters.'
         else:
-            user = AdminUser(email=email, name=name, role='admin')
-            user.set_password(password)
-            db.session.add(user)
-            db.session.commit()
-            flash('Admin account created. Please log in.', 'success')
-            return redirect(url_for('admin_login'))
+            if has_admins:
+                # Reset mode: update existing user's password
+                user = AdminUser.query.filter_by(email=email).first()
+                if not user:
+                    error = f'No admin account found for {email}.'
+                else:
+                    user.set_password(password)
+                    # Clear any lockout / 2FA so they can log in fresh
+                    user.failed_login_attempts = 0
+                    user.locked_until = None
+                    user.totp_enabled = False
+                    user.totp_secret = None
+                    db.session.commit()
+                    flash('Password reset. Please log in.', 'success')
+                    return redirect(url_for('admin_login'))
+            else:
+                # First-run mode: create the first admin
+                name = request.form.get('name', '').strip()
+                if not name:
+                    error = 'Name is required.'
+                else:
+                    user = AdminUser(email=email, name=name, role='admin')
+                    user.set_password(password)
+                    db.session.add(user)
+                    db.session.commit()
+                    flash('Admin account created. Please log in.', 'success')
+                    return redirect(url_for('admin_login'))
 
-    return render_template('admin_bootstrap.html', error=error)
+    return render_template('admin_bootstrap.html', error=error,
+                           has_admins=has_admins, secret=provided_secret)
 
 
 # ============================================================================

@@ -5933,14 +5933,13 @@ def admin_bootstrap():
     in Heroku config vars and visiting /admin/bootstrap?secret=<value>.
     Remove the env var after use to disable this route again.
     """
-    reset_secret = os.environ.get('ADMIN_RESET_SECRET', '')
-    provided_secret = request.args.get('secret', '') or request.form.get('secret', '')
+    reset_enabled = bool(os.environ.get('ADMIN_RESET_SECRET', '').strip())
     has_admins = AdminUser.query.count() > 0
 
-    # Gate: no admins → open; has admins → require matching secret
-    if has_admins:
-        if not reset_secret or provided_secret != reset_secret:
-            abort(404)
+    # Gate: no admins → open for first-run setup
+    #       has admins → only accessible when ADMIN_RESET_SECRET env var is set
+    if has_admins and not reset_enabled:
+        abort(404)
 
     error = None
     if request.method == 'POST':
@@ -5983,8 +5982,7 @@ def admin_bootstrap():
                     flash('Admin account created. Please log in.', 'success')
                     return redirect(url_for('admin_login'))
 
-    return render_template('admin_bootstrap.html', error=error,
-                           has_admins=has_admins, secret=provided_secret)
+    return render_template('admin_bootstrap.html', error=error, has_admins=has_admins)
 
 
 # ============================================================================

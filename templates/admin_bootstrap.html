@@ -15,7 +15,6 @@
             <div class="login-error">{{ error }}</div>
         {% endif %}
         <form method="POST">
-            <input type="hidden" name="secret" value="{{ secret }}">
             {% if not has_admins %}
             <div class="form-group">
                 <label for="name">Full Name</label>

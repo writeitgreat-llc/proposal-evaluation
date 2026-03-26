@@ -5353,6 +5353,36 @@ def admin_coaching_delete_author(enrollment_id):
     return redirect(url_for('admin_coaching_list'))
 
 
+@app.route('/admin/author/<int:author_id>/delete', methods=['POST'])
+@team_required
+def admin_delete_author(author_id):
+    """Delete an author account by author_id (works even with no enrollment)."""
+    author = Author.query.get_or_404(author_id)
+    author_name = author.name
+    author_email = author.email
+
+    for enr in CoachingEnrollment.query.filter_by(author_id=author.id).all():
+        CoachingChatMessage.query.filter_by(enrollment_id=enr.id).delete()
+        HomeworkSubmission.query.filter_by(enrollment_id=enr.id).delete()
+        CoachingModuleContent.query.filter_by(enrollment_id=enr.id).delete()
+        AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).delete()
+        db.session.delete(enr)
+
+    for proposal in Proposal.query.filter_by(author_id=author.id).all():
+        ProposalNote.query.filter_by(proposal_id=proposal.id).delete()
+        PublisherProposal.query.filter_by(proposal_id=proposal.id).delete()
+        db.session.delete(proposal)
+
+    OnePagerSubmission.query.filter_by(author_id=author.id).delete()
+    AuthorEngagementEmail.query.filter_by(author_id=author.id).delete()
+
+    db.session.delete(author)
+    db.session.commit()
+
+    flash(f'Author account for {author_name} ({author_email}) has been permanently deleted.', 'success')
+    return redirect(url_for('admin_pipeline'))
+
+
 @app.route('/admin/coaching/<int:enrollment_id>/reset', methods=['POST'])
 @team_required
 def admin_coaching_reset_enrollment(enrollment_id):

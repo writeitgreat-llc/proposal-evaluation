@@ -143,11 +143,15 @@
                         </a>
                         {% endif %}
                     </td>
-                    <td style="padding:0.875rem 1rem;">
+                    <td style="padding:0.875rem 1rem;display:flex;align-items:center;gap:0.5rem;">
                         {% if row.enrollment %}
                         <a href="{{ url_for('admin_coaching_detail', enrollment_id=row.enrollment.id) }}"
                            style="font-size:0.8125rem;color:var(--primary);font-weight:600;text-decoration:none;">View →</a>
                         {% endif %}
+                        <form method="POST" action="{{ url_for('admin_delete_author', author_id=row.author.id) }}"
+                              onsubmit="return confirm('⛔ Permanently delete {{ row.author.name }} ({{ row.author.email }})? This cannot be undone.')">
+                            <button type="submit" style="background:none;border:1px solid #dc2626;color:#dc2626;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;cursor:pointer;">Delete</button>
+                        </form>
                     </td>
                 </tr>
                 {% endfor %}

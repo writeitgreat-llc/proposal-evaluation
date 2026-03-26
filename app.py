@@ -5922,6 +5922,42 @@ def create_admin():
 
 
 # ============================================================================
+# FIRST-RUN BOOTSTRAP
+# ============================================================================
+
+@app.route('/admin/bootstrap', methods=['GET', 'POST'])
+def admin_bootstrap():
+    """One-time admin account creation — only works when no admin users exist.
+    Automatically disabled once any AdminUser row is present in the database."""
+    if AdminUser.query.count() > 0:
+        # Already have at least one admin — disable this route permanently
+        abort(404)
+
+    error = None
+    if request.method == 'POST':
+        name     = request.form.get('name', '').strip()
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm', '')
+
+        if not name or not email or not password:
+            error = 'All fields are required.'
+        elif password != confirm:
+            error = 'Passwords do not match.'
+        elif len(password) < 8:
+            error = 'Password must be at least 8 characters.'
+        else:
+            user = AdminUser(email=email, name=name, role='admin')
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            flash('Admin account created. Please log in.', 'success')
+            return redirect(url_for('admin_login'))
+
+    return render_template('admin_bootstrap.html', error=error)
+
+
+# ============================================================================
 # ERROR HANDLERS
 # ============================================================================
 

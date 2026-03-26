@@ -5507,6 +5507,88 @@ def admin_one_pager_detail(submission_id):
     return render_template('admin_one_pager_detail.html', submission=submission, answers=answers)
 
 
+@app.route('/admin/authors/<int:author_id>/one-pager', methods=['GET', 'POST'])
+@team_required
+def admin_author_one_pager(author_id):
+    """Admin fills out / edits an author's one-pager on their behalf (e.g. during a sales call).
+    Saves to the same OnePagerSubmission the author sees when they log in."""
+    author = Author.query.get_or_404(author_id)
+    submission = author.one_pager_submissions.order_by(
+        OnePagerSubmission.created_at.desc()).first()
+
+    summary = None
+    answers = {}
+
+    if request.method == 'POST':
+        action = request.form.get('action', 'save')   # 'save' | 'generate'
+        answers = {
+            'problem':    request.form.get('problem', '').strip(),
+            'reader':     request.form.get('reader', '').strip(),
+            'different':  request.form.get('different', '').strip(),
+            'why_you':    request.form.get('why_you', '').strip(),
+            'marketing':  request.form.get('marketing', '').strip(),
+            'book_title': request.form.get('book_title', '').strip(),
+        }
+
+        if action == 'generate' and all([answers['problem'], answers['reader'], answers['why_you']]):
+            try:
+                prompt = f"""You are an expert book proposal coach at Write It Great. An author has answered 5 focused questions about their nonfiction book. Generate a clean, compelling one-page proposal summary.
+
+AUTHOR'S ANSWERS:
+Working title: {answers['book_title'] or 'Not yet decided'}
+1. What problem does your book solve? {answers['problem']}
+2. Who is your target reader? {answers['reader']}
+3. Why is your book different from what's already out there? {answers['different'] or 'Not provided'}
+4. Why are you the right person to write it? {answers['why_you']}
+5. How do you plan to market it? {answers['marketing'] or 'Not provided'}
+
+Write a one-page proposal summary with these sections:
+- **The Problem & Promise** (2-3 sentences: the gap this book fills, why it matters now)
+- **The Reader** (1-2 sentences: specific target audience — demographic and psychographic)
+- **What Makes This Book Different** (2-3 sentences: unique angle, methodology, or perspective)
+- **The Author** (2-3 sentences: credentials and unique position to write this)
+- **Marketing Potential** (1-2 sentences: platform, reach, and promotional opportunities)
+- **Next Steps** (2-3 bullet points: what to develop further before a full submission)
+
+Tone: professional, warm, and specific. Use the author's actual words and voice. Do not pad — be crisp."""
+                response = client.chat.completions.create(
+                    model='gpt-4o-mini',
+                    messages=[{'role': 'user', 'content': prompt}],
+                    temperature=0.7,
+                    max_tokens=950,
+                )
+                summary = response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f'Admin one-pager AI error: {e}')
+                flash('AI generation failed — answers were saved.', 'warning')
+
+        # Save / update submission
+        if not submission or submission.status == 'submitted':
+            submission = OnePagerSubmission(author_id=author.id)
+            db.session.add(submission)
+        submission.book_title = answers['book_title'] or None
+        submission.answers_json = json.dumps(answers)
+        if summary:
+            submission.summary_text = summary
+        db.session.commit()
+
+        if action == 'save':
+            flash(f'Saved for {author.name}.', 'success')
+        elif summary:
+            flash(f'Summary generated and saved for {author.name}.', 'success')
+        return redirect(url_for('admin_author_one_pager', author_id=author.id))
+
+    # GET — load existing
+    if submission and submission.answers_json:
+        answers = json.loads(submission.answers_json)
+        summary = submission.summary_text
+    return render_template('admin_author_one_pager.html',
+                           author=author,
+                           submission=submission,
+                           answers=answers,
+                           summary=summary)
+
+
 # ============================================================================
 # ADMIN — KNOWLEDGE BASE
 # ============================================================================

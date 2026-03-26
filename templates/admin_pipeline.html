@@ -133,15 +133,14 @@
                         {% endif %}
                     </td>
                     <td style="padding:0.875rem 1rem;font-size:0.8125rem;">
-                        {% if row.one_pager %}
-                            {% if row.one_pager.status == 'submitted' %}
-                            <a href="{{ url_for('admin_one_pager_detail', submission_id=row.one_pager.id) }}"
-                               style="color:#16a34a;font-weight:600;text-decoration:none;">✓ Submitted →</a>
-                            {% else %}
-                            <span style="color:var(--gray-400);">Draft</span>
-                            {% endif %}
+                        {% if row.one_pager and row.one_pager.status == 'submitted' %}
+                        <a href="{{ url_for('admin_one_pager_detail', submission_id=row.one_pager.id) }}"
+                           style="color:#16a34a;font-weight:600;text-decoration:none;">✓ Submitted →</a>
                         {% else %}
-                        <span style="color:var(--gray-200);">—</span>
+                        <a href="{{ url_for('admin_author_one_pager', author_id=row.author.id) }}"
+                           style="color:var(--primary);font-weight:600;text-decoration:none;">
+                            {% if row.one_pager %}Edit →{% else %}Fill out →{% endif %}
+                        </a>
                         {% endif %}
                     </td>
                     <td style="padding:0.875rem 1rem;">

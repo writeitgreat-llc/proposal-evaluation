@@ -50,13 +50,6 @@
 .book-info .author { color: #6B6B7B; }
 .proposal-type-badge { display: inline-block; background: #2D1B69; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; margin-top: 10px; }
 
-/* Red Flags */
-.red-flags { background: #FEF2F2; border: 1px solid #EF4444; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
-.red-flags h3 { color: #EF4444; font-size: 1rem; margin-bottom: 12px; }
-.red-flags ul { list-style: none; padding: 0; margin: 0; }
-.red-flags li { padding: 6px 0 6px 24px; position: relative; color: #991B1B; }
-.red-flags li::before { content: '\26A0'; position: absolute; left: 0; }
-
 /* Consistency Flags */
 .consistency-flags { background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
 .consistency-flags h3 { color: #B45309; font-size: 1rem; margin-bottom: 6px; }
@@ -245,23 +238,11 @@
             <span class="proposal-type-badge">{{ (proposal.proposal_type or 'full')|replace('_', ' ')|title }} Evaluation</span>
         </div>
 
-        <!-- Red Flags -->
-        {% if red_flags and red_flags|length > 0 %}
-        <div class="red-flags">
-            <h3>Red Flags Detected</h3>
-            <ul>
-                {% for flag in red_flags %}
-                <li>{{ flag }}</li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-
-        <!-- Consistency Flags -->
+        <!-- Areas to Watch (replaces red flags / consistency flags — positive framing) -->
         {% if contradictions and contradictions|length > 0 %}
         <div class="consistency-flags">
-            <h3>Consistency Flags</h3>
-            <p class="cf-subtitle">These are cross-section observations a real editor would notice — not score deductions, but issues worth addressing before submission.</p>
+            <h3>Areas Worth Revisiting</h3>
+            <p class="cf-subtitle">Before you submit to agents or publishers, these are worth a second look — small fixes that can make a big difference.</p>
             <ul>
                 {% for flag in contradictions %}
                 <li>{{ flag }}</li>
@@ -289,7 +270,7 @@
             {% endif %}
             {% if improvements %}
             <div class="list-card improvements-card">
-                <h4>Key Improvements</h4>
+                <h4>Your Next Wins</h4>
                 <ul>
                     {% for imp in improvements %}
                     <li>{{ imp }}</li>
@@ -331,7 +312,7 @@
                     {% endif %}
                     {% if analysis.get('gaps') %}
                     <div class="accordion-box">
-                        <h5>Areas for Improvement</h5>
+                        <h5>Opportunities to Strengthen</h5>
                         <p>{{ analysis.gaps }}</p>
                     </div>
                     {% endif %}

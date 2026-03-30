@@ -399,26 +399,6 @@
         {% endfor %}
         {% endif %}
 
-        <!-- Advance Estimate -->
-        {% if adv_est and adv_est.get('reasoning') %}
-        <div class="advance-est {% if not adv_est.get('viable', true) %}not-viable{% endif %}">
-            <h4>Advance Estimate</h4>
-            {% if adv_est.get('viable', true) %}
-            <div class="estimate-range">${{ "{:,}".format(adv_est.get('lowRange', 0)|int) }} - ${{ "{:,}".format(adv_est.get('highRange', 0)|int) }}</div>
-            <div class="estimate-confidence"><strong>Confidence:</strong> {{ adv_est.get('confidence', 'N/A') }}</div>
-            {% else %}
-            <p><strong>Current Status:</strong> Not yet viable for a traditional publishing advance</p>
-            {% endif %}
-            <p class="estimate-reasoning">{{ adv_est.get('reasoning', '') }}</p>
-        </div>
-        {% elif adv_old and (adv_old.get('low') or adv_old.get('high')) %}
-        <div class="advance-est">
-            <h4>Advance Estimate</h4>
-            <div class="estimate-range">${{ "{:,}".format(adv_old.get('low', 0)|int) }} - ${{ "{:,}".format(adv_old.get('high', 0)|int) }}</div>
-            <p class="estimate-reasoning">{{ adv_old.get('notes', '') }}</p>
-        </div>
-        {% endif %}
-
         <!-- Recommended Next Steps -->
         {% if next_steps %}
         <h3 class="section-header">Recommended Next Steps</h3>

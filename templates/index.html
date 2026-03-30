@@ -168,7 +168,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Serialize Part A platform numbers to JSON before submission
         const parseField = (id) => {
-            const val = document.getElementById(id).value.trim();
+            const el = document.getElementById(id);
+            if (!el) return null;
+            const val = el.value.trim();
             return val === '' ? null : parseInt(val, 10);
         };
         document.getElementById('platform_data_json').value = JSON.stringify({

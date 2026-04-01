@@ -399,6 +399,28 @@
         {% endfor %}
         {% endif %}
 
+        <!-- Benchmarking -->
+        {% if benchmark and benchmark.total >= 3 %}
+        <div style="background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;padding:1.25rem 1.5rem;margin:1.5rem 0;">
+            <h3 style="color:#5b21b6;font-size:1rem;margin:0 0 0.75rem;">📊 How your proposal compares</h3>
+            <div style="display:flex;gap:2rem;flex-wrap:wrap;">
+                <div style="text-align:center;">
+                    <div style="font-size:2rem;font-weight:800;color:#5b21b6;">{{ benchmark.better_than }}%</div>
+                    <div style="font-size:0.8rem;color:#7c3aed;">of proposals reviewed</div>
+                </div>
+                <div style="flex:1;min-width:160px;display:flex;align-items:center;">
+                    <p style="margin:0;font-size:0.9rem;color:#4c1d95;line-height:1.6;">
+                        Your proposal scores higher than <strong>{{ benchmark.better_than }}%</strong> of the {{ benchmark.total }} proposals we've evaluated.
+                        {% if benchmark.better_than >= 70 %}You're in strong shape — keep refining.
+                        {% elif benchmark.better_than >= 40 %}Good foundation. The coaching program can help close the gap.
+                        {% else %}There's real room to grow — and that's exactly what the coaching program is for.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Recommended Next Steps -->
         {% if next_steps %}
         <h3 class="section-header">Recommended Next Steps</h3>

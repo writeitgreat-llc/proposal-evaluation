@@ -9,6 +9,12 @@
 .qs-steps { display: flex; gap: 0.5rem; justify-content: center; margin-top: 1rem; flex-wrap: wrap; }
 .qs-step { font-size: 0.75rem; background: var(--gray-100); color: var(--gray-500); padding: 0.2rem 0.625rem; border-radius: 20px; }
 
+/* Missing field highlight */
+.qs-field.needs-love textarea,
+.qs-field.needs-love input { border-color: #7c3aed !important; background: #faf9ff; }
+.qs-field .nudge-hint { display: none; font-size: 0.775rem; color: #7c3aed; font-weight: 600; margin-top: 0.3rem; }
+.qs-field.needs-love .nudge-hint { display: block; }
+
 /* Progress bar */
 .qs-progress-wrap { margin-bottom: 1.75rem; }
 .qs-progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
@@ -97,6 +103,20 @@
         </div>
     </div>
 
+    {% if missing_questions %}
+    <div style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1.5px solid #c4b5fd;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:flex-start;gap:0.75rem;">
+        <span style="font-size:1.5rem;flex-shrink:0;">💪</span>
+        <div>
+            <p style="margin:0 0 0.25rem;font-weight:700;color:#5b21b6;">Almost there! Just a couple more answers needed.</p>
+            <p style="margin:0;font-size:0.875rem;color:#6d28d9;">
+                Question{{ 's' if missing_questions|length > 1 else '' }}
+                {{ missing_questions | join(', ') }} {{ 'are' if missing_questions|length > 1 else 'is' }} still blank —
+                even a rough draft counts. You've got this! 🚀
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
     {% if summary %}
     <!-- Result -->
     <div class="qs-result">
@@ -145,14 +165,16 @@
                        placeholder="e.g. The Quiet Leader">
             </div>
 
-            <div class="qs-field">
+            <div class="qs-field" id="field-problem">
                 <label><span class="q-num">1</span>What problem does your book solve? <span class="hint">1-3 sentences</span></label>
                 <textarea name="problem" placeholder="e.g. Most first-time managers are technically excellent but emotionally underprepared for leading people. They're promoted for their skills, then left to figure out the human side alone…">{{ answers.get('problem', '') }}</textarea>
+                <span class="nudge-hint">✏️ Even one rough sentence is a great start!</span>
             </div>
 
-            <div class="qs-field">
+            <div class="qs-field" id="field-reader">
                 <label><span class="q-num">2</span>Who is your target reader? <span class="hint">Be specific — occupation, life stage, pain point</span></label>
                 <textarea name="reader" placeholder="e.g. Mid-career professionals in their first people-management role who are great at their craft but overwhelmed by the human side of leadership…">{{ answers.get('reader', '') }}</textarea>
+                <span class="nudge-hint">✏️ Describe the person who needs this book most.</span>
             </div>
         </div>
 
@@ -164,9 +186,10 @@
                 <textarea name="different" placeholder="e.g. Most leadership books focus on high-level strategy. Mine is a practical, week-by-week guide rooted in neuroscience research, written specifically for first-time managers in technical fields…" style="min-height:70px;">{{ answers.get('different', '') }}</textarea>
             </div>
 
-            <div class="qs-field">
+            <div class="qs-field" id="field-why_you">
                 <label><span class="q-num">4</span>Why are you the right person to write it? <span class="hint">credentials, experience, unique perspective</span></label>
                 <textarea name="why_you" placeholder="e.g. I spent 12 years as an engineering manager at three startups before founding a leadership coaching practice. I've trained over 400 first-time managers…">{{ answers.get('why_you', '') }}</textarea>
+                <span class="nudge-hint">✏️ Your story matters — share what makes your voice unique.</span>
             </div>
 
             <div class="qs-field">
@@ -206,6 +229,23 @@ function copyResult(btn) {
         setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
     });
 }
+
+// Highlight missing fields on server-side validation
+{% if missing_questions %}
+(function() {
+    var map = {'1': 'field-problem', '2': 'field-reader', '4': 'field-why_you'};
+    var missing = {{ missing_questions | tojson }};
+    var first = null;
+    missing.forEach(function(q) {
+        var el = document.getElementById(map[q]);
+        if (el) {
+            el.classList.add('needs-love');
+            if (!first) first = el;
+        }
+    });
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+})();
+{% endif %}
 
 // Progress bar
 (function() {

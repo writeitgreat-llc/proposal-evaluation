@@ -2105,6 +2105,37 @@ def send_coaching_complete_email(author, enrollment):
 # ADMIN INVITE & ONE-PAGER EMAILS
 # ============================================================================
 
+def send_author_welcome_email(author):
+    """Send a warm welcome email to a newly self-registered author."""
+    app_url = APP_BASE_URL
+    import random
+    prompt = random.choice(REENGAGEMENT_PROMPTS)
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.7;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        {_coaching_email_header()}
+        <p>Hi {author.name},</p>
+        <p>Welcome to <strong>Write It Great</strong> — you've just done something most aspiring authors never do: you took the first step. 🎉</p>
+        <p>Here's your mission for the next 20 minutes:</p>
+        <div style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:6px;padding:16px 20px;margin:20px 0;">
+            <p style="margin:0;font-weight:700;color:#5b21b6;">Complete your One-Pager</p>
+            <p style="margin:8px 0 0;color:#4c1d95;font-size:0.9rem;">5 questions. 20 minutes. Andy reviews every single one personally and gets back to you with real feedback.</p>
+        </div>
+        <p>A question to get you started: <em>"{prompt}"</em></p>
+        <p style="text-align:center;margin:2rem 0;">
+            <a href="{app_url}/author/coaching/quickstart" style="display:inline-block;padding:14px 28px;background:#2D1B69;color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
+                Start My One-Pager →
+            </a>
+        </p>
+        <p style="font-size:0.85rem;color:#888;">Reply to this email any time — we read every message.</p>
+        {_coaching_email_footer()}
+    </div></body></html>"""
+    try:
+        return send_email(author.email, f'Welcome to Write It Great, {author.name}! Here\'s your first step 🚀', html_content)
+    except Exception as e:
+        print(f"Welcome email error: {e}")
+        return False
+
+
 def send_author_welcome_invite_email(author, token):
     """Admin-created account: send invite email with set-password link"""
     app_url = APP_BASE_URL
@@ -2881,9 +2912,12 @@ def author_coaching_quickstart():
             'book_title':request.form.get('book_title', '').strip(),
         }
         if not all([answers['problem'], answers['reader'], answers['why_you']]):
-            flash('Please fill in at least questions 1, 2, and 4.', 'error')
+            missing = []
+            if not answers['problem']: missing.append('1')
+            if not answers['reader']:  missing.append('2')
+            if not answers['why_you']: missing.append('4')
             return render_template('author_coaching_quickstart.html', answers=answers,
-                                   submission=existing)
+                                   submission=existing, missing_questions=missing)
 
         try:
             prompt = f"""You are an expert book proposal coach at Write It Great. An author has answered 5 focused questions about their nonfiction book. Generate a clean, compelling one-page proposal summary.
@@ -3836,6 +3870,8 @@ def author_register():
 
         session['user_type'] = 'author'
         login_user(author)
+        # Fire-and-forget welcome email
+        threading.Thread(target=send_author_welcome_email, args=(author,), daemon=True).start()
         flash(f'Welcome, {name}! Your account has been created.', 'success')
         return redirect(url_for('author_dashboard'))
 

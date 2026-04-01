@@ -364,13 +364,18 @@
     font-size: 0.725rem; text-transform: uppercase; letter-spacing: 0.07em;
     color: var(--primary); margin: 0 0 0.625rem;
 }
-.kb-item {
-    background: var(--gray-50); border-radius: 7px;
-    padding: 0.625rem 0.875rem; margin-bottom: 0.5rem;
-    font-size: 0.8375rem; line-height: 1.6; color: var(--gray-700);
+.kb-download-card {
+    display: flex; align-items: center; gap: 0.75rem;
+    background: var(--gray-50); border: 1px solid var(--gray-200);
+    border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;
+    text-decoration: none; color: inherit; transition: all 0.15s;
 }
-.kb-item strong { color: var(--gray-900); }
-.kb-item em { color: var(--gray-500); font-style: normal; }
+.kb-download-card:hover { background: #f0f4ff; border-color: var(--primary); }
+.kb-dl-icon { font-size: 1.4rem; flex-shrink: 0; }
+.kb-dl-info { flex: 1; min-width: 0; }
+.kb-dl-title { display: block; font-size: 0.875rem; font-weight: 600; color: var(--gray-900); }
+.kb-dl-meta  { display: block; font-size: 0.75rem; color: var(--gray-400); margin-top: 0.1rem; }
+.kb-dl-arrow { font-size: 0.75rem; font-weight: 600; color: var(--primary); white-space: nowrap; flex-shrink: 0; }
 {% endblock %}
 
 {% block content %}
@@ -647,18 +652,20 @@
             <div class="kb-section">
                 <h4>📎 Uploaded Resources</h4>
                 {% for doc in kb_docs %}
-                <div class="kb-item" style="margin-bottom:0.625rem;">
-                    <div style="font-weight:600;font-size:0.8125rem;color:var(--gray-900);margin-bottom:0.2rem;">
+                <a href="{{ url_for('admin_knowledge_base_download', doc_id=doc.id) }}"
+                   class="kb-download-card" target="_blank" rel="noopener">
+                    <span class="kb-dl-icon">
                         {% if doc.doc_type == 'example' %}✍️{% elif doc.doc_type == 'template' %}📋{% else %}📄{% endif %}
-                        {{ doc.title }}
-                        {% if doc.module_order == none %}
-                        <span style="font-size:0.7rem;color:var(--gray-400);font-weight:400;margin-left:0.3rem;">all modules</span>
-                        {% endif %}
-                    </div>
-                    {% if doc.content_text %}
-                    <div style="font-size:0.8rem;color:var(--gray-600);line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto;">{{ doc.content_text[:800] }}{% if doc.content_text | length > 800 %}…{% endif %}</div>
-                    {% endif %}
-                </div>
+                    </span>
+                    <span class="kb-dl-info">
+                        <span class="kb-dl-title">{{ doc.title }}</span>
+                        <span class="kb-dl-meta">
+                            {{ doc.doc_type | title }}
+                            {% if doc.module_order == none %} · all modules{% endif %}
+                        </span>
+                    </span>
+                    <span class="kb-dl-arrow">↓ Download</span>
+                </a>
                 {% endfor %}
             </div>
             {% endif %}

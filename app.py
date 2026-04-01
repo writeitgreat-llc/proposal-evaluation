@@ -5994,6 +5994,8 @@ def run_migrations():
     _add('author', 'admin_created BOOLEAN DEFAULT FALSE')
     _add('author', 'assigned_path VARCHAR(30)')
     _add('author', 'last_login_at TIMESTAMP')
+    _add('author', 'streak_days INTEGER DEFAULT 0')
+    _add('author', 'last_active_date DATE')
 
     # ── one_pager_submission (new table) ───────────────────────────────────────
     # SQLAlchemy db.create_all() handles new tables; _add is only for existing ones

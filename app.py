@@ -648,6 +648,22 @@ class Author(UserMixin, db.Model):
     assigned_path = db.Column(db.String(30))               # 'full_proposal' | 'one_pager' | None
     last_login_at = db.Column(db.DateTime)
 
+    # Engagement / gamification
+    streak_days     = db.Column(db.Integer, default=0)
+    last_active_date = db.Column(db.Date)
+
+    def record_activity(self):
+        """Call on login and on content save to maintain the daily streak."""
+        from datetime import date as _date
+        today = _date.today()
+        if self.last_active_date == today:
+            return  # already counted today
+        if self.last_active_date and (today - self.last_active_date).days == 1:
+            self.streak_days = (self.streak_days or 0) + 1
+        else:
+            self.streak_days = 1
+        self.last_active_date = today
+
     # These properties keep templates simple
     @property
     def is_admin(self):
@@ -2149,6 +2165,8 @@ REENGAGEMENT_PROMPTS = [
 ]
 
 REENGAGEMENT_TYPES = {
+    'welcome_day1':         'Welcome to Write It Great — your first step inside',
+    'nudge_day3':           'Your book idea is still waiting for you',
     'never_started':        'Your proposal is waiting — here\'s how to begin in 10 minutes',
     'stalled_one_pager':    'You\'ve already started something great — one question to get unstuck',
     'one_pager_to_full':    'Your one-pager showed real promise. Ready to take it further?',
@@ -2161,6 +2179,8 @@ def send_reengagement_email(author, email_type, module_name='', completed_count=
     """Send a warm re-engagement email. Returns True if sent."""
     app_url = APP_BASE_URL
     subject_map = {
+        'welcome_day1':         'You\'re in ✨ — here\'s what to do first',
+        'nudge_day3':           'Your book idea is still waiting for you',
         'never_started':        'Your proposal is waiting — here\'s how to begin in 10 minutes',
         'stalled_one_pager':    'You\'ve already started something great ✨',
         'one_pager_to_full':    'Your one-pager showed real promise. Ready for the next step?',
@@ -2170,6 +2190,14 @@ def send_reengagement_email(author, email_type, module_name='', completed_count=
     import random
     prompt = random.choice(REENGAGEMENT_PROMPTS)
     body_map = {
+        'welcome_day1': f"""<p>Hi {author.name},</p>
+            <p>Welcome to Write It Great — you've just taken the first step that most aspiring authors never take.</p>
+            <p>Here's where to start: the <strong>One-Pager</strong>. It's 5 questions, takes about 20 minutes, and Andy personally reviews every single one. Think of it as a conversation starter that could change the trajectory of your book.</p>
+            <p>A question to get you thinking: <em>"{prompt}"</em></p>""",
+        'nudge_day3': f"""<p>Hi {author.name},</p>
+            <p>Three days ago you created your Write It Great account. Your book idea is still there — it hasn't gone anywhere.</p>
+            <p>The One-Pager takes 20 minutes. It's not a test. It's just 5 questions to help you see your book more clearly — and help Andy give you real, specific feedback.</p>
+            <p>Here's something to reflect on: <em>"{prompt}"</em></p>""",
         'never_started': f"""<p>Hi {author.name},</p>
             <p>Your Write It Great account is all set up, and your book idea is waiting to come to life. Getting started is easier than you think — authors who try one question often can't stop.</p>
             <p><strong>Here's your first move:</strong> Pick up the One-Pager. It's five questions and about 45 minutes. That's all you need to turn your idea into something concrete.</p>
@@ -2190,6 +2218,8 @@ def send_reengagement_email(author, email_type, module_name='', completed_count=
             <p>Whenever you're ready, so are we.</p>""",
     }
     cta_map = {
+        'welcome_day1':         (f"{app_url}/author/coaching/quickstart", 'Start My One-Pager →'),
+        'nudge_day3':           (f"{app_url}/author/coaching/quickstart", 'Open My One-Pager →'),
         'never_started':        (f"{app_url}/author/coaching/quickstart", 'Start My One-Pager →'),
         'stalled_one_pager':    (f"{app_url}/author/coaching/quickstart", 'Pick Up Where I Left Off →'),
         'one_pager_to_full':    (f"{app_url}/author/coaching", 'Start the Full Program →'),
@@ -2254,12 +2284,21 @@ def check_reengagement_emails():
 
                 email_type = None
                 completed_count = 0
+                days_since_created = (now - author.created_at).days
+                types_sent = {e.email_type for e in author.engagement_emails.all()}
+
+                # Early-life nudges — sent in the first week regardless of 7-day gap rule
+                if not enrollment and not one_pager:
+                    if days_since_created >= 1 and 'welcome_day1' not in types_sent:
+                        send_reengagement_email(author, 'welcome_day1')
+                        continue
+                    if days_since_created >= 3 and 'nudge_day3' not in types_sent:
+                        send_reengagement_email(author, 'nudge_day3')
+                        continue
 
                 if days_since_login >= 30:
                     email_type = 'dormant_30_days'
                 elif not enrollment and not one_pager:
-                    # Never started — account created but no activity
-                    days_since_created = (now - author.created_at).days
                     if days_since_created >= 7:
                         email_type = 'never_started'
                 elif one_pager and not enrollment:
@@ -2288,8 +2327,7 @@ def check_reengagement_emails():
                         email_type = 'stalled_full_proposal'
 
                 if email_type:
-                    types_already_sent = {e.email_type for e in author.engagement_emails.all()}
-                    if email_type not in types_already_sent:
+                    if email_type not in types_sent:
                         send_reengagement_email(author, email_type, completed_count=completed_count)
         except Exception as e:
             print(f"Re-engagement check error: {e}")
@@ -3142,6 +3180,7 @@ def api_coaching_content_save():
                 word_count=word_count,
             )
             db.session.add(mc)
+        current_user.record_activity()
         db.session.commit()
         return jsonify({'success': True, 'word_count': word_count})
     except Exception as e:
@@ -3711,8 +3750,21 @@ def results(submission_id):
     if evaluation:
         compute_advance_estimate(evaluation)
     word_count = len(proposal.proposal_text.split()) if proposal.proposal_text else 0
+
+    # Benchmarking: how does this proposal compare to others?
+    benchmark = None
+    if not processing and proposal.overall_score is not None:
+        all_scores = [p.overall_score for p in
+                      Proposal.query.filter(Proposal.overall_score.isnot(None),
+                                            Proposal.status == 'completed').all()]
+        if len(all_scores) >= 3:
+            score = float(proposal.overall_score)
+            better_than = int(round(sum(1 for s in all_scores if score > s) / len(all_scores) * 100))
+            avg = int(round(sum(all_scores) / len(all_scores)))
+            benchmark = {'better_than': better_than, 'avg': avg, 'total': len(all_scores)}
+
     return render_template('results.html', proposal=proposal, evaluation=evaluation,
-                           processing=processing, word_count=word_count)
+                           processing=processing, word_count=word_count, benchmark=benchmark)
 
 
 @app.route('/download/<submission_id>')
@@ -3787,7 +3839,8 @@ def author_register():
         flash(f'Welcome, {name}! Your account has been created.', 'success')
         return redirect(url_for('author_dashboard'))
 
-    return render_template('author_register.html')
+    total_authors = Author.query.count()
+    return render_template('author_register.html', total_authors=total_authors)
 
 
 @app.route('/author/login', methods=['GET', 'POST'])
@@ -3809,6 +3862,7 @@ def author_login():
             session['user_type'] = 'author'
             login_user(author)
             author.last_login_at = datetime.utcnow()
+            author.record_activity()
             if author.pending_setup:
                 author.pending_setup = False
             db.session.commit()
@@ -3836,9 +3890,41 @@ def author_logout():
 def author_dashboard():
     """Author dashboard showing their proposals"""
     proposals = Proposal.query.filter_by(author_id=current_user.id).order_by(Proposal.submitted_at.desc()).all()
+
+    # ── Milestone badges ──────────────────────────────────────────────
+    enrollment = CoachingEnrollment.query.filter_by(author_id=current_user.id).first()
+    one_pager  = current_user.one_pager_submissions.order_by(OnePagerSubmission.created_at.desc()).first()
+
+    badges = []
+    if enrollment:
+        all_hw = HomeworkSubmission.query.filter_by(enrollment_id=enrollment.id).first()
+        if all_hw:
+            badges.append({'icon': '🖊️', 'label': 'First Draft', 'desc': 'Submitted your first module draft'})
+
+        approved = [mp for mp in enrollment.module_progress.all() if mp.status == 'approved']
+        if len(approved) >= 1:
+            deep = CoachingModuleContent.query.filter(
+                CoachingModuleContent.enrollment_id == enrollment.id,
+                CoachingModuleContent.word_count >= 500
+            ).first()
+            if deep:
+                badges.append({'icon': '🧠', 'label': 'Deep Thinker', 'desc': 'Wrote 500+ words in a section'})
+        if len(approved) >= 4:
+            badges.append({'icon': '⚡', 'label': 'Halfway There', 'desc': '4 modules complete'})
+        if len(approved) >= 7:
+            badges.append({'icon': '🏆', 'label': 'Full Proposal', 'desc': 'All 7 modules complete'})
+
+    if one_pager and one_pager.status == 'submitted':
+        badges.append({'icon': '✨', 'label': 'One-Pager Done', 'desc': 'Submitted your one-pager to Andy'})
+
+    if proposals:
+        badges.append({'icon': '📄', 'label': 'Proposal Ready', 'desc': 'Submitted a full proposal for evaluation'})
+
     return render_template('author_dashboard.html',
                          proposals=proposals,
-                         status_labels=AUTHOR_STATUS_LABELS)
+                         status_labels=AUTHOR_STATUS_LABELS,
+                         badges=badges,
+                         streak=current_user.streak_days or 0)
 
 
 @app.route('/author/proposal/<submission_id>')

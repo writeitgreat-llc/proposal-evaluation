@@ -9,6 +9,15 @@
 .qs-steps { display: flex; gap: 0.5rem; justify-content: center; margin-top: 1rem; flex-wrap: wrap; }
 .qs-step { font-size: 0.75rem; background: var(--gray-100); color: var(--gray-500); padding: 0.2rem 0.625rem; border-radius: 20px; }
 
+/* Progress bar */
+.qs-progress-wrap { margin-bottom: 1.75rem; }
+.qs-progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+.qs-progress-label { font-size: 0.8rem; font-weight: 600; color: var(--primary); }
+.qs-progress-count { font-size: 0.8rem; color: var(--gray-400); }
+.qs-progress-track { height: 8px; background: var(--gray-100); border-radius: 4px; overflow: hidden; }
+.qs-progress-fill  { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), #7c3aed);
+    transition: width 0.4s ease; }
+
 .qs-card {
     background: white; border: 1.5px solid var(--gray-200);
     border-radius: var(--radius); padding: 1.5rem 1.75rem; margin-bottom: 1rem;
@@ -70,10 +79,21 @@
         <h1>⚡ Quick One-Pager</h1>
         <p>Answer 5 focused questions and get a professionally written one-page summary of your book idea — ready in minutes.</p>
         <div class="qs-steps">
-            <span class="qs-step">⏱ ~45 minutes</span>
+            <span class="qs-step">⏱ ~20 minutes</span>
             <span class="qs-step">5 questions</span>
             <span class="qs-step">AI-generated summary</span>
-            <span class="qs-step">Submit to the WIG team</span>
+            <span class="qs-step">Andy reviews personally</span>
+        </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="qs-progress-wrap">
+        <div class="qs-progress-header">
+            <span class="qs-progress-label" id="progress-label">Your progress</span>
+            <span class="qs-progress-count" id="progress-count">0 of 5 answered</span>
+        </div>
+        <div class="qs-progress-track">
+            <div class="qs-progress-fill" id="progress-fill" style="width:0%"></div>
         </div>
     </div>
 
@@ -176,6 +196,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
 <script>
 function copyResult(btn) {
     var el = document.getElementById('qs-result-text');
@@ -185,5 +206,38 @@ function copyResult(btn) {
         setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
     });
 }
+
+// Progress bar
+(function() {
+    var fields = ['problem','reader','different','why_you','marketing'];
+    var fill   = document.getElementById('progress-fill');
+    var count  = document.getElementById('progress-count');
+    var label  = document.getElementById('progress-label');
+    var celebrated = false;
+
+    function update() {
+        var filled = fields.filter(function(id) {
+            var el = document.querySelector('[name="' + id + '"]');
+            return el && el.value.trim().length > 0;
+        }).length;
+        var pct = Math.round(filled / fields.length * 100);
+        if (fill)  fill.style.width = pct + '%';
+        if (count) count.textContent = filled + ' of ' + fields.length + ' answered';
+        if (label) label.textContent = pct === 100 ? '🎉 All done — ready to generate!' : 'Your progress';
+
+        if (pct === 100 && !celebrated && typeof confetti !== 'undefined') {
+            celebrated = true;
+            confetti({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        fields.forEach(function(id) {
+            var el = document.querySelector('[name="' + id + '"]');
+            if (el) el.addEventListener('input', update);
+        });
+        update(); // init from pre-filled values
+    });
+})();
 </script>
 {% endblock %}

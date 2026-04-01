@@ -719,6 +719,22 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if module_progress.status == 'approved' %}
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+<script>
+// Celebrate module approval — only fire once per session per module
+(function() {
+    var key = 'celebrated_module_{{ module_info.order }}';
+    if (!sessionStorage.getItem(key) && typeof confetti !== 'undefined') {
+        sessionStorage.setItem(key, '1');
+        setTimeout(function() {
+            confetti({ particleCount: 60, angle: 60,  spread: 55, origin: { x: 0, y: 0.7 } });
+            confetti({ particleCount: 60, angle: 120, spread: 55, origin: { x: 1, y: 0.7 } });
+        }, 600);
+    }
+})();
+</script>
+{% endif %}
 <script>
 (function () {
     const ENROLLMENT_ID  = {{ enrollment.id }};

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}My Proposals - Write It Great{% endblock %}
+{% block title %}My Dashboard - Write It Great{% endblock %}
 
 {% block extra_css %}
 .start-section {
@@ -28,11 +28,47 @@
 .path-card.accent-card { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .path-card.accent-card:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 .path-card.accent-card .pc-desc { opacity: 0.75; }
+
+/* Streak */
+.streak-bar { display: flex; align-items: center; gap: 0.75rem; margin-top: 1.25rem; }
+.streak-pill { display: inline-flex; align-items: center; gap: 0.375rem; background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3); border-radius: 20px; padding: 0.3rem 0.875rem;
+    font-size: 0.8125rem; font-weight: 700; color: white; }
+
+/* Badges */
+.badges-row { display: flex; gap: 0.625rem; flex-wrap: wrap; margin: 1.25rem 0 0.25rem; }
+.badge-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: white; border-radius: 20px; padding: 0.35rem 0.875rem;
+    font-size: 0.8rem; font-weight: 600; color: var(--primary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    cursor: default; position: relative;
+}
+.badge-chip:hover .badge-tooltip { display: block; }
+.badge-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    background: #1e1e2e; color: white; font-size: 0.72rem; font-weight: 400;
+    padding: 0.3rem 0.6rem; border-radius: 5px; white-space: nowrap; z-index: 10;
+    pointer-events: none;
+}
+
+/* Empty state nudge */
+.empty-nudge {
+    text-align: center; padding: 3rem 1.5rem;
+    background: white; border-radius: var(--radius);
+    border: 1.5px dashed var(--gray-200);
+}
+.empty-nudge .en-icon { font-size: 3rem; margin-bottom: 0.75rem; display: block; }
+.empty-nudge h3 { color: var(--primary); font-size: 1.2rem; margin-bottom: 0.5rem; }
+.empty-nudge p  { color: var(--gray-500); font-size: 0.9375rem; max-width: 420px; margin: 0 auto 1.25rem; line-height: 1.65; }
+.empty-nudge .time-badge { display: inline-block; background: #f0fdf4; border: 1px solid #bbf7d0;
+    color: #166534; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.75rem;
+    border-radius: 20px; margin-bottom: 1rem; }
 {% endblock %}
 
 {% block content %}
 
-<!-- Start New Project (always shown at top) -->
+<!-- Start New Project -->
 <section class="start-section">
     <div style="max-width:1200px;margin:0 auto;">
         <h2>Start a New Project</h2>
@@ -41,18 +77,35 @@
             <a href="{{ url_for('index') }}" class="path-card accent-card">
                 <div class="pc-icon">📄</div>
                 <div class="pc-title">I have a book proposal</div>
-                <div class="pc-desc">Upload your finished proposal for a full expert evaluation, scoring, and advance estimate.</div>
+                <div class="pc-desc">Upload your finished proposal for a full expert evaluation with detailed feedback.</div>
             </a>
             <a href="{{ url_for('author_coaching_dashboard') }}" class="path-card">
                 <div class="pc-icon">📖</div>
                 <div class="pc-title">I'm developing my idea</div>
-                <div class="pc-desc">Enroll in our 7-module coaching program to build your proposal step by step with AI guidance and homework feedback.</div>
+                <div class="pc-desc">Build your proposal step by step with AI coaching, starting with a 20-min One-Pager Andy reviews personally.</div>
             </a>
         </div>
+
+        {% if streak >= 2 %}
+        <div class="streak-bar">
+            <span class="streak-pill">🔥 {{ streak }}-day streak — keep it going!</span>
+        </div>
+        {% endif %}
+
+        {% if badges %}
+        <div class="badges-row">
+            {% for b in badges %}
+            <span class="badge-chip">
+                {{ b.icon }} {{ b.label }}
+                <span class="badge-tooltip">{{ b.desc }}</span>
+            </span>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
 </section>
 
-<!-- Existing proposals -->
+<!-- Proposals -->
 <div class="container" style="margin-top:2rem;">
     {% if proposals %}
     <h3 style="color:var(--primary);margin-bottom:1rem;">Your Proposals</h3>
@@ -70,9 +123,6 @@
                     {% if p.tier %}
                     <span class="tier-badge tier-{{ p.tier|lower }}">{{ p.tier }}-Tier</span>
                     {% endif %}
-                    {% if p.overall_score is not none %}
-                    <span style="font-weight:700;color:var(--primary);">{{ p.overall_score|round|int }}/100</span>
-                    {% endif %}
                     {% set friendly = status_labels.get(p.status, p.status) %}
                     <span class="status-badge {{ p.status }}">{{ friendly }}</span>
                 </div>
@@ -81,8 +131,13 @@
         {% endfor %}
     </div>
     {% else %}
-    <div class="empty-state" style="padding-top:1rem;">
-        <p style="color:var(--gray-500);">No proposals submitted yet — choose a path above to get started.</p>
+    <div class="empty-nudge">
+        <span class="en-icon">✍️</span>
+        <h3>Your writing journey starts here</h3>
+        <p>Most published authors started exactly where you are. Andy personally reviews every one-pager — it's the fastest way to get real feedback on your idea.</p>
+        <div class="time-badge">⏱ About 20 minutes to complete</div>
+        <br>
+        <a href="{{ url_for('author_coaching_dashboard') }}" class="btn btn-primary" style="display:inline-block;">Start My One-Pager →</a>
     </div>
     {% endif %}
 </div>

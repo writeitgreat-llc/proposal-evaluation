@@ -1,21 +1,109 @@
 {% extends "base.html" %}
 {% block title %}Create Account - Write It Great{% endblock %}
+
+{% block extra_css %}
+.register-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 64px); }
+@media (max-width: 768px) { .register-layout { grid-template-columns: 1fr; } }
+
+.register-left {
+    background: linear-gradient(160deg, var(--primary) 0%, #3d2b7a 100%);
+    padding: 3rem 2.5rem; display: flex; flex-direction: column; justify-content: center;
+    color: white;
+}
+.register-left h2 { color: var(--accent); font-size: 1.4rem; margin-bottom: 0.5rem; }
+.register-left p  { color: rgba(255,255,255,0.8); font-size: 0.9375rem; line-height: 1.65; margin-bottom: 1.5rem; }
+
+.social-proof { background: rgba(255,255,255,0.1); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+.social-proof .sp-number { font-size: 2rem; font-weight: 800; color: var(--accent); line-height: 1; }
+.social-proof .sp-label  { font-size: 0.8rem; color: rgba(255,255,255,0.75); margin-top: 0.2rem; }
+
+.steps-list { list-style: none; padding: 0; margin: 0 0 1.5rem; }
+.steps-list li { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.5rem 0;
+    font-size: 0.875rem; color: rgba(255,255,255,0.85); }
+.steps-list .step-icon { width: 22px; height: 22px; background: var(--accent); color: var(--primary);
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 800; flex-shrink: 0; margin-top: 1px; }
+
+.sample-preview {
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px; padding: 1rem; margin-top: 0.5rem;
+}
+.sample-preview .sp-title { font-size: 0.75rem; font-weight: 700; color: rgba(255,255,255,0.5);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }
+.sample-bar { margin-bottom: 0.6rem; }
+.sample-bar-label { display: flex; justify-content: space-between; font-size: 0.7rem;
+    color: rgba(255,255,255,0.6); margin-bottom: 0.2rem; }
+.sample-bar-track { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
+.sample-bar-fill  { height: 100%; border-radius: 3px; background: var(--accent); }
+.sample-blur { filter: blur(4px); user-select: none; pointer-events: none; }
+
+.register-right { padding: 3rem 2.5rem; display: flex; flex-direction: column; justify-content: center; background: var(--gray-50); }
+.register-right h1 { font-size: 1.6rem; color: var(--primary); margin-bottom: 0.375rem; }
+.register-right .subtitle { color: var(--gray-500); font-size: 0.9rem; margin-bottom: 1.75rem; }
+{% endblock %}
+
 {% block content %}
-<div class="login-container">
-    <div class="login-card">
+<div class="register-layout">
+
+    <!-- Left: value prop + preview -->
+    <div class="register-left">
+        <h2>Join {{ total_authors or '' }} authors building their proposals</h2>
+        <p>Write It Great gives you expert AI feedback and a direct line to Andy — a publishing professional who reviews your one-pager personally.</p>
+
+        <div class="social-proof">
+            <div class="sp-number">{{ total_authors or '50+' }}</div>
+            <div class="sp-label">authors already on the platform</div>
+        </div>
+
+        <ul class="steps-list">
+            <li><span class="step-icon">1</span>Complete your One-Pager <strong style="color:var(--accent);">(~20 min)</strong></li>
+            <li><span class="step-icon">2</span>Andy reviews it personally and gives feedback</li>
+            <li><span class="step-icon">3</span>Build your full proposal section by section with AI coaching</li>
+            <li><span class="step-icon">4</span>Submit a proposal agents and publishers actually read</li>
+        </ul>
+
+        <!-- Blurred sample evaluation preview -->
+        <div class="sample-preview">
+            <div class="sp-title">Sample evaluation preview</div>
+            <div class="sample-blur">
+                <div class="sample-bar">
+                    <div class="sample-bar-label"><span>Concept &amp; Hook</span><span>84/100</span></div>
+                    <div class="sample-bar-track"><div class="sample-bar-fill" style="width:84%"></div></div>
+                </div>
+                <div class="sample-bar">
+                    <div class="sample-bar-label"><span>Market Analysis</span><span>71/100</span></div>
+                    <div class="sample-bar-track"><div class="sample-bar-fill" style="width:71%"></div></div>
+                </div>
+                <div class="sample-bar">
+                    <div class="sample-bar-label"><span>Author Platform</span><span>68/100</span></div>
+                    <div class="sample-bar-track"><div class="sample-bar-fill" style="width:68%"></div></div>
+                </div>
+                <div class="sample-bar">
+                    <div class="sample-bar-label"><span>Writing Quality</span><span>90/100</span></div>
+                    <div class="sample-bar-track"><div class="sample-bar-fill" style="width:90%"></div></div>
+                </div>
+            </div>
+            <p style="font-size:0.72rem;color:rgba(255,255,255,0.45);text-align:center;margin:0.5rem 0 0;">Create your account to see the full breakdown</p>
+        </div>
+    </div>
+
+    <!-- Right: form -->
+    <div class="register-right">
         <h1>Create Your Account</h1>
-        <p style="text-align: center; color: var(--gray-500); margin-bottom: 1.5rem;">Sign up to submit proposals and track their progress.</p>
+        <p class="subtitle">Free to join. No credit card required.</p>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="{% if category == 'success' %}flash success{% else %}login-error{% endif %}">{{ message }}</div>
+                    <div class="{% if category == 'success' %}flash success{% else %}login-error{% endif %}" style="margin-bottom:1rem;">{{ message }}</div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
+
         <form method="POST">
             <div class="form-group">
                 <label for="name">Full Name</label>
-                <input type="text" id="name" name="name" required placeholder="Jane Smith">
+                <input type="text" id="name" name="name" required placeholder="Jane Smith" autofocus>
             </div>
             <div class="form-group">
                 <label for="email">Email</label>
@@ -29,7 +117,7 @@
                 <label for="confirm_password">Confirm Password</label>
                 <input type="password" id="confirm_password" name="confirm_password" required placeholder="••••••••" minlength="8">
             </div>
-            <button type="submit" class="btn btn-primary login-btn">Create Account</button>
+            <button type="submit" class="btn btn-primary login-btn">Create Account — It's Free</button>
         </form>
         <p style="text-align: center; margin-top: 1.5rem; font-size: 0.875rem; color: var(--gray-500);">
             Already have an account? <a href="{{ url_for('author_login') }}" style="color: var(--primary); font-weight: 600;">Log in</a>

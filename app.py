@@ -5839,11 +5839,18 @@ def admin_one_pager_add_feedback(submission_id):
     db.session.add(fb)
     db.session.commit()
 
+    # Extract plain values before thread — ORM objects are expired after commit
+    author        = submission.author
+    author_name   = author.name
+    author_email  = author.email
+    book_title    = submission.book_title
+    fb_type       = fb.feedback_type
+
     # Notify the author
     try:
         threading.Thread(
             target=_send_one_pager_feedback_email,
-            args=(submission.author, submission, fb),
+            args=(author_name, author_email, book_title, fb_type),
             daemon=True
         ).start()
         fb.author_notified = True
@@ -5886,15 +5893,16 @@ def author_one_pager_feedback_audio(feedback_id):
     )
 
 
-def _send_one_pager_feedback_email(author, submission, feedback):
-    """Email author to let them know Andy left feedback on their one-pager."""
+def _send_one_pager_feedback_email(author_name, author_email, book_title, feedback_type):
+    """Email author to let them know Andy left feedback on their one-pager.
+    Accepts plain strings only — no ORM objects — so it's safe in a background thread."""
     quickstart_url = f"{APP_BASE_URL}/author/coaching/quickstart"
-    feedback_type_label = 'audio message' if feedback.feedback_type == 'audio' else 'written feedback'
+    feedback_type_label = 'audio message' if feedback_type == 'audio' else 'written feedback'
     html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
     <div style="max-width:600px;margin:0 auto;padding:20px;">
         <h2 style="color:#2D1B69;">You have feedback on your one-pager! 🎉</h2>
-        <p>Hi {author.name},</p>
-        <p>Andy has reviewed your one-pager for <strong>{submission.book_title or 'your book'}</strong>
+        <p>Hi {author_name},</p>
+        <p>Andy has reviewed your one-pager for <strong>{book_title or 'your book'}</strong>
         and left you a {feedback_type_label}.</p>
         <p>Log in to see the full feedback:</p>
         <p><a href="{quickstart_url}" style="display:inline-block;padding:12px 24px;background:#2D1B69;color:white;text-decoration:none;border-radius:5px;font-weight:bold;">See My Feedback →</a></p>
@@ -5902,7 +5910,7 @@ def _send_one_pager_feedback_email(author, submission, feedback):
             Keep going — this feedback is your next step toward a proposal agents and publishers actually read.
         </p>
     </div></body></html>"""
-    send_email(author.email, "Andy left feedback on your one-pager 🎉", html_content)
+    send_email(author_email, "Andy left feedback on your one-pager 🎉", html_content)
 
 
 @app.route('/admin/authors/<int:author_id>/one-pager', methods=['GET', 'POST'])

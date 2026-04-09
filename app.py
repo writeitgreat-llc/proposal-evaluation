@@ -893,6 +893,23 @@ class OnePagerSubmission(db.Model):
     author = db.relationship('Author', backref=db.backref('one_pager_submissions', lazy='dynamic'))
 
 
+class OnePagerFeedback(db.Model):
+    """Admin feedback (text or audio) on a one-pager submission"""
+    __tablename__ = 'one_pager_feedback'
+    id = db.Column(db.Integer, primary_key=True)
+    submission_id = db.Column(db.Integer, db.ForeignKey('one_pager_submission.id'), nullable=False)
+    feedback_type = db.Column(db.String(10), default='text')  # 'text' | 'audio'
+    feedback_text = db.Column(db.Text)
+    audio_data    = db.Column(db.LargeBinary)
+    audio_mime_type = db.Column(db.String(50))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('admin_user.id'))
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    author_notified = db.Column(db.Boolean, default=False)
+
+    submission = db.relationship('OnePagerSubmission', backref=db.backref('feedbacks', lazy='dynamic'))
+    created_by = db.relationship('AdminUser', foreign_keys=[created_by_id])
+
+
 class KnowledgeBaseDocument(db.Model):
     """Admin-uploaded training/reference documents per module"""
     __tablename__ = 'knowledge_base_document'
@@ -1609,6 +1626,19 @@ def generate_pdf_report(proposal):
     return pdf_buffer.getvalue()
 
 
+def generate_one_pager_pdf(submission):
+    """Generate a clean PDF of the author's one-pager using xhtml2pdf"""
+    answers = json.loads(submission.answers_json) if submission.answers_json else {}
+    html = render_template('one_pager_pdf.html', submission=submission, answers=answers)
+    pdf_buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html, dest=pdf_buffer)
+    if pisa_status.err:
+        print(f"One-pager PDF generation error: {pisa_status.err}")
+        raise Exception(f"One-pager PDF generation failed with {pisa_status.err} errors")
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
+
+
 def send_email(to_email, subject, html_content, attachments=None):
     """Send email via SMTP"""
     if not SMTP_USER or not SMTP_PASSWORD:
@@ -2168,7 +2198,8 @@ def send_author_welcome_invite_email(author, token):
 
 
 def send_one_pager_submitted_notification(author, submission):
-    """Notify the WIG team when an author submits their one-pager for review"""
+    """Notify the WIG team when an author submits their one-pager for review.
+    Attaches a PDF of the full one-pager so admins can read it without logging in."""
     app_url = APP_BASE_URL
     admin_url = f"{app_url}/admin/one-pager/{submission.id}"
     answers = json.loads(submission.answers_json) if submission.answers_json else {}
@@ -2178,14 +2209,26 @@ def send_one_pager_submitted_notification(author, submission):
         <p><strong>{author.name}</strong> ({author.email}) has submitted their one-pager for review.</p>
         <table style="width:100%;border-collapse:collapse;margin:1rem 0;">
             <tr><td style="padding:6px;font-weight:bold;width:140px;">Book title:</td><td style="padding:6px;">{submission.book_title or '—'}</td></tr>
-            <tr style="background:#f9f9f9;"><td style="padding:6px;font-weight:bold;">Problem solved:</td><td style="padding:6px;">{answers.get('problem','—')[:200]}</td></tr>
-            <tr><td style="padding:6px;font-weight:bold;">Target reader:</td><td style="padding:6px;">{answers.get('reader','—')[:200]}</td></tr>
+            <tr style="background:#f9f9f9;"><td style="padding:6px;font-weight:bold;">Problem solved:</td><td style="padding:6px;">{answers.get('problem','—')[:300]}</td></tr>
+            <tr><td style="padding:6px;font-weight:bold;">Target reader:</td><td style="padding:6px;">{answers.get('reader','—')[:300]}</td></tr>
         </table>
-        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:5px;font-weight:bold;">View Full One-Pager →</a></p>
+        <p style="font-size:0.9em;color:#555;">The full one-pager (with AI summary) is attached as a PDF.</p>
+        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:5px;font-weight:bold;">View &amp; Give Feedback in Platform →</a></p>
     </div></body></html>"""
+
+    # Generate PDF attachment
+    attachments = None
+    try:
+        pdf_bytes = generate_one_pager_pdf(submission)
+        safe_name = (author.name or 'author').replace(' ', '_')
+        attachments = [(f"one_pager_{safe_name}.pdf", pdf_bytes)]
+    except Exception as e:
+        print(f"One-pager PDF attach error: {e}")
+
     for team_email in TEAM_EMAILS:
         if team_email.strip():
-            send_email(team_email.strip(), f"One-Pager Submitted: {author.name}", html_content)
+            send_email(team_email.strip(), f"One-Pager Submitted: {author.name}", html_content,
+                       attachments=attachments)
 
 
 # ── Re-engagement email copy ──────────────────────────────────────────────────
@@ -2916,8 +2959,9 @@ def author_coaching_quickstart():
             if not answers['problem']: missing.append('1')
             if not answers['reader']:  missing.append('2')
             if not answers['why_you']: missing.append('4')
+            _fb = existing.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all() if existing else []
             return render_template('author_coaching_quickstart.html', answers=answers,
-                                   submission=existing, missing_questions=missing)
+                                   submission=existing, missing_questions=missing, feedbacks=_fb)
 
         try:
             prompt = f"""You are an expert book proposal coach at Write It Great. An author has answered 5 focused questions about their nonfiction book. Generate a clean, compelling one-page proposal summary.
@@ -2966,19 +3010,23 @@ Tone: professional, warm, and specific. Use the author's actual words and voice.
             print(f'One-pager save error: {e}')
             submission = None
 
+        feedbacks = submission.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all() if submission else []
         return render_template('author_coaching_quickstart.html',
                                answers=answers,
                                summary=summary,
-                               submission=submission)
+                               submission=submission,
+                               feedbacks=feedbacks)
 
     # GET: pre-fill from existing draft
     if existing and existing.answers_json:
         prefill = json.loads(existing.answers_json)
     else:
         prefill = {}
+    feedbacks = existing.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all() if existing else []
     return render_template('author_coaching_quickstart.html', answers=prefill,
                            summary=existing.summary_text if existing else None,
-                           submission=existing)
+                           submission=existing,
+                           feedbacks=feedbacks)
 
 
 @app.route('/author/coaching/quickstart/submit', methods=['POST'])
@@ -3004,6 +3052,31 @@ def author_quickstart_submit():
         pass
     flash('Your one-pager has been sent to the Write It Great team. We\'ll be in touch!', 'success')
     return redirect(url_for('author_coaching_quickstart'))
+
+
+@app.route('/author/coaching/quickstart/pdf')
+def author_quickstart_pdf():
+    """Author downloads their own one-pager as a PDF."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return redirect(url_for('author_login'))
+    submission = current_user.one_pager_submissions.order_by(
+        OnePagerSubmission.created_at.desc()).first()
+    if not submission or not submission.summary_text:
+        flash('Generate your one-pager first before downloading.', 'error')
+        return redirect(url_for('author_coaching_quickstart'))
+    try:
+        pdf_bytes = generate_one_pager_pdf(submission)
+    except Exception as e:
+        flash('Could not generate PDF. Please try again.', 'error')
+        return redirect(url_for('author_coaching_quickstart'))
+    safe_name = (current_user.name or 'one_pager').replace(' ', '_')
+    filename = f"one_pager_{safe_name}.pdf"
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 @app.route('/author/coaching/module/<int:module_order>')
@@ -5711,12 +5784,125 @@ def admin_pipeline():
 def admin_one_pager_detail(submission_id):
     """Admin view of a submitted one-pager."""
     submission = OnePagerSubmission.query.get_or_404(submission_id)
+
+    # PDF download
+    if request.args.get('pdf') == '1':
+        try:
+            pdf_bytes = generate_one_pager_pdf(submission)
+        except Exception as e:
+            flash(f'PDF generation error: {e}', 'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+        safe_name = (submission.author.name or 'one_pager').replace(' ', '_')
+        return send_file(
+            BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'one_pager_{safe_name}.pdf'
+        )
+
     if request.method == 'POST':
         submission.admin_notes = request.form.get('admin_notes', '').strip()
         db.session.commit()
         flash('Notes saved.', 'success')
     answers = json.loads(submission.answers_json) if submission.answers_json else {}
-    return render_template('admin_one_pager_detail.html', submission=submission, answers=answers)
+    feedbacks = submission.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all()
+    return render_template('admin_one_pager_detail.html', submission=submission,
+                           answers=answers, feedbacks=feedbacks)
+
+
+@app.route('/admin/one-pager/<int:submission_id>/feedback', methods=['POST'])
+@team_required
+def admin_one_pager_add_feedback(submission_id):
+    """Save text or audio feedback on a one-pager submission."""
+    submission = OnePagerSubmission.query.get_or_404(submission_id)
+    feedback_type = request.form.get('feedback_type', 'text')
+
+    fb = OnePagerFeedback(
+        submission_id=submission_id,
+        feedback_type=feedback_type,
+        created_by_id=current_user.id,
+    )
+
+    if feedback_type == 'audio':
+        audio_file = request.files.get('audio_file')
+        if not audio_file:
+            flash('No audio file received.', 'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+        fb.audio_data = audio_file.read()
+        fb.audio_mime_type = audio_file.mimetype or 'audio/webm'
+    else:
+        fb.feedback_text = request.form.get('feedback_text', '').strip()
+        if not fb.feedback_text:
+            flash('Feedback text cannot be empty.', 'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+
+    db.session.add(fb)
+    db.session.commit()
+
+    # Notify the author
+    try:
+        threading.Thread(
+            target=_send_one_pager_feedback_email,
+            args=(submission.author, submission, fb),
+            daemon=True
+        ).start()
+        fb.author_notified = True
+        db.session.commit()
+    except Exception as e:
+        print(f"Feedback notify error: {e}")
+
+    flash('Feedback saved and author notified!', 'success')
+    return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+
+
+@app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')
+@team_required
+def admin_one_pager_feedback_audio(feedback_id):
+    """Serve audio feedback blob."""
+    fb = OnePagerFeedback.query.get_or_404(feedback_id)
+    if not fb.audio_data:
+        abort(404)
+    return send_file(
+        BytesIO(fb.audio_data),
+        mimetype=fb.audio_mime_type or 'audio/webm',
+        download_name=f'feedback_{feedback_id}.webm'
+    )
+
+
+@app.route('/author/coaching/quickstart/feedback/<int:feedback_id>/audio')
+def author_one_pager_feedback_audio(feedback_id):
+    """Author-facing route to stream audio feedback."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        abort(403)
+    fb = OnePagerFeedback.query.get_or_404(feedback_id)
+    # Ensure the feedback belongs to this author
+    if fb.submission.author_id != current_user.id:
+        abort(403)
+    if not fb.audio_data:
+        abort(404)
+    return send_file(
+        BytesIO(fb.audio_data),
+        mimetype=fb.audio_mime_type or 'audio/webm'
+    )
+
+
+def _send_one_pager_feedback_email(author, submission, feedback):
+    """Email author to let them know Andy left feedback on their one-pager."""
+    quickstart_url = f"{APP_BASE_URL}{url_for('author_coaching_quickstart')}"
+    feedback_type_label = 'audio message' if feedback.feedback_type == 'audio' else 'written feedback'
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+        <h2 style="color:#2D1B69;">You have feedback on your one-pager! 🎉</h2>
+        <p>Hi {author.name},</p>
+        <p>Andy has reviewed your one-pager for <strong>{submission.book_title or 'your book'}</strong>
+        and left you a {feedback_type_label}.</p>
+        <p>Log in to see the full feedback:</p>
+        <p><a href="{quickstart_url}" style="display:inline-block;padding:12px 24px;background:#2D1B69;color:white;text-decoration:none;border-radius:5px;font-weight:bold;">See My Feedback →</a></p>
+        <p style="margin-top:2rem;font-size:0.875em;color:#666;">
+            Keep going — this feedback is your next step toward a proposal agents and publishers actually read.
+        </p>
+    </div></body></html>"""
+    send_email(author.email, "Andy left feedback on your one-pager 🎉", html_content)
 
 
 @app.route('/admin/authors/<int:author_id>/one-pager', methods=['GET', 'POST'])
@@ -6033,8 +6219,13 @@ def run_migrations():
     _add('author', 'streak_days INTEGER DEFAULT 0')
     _add('author', 'last_active_date DATE')
 
-    # ── one_pager_submission (new table) ───────────────────────────────────────
-    # SQLAlchemy db.create_all() handles new tables; _add is only for existing ones
+    # ── one_pager_submission (existing table, new admin_notes column) ─────────
+    _add('one_pager_submission', 'admin_notes TEXT')
+
+    # ── one_pager_feedback (new table — created via create_all below) ──────────
+    # No _add needed; columns are all new with the table
+
+    # ── Create any new tables (one_pager_feedback, etc.) ──────────────────────
     try:
         db.create_all()
     except Exception as e:

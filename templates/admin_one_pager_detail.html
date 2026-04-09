@@ -10,6 +10,29 @@
 .qa-block { margin-bottom: 1rem; }
 .qa-block .q { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); margin-bottom: 0.25rem; }
 .qa-block .a { font-size: 0.9rem; color: var(--gray-800); line-height: 1.65; }
+
+/* Feedback tabs */
+.fb-tabs { display: flex; gap: 0; border: 1.5px solid var(--gray-200); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
+.fb-tab  { flex: 1; padding: 0.6rem 0.5rem; text-align: center; font-size: 0.8125rem; font-weight: 600;
+           background: var(--gray-50); color: var(--gray-500); cursor: pointer; border: none;
+           border-right: 1px solid var(--gray-200); transition: background 0.15s, color 0.15s; }
+.fb-tab:last-child { border-right: none; }
+.fb-tab.active { background: var(--primary); color: white; }
+.fb-panel { display: none; }
+.fb-panel.active { display: block; }
+
+/* Feedback history items */
+.fb-item { padding: 0.75rem 1rem; border: 1.5px solid var(--gray-200); border-radius: 8px; margin-bottom: 0.75rem; }
+.fb-item .fb-meta { font-size: 0.75rem; color: var(--gray-400); margin-bottom: 0.4rem; }
+.fb-item .fb-body { font-size: 0.9rem; color: var(--gray-800); line-height: 1.6; white-space: pre-wrap; }
+audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
+
+/* Recording UI */
+.rec-btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1.25rem;
+           border-radius: 8px; border: none; font-weight: 700; font-size: 0.875rem; cursor: pointer; transition: background 0.2s; }
+.rec-btn.start { background: #dc2626; color: white; }
+.rec-btn.stop  { background: var(--gray-600); color: white; }
+.rec-status { font-size: 0.8rem; color: var(--gray-500); margin-top: 0.5rem; min-height: 1.25em; }
 {% endblock %}
 
 {% block content %}
@@ -25,13 +48,19 @@
                 {% endif %}
             </p>
         </div>
-        <a href="{{ url_for('admin_pipeline') }}" style="color:rgba(255,255,255,0.7);font-size:0.875rem;text-decoration:none;">← Pipeline</a>
+        <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+            <a href="{{ url_for('admin_one_pager_detail', submission_id=submission.id) }}?pdf=1"
+               style="color:rgba(255,255,255,0.85);font-size:0.8125rem;text-decoration:none;background:rgba(255,255,255,0.12);padding:0.4rem 0.875rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);">
+                ↓ Download PDF
+            </a>
+            <a href="{{ url_for('admin_pipeline') }}" style="color:rgba(255,255,255,0.7);font-size:0.875rem;text-decoration:none;">← Pipeline</a>
+        </div>
     </div>
 </div>
 
-<div class="container" style="margin-top:1.5rem;display:grid;grid-template-columns:1fr 320px;gap:1.25rem;align-items:start;">
+<div class="container" style="margin-top:1.5rem;display:grid;grid-template-columns:1fr 340px;gap:1.25rem;align-items:start;">
 
-    <!-- Left: summary -->
+    <!-- Left: summary + answers -->
     <div>
         <div class="card" style="padding:0;overflow:hidden;">
             <div style="padding:0.875rem 1.25rem;background:var(--gray-50);border-bottom:1px solid var(--gray-200);display:flex;align-items:center;justify-content:space-between;">
@@ -75,20 +104,95 @@
         </div>
     </div>
 
-    <!-- Right: admin notes -->
+    <!-- Right: feedback + admin notes + author info -->
     <div>
-        <div class="card">
-            <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 1rem;">Admin Notes</h3>
+
+        <!-- Feedback section -->
+        <div class="card" style="padding:0;overflow:hidden;">
+            <div style="padding:0.875rem 1.25rem;background:#f5f3ff;border-bottom:1.5px solid #c4b5fd;">
+                <h3 style="margin:0;font-size:0.9375rem;color:#5b21b6;">Give Feedback to Author</h3>
+                <p style="margin:0.25rem 0 0;font-size:0.775rem;color:#7c3aed;">Author is notified by email when you save.</p>
+            </div>
+            <div style="padding:1rem 1.25rem;">
+
+                <!-- Tab switcher -->
+                <div class="fb-tabs">
+                    <button class="fb-tab active" onclick="switchTab('text',this)">✍️ Written</button>
+                    <button class="fb-tab" onclick="switchTab('audio',this)">🎙 Audio</button>
+                </div>
+
+                <!-- Text feedback panel -->
+                <div class="fb-panel active" id="panel-text">
+                    <form method="POST" action="{{ url_for('admin_one_pager_add_feedback', submission_id=submission.id) }}">
+                        <input type="hidden" name="feedback_type" value="text">
+                        <textarea name="feedback_text" rows="6"
+                            style="width:100%;padding:0.6rem 0.875rem;border:1.5px solid var(--gray-200);border-radius:7px;font-size:0.875rem;font-family:inherit;resize:vertical;box-sizing:border-box;"
+                            placeholder="Write your feedback for the author here…"></textarea>
+                        <button type="submit" class="btn btn-primary" style="margin-top:0.625rem;width:100%;font-size:0.875rem;">
+                            Send Written Feedback →
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Audio feedback panel -->
+                <div class="fb-panel" id="panel-audio">
+                    <div style="text-align:center;padding:0.5rem 0 0.75rem;">
+                        <button id="rec-start" class="rec-btn start" onclick="startRecording()">● Start Recording</button>
+                        <button id="rec-stop" class="rec-btn stop" onclick="stopRecording()" style="display:none;">■ Stop &amp; Preview</button>
+                    </div>
+                    <div class="rec-status" id="rec-status">Press the button to start recording your voice message.</div>
+                    <div id="audio-preview" style="display:none;margin-top:0.75rem;">
+                        <audio id="audio-playback" controls></audio>
+                        <form id="audio-form" method="POST"
+                              action="{{ url_for('admin_one_pager_add_feedback', submission_id=submission.id) }}"
+                              enctype="multipart/form-data" style="margin-top:0.625rem;">
+                            <input type="hidden" name="feedback_type" value="audio">
+                            <input type="file" name="audio_file" id="audio-file-input" style="display:none;" accept="audio/*">
+                            <button type="submit" class="btn btn-primary" style="width:100%;font-size:0.875rem;">
+                                Send Audio Feedback →
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Feedback history -->
+        {% if feedbacks %}
+        <div class="card" style="margin-top:1rem;">
+            <h3 style="font-size:0.875rem;color:var(--primary);margin:0 0 0.75rem;">Previous Feedback</h3>
+            {% for fb in feedbacks %}
+            <div class="fb-item">
+                <div class="fb-meta">
+                    {{ fb.created_by.name if fb.created_by else 'Admin' }} ·
+                    {{ fb.created_at.strftime('%b %d, %Y %H:%M') }} ·
+                    {% if fb.feedback_type == 'audio' %}🎙 Audio{% else %}✍️ Written{% endif %}
+                </div>
+                {% if fb.feedback_type == 'audio' %}
+                <audio controls src="{{ url_for('admin_one_pager_feedback_audio', feedback_id=fb.id) }}"></audio>
+                {% else %}
+                <div class="fb-body">{{ fb.feedback_text }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Admin notes -->
+        <div class="card" style="margin-top:1rem;">
+            <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 1rem;">Internal Notes</h3>
             <form method="POST">
-                <textarea name="admin_notes" rows="8"
+                <textarea name="admin_notes" rows="5"
                     style="width:100%;padding:0.6rem 0.875rem;border:1.5px solid var(--gray-200);border-radius:7px;font-size:0.875rem;font-family:inherit;resize:vertical;box-sizing:border-box;"
-                    placeholder="Internal notes about this submission…">{{ submission.admin_notes or '' }}</textarea>
+                    placeholder="Internal notes (not shown to author)…">{{ submission.admin_notes or '' }}</textarea>
                 <button type="submit" class="btn btn-primary" style="margin-top:0.75rem;width:100%;font-size:0.875rem;">
                     Save Notes
                 </button>
             </form>
         </div>
 
+        <!-- Author info -->
         <div class="card" style="margin-top:1rem;">
             <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 0.75rem;">Author Info</h3>
             <p style="font-size:0.875rem;margin:0 0 0.3rem;"><strong>{{ submission.author.name }}</strong></p>
@@ -103,4 +207,66 @@
     </div>
 
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Tab switching
+function switchTab(tab, btn) {
+    document.querySelectorAll('.fb-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.fb-panel').forEach(function(p) { p.classList.remove('active'); });
+    btn.classList.add('active');
+    document.getElementById('panel-' + tab).classList.add('active');
+}
+
+// Audio recording
+var mediaRecorder = null;
+var audioChunks  = [];
+
+function startRecording() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        document.getElementById('rec-status').textContent = 'Audio recording is not supported in this browser.';
+        return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = function(e) {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+        mediaRecorder.onstop = function() {
+            var blob = new Blob(audioChunks, { type: 'audio/webm' });
+            var url  = URL.createObjectURL(blob);
+            var playback = document.getElementById('audio-playback');
+            playback.src = url;
+            document.getElementById('audio-preview').style.display = 'block';
+
+            // Inject blob into hidden file input so form can send it
+            var file = new File([blob], 'feedback.webm', { type: 'audio/webm' });
+            var dt = new DataTransfer();
+            dt.items.add(file);
+            document.getElementById('audio-file-input').files = dt.files;
+
+            // Stop all mic tracks
+            stream.getTracks().forEach(function(t) { t.stop(); });
+        };
+        mediaRecorder.start();
+        document.getElementById('rec-start').style.display = 'none';
+        document.getElementById('rec-stop').style.display  = 'inline-flex';
+        document.getElementById('rec-status').textContent  = '🔴 Recording… press Stop when done.';
+    }).catch(function(err) {
+        document.getElementById('rec-status').textContent = 'Microphone access denied: ' + err.message;
+    });
+}
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        document.getElementById('rec-stop').style.display  = 'none';
+        document.getElementById('rec-start').style.display = 'inline-flex';
+        document.getElementById('rec-start').textContent   = '● Re-record';
+        document.getElementById('rec-status').textContent  = 'Preview below — send when you\'re happy.';
+    }
+}
+</script>
 {% endblock %}

@@ -76,6 +76,18 @@
     border-radius: var(--radius); font-weight: 700; font-size: 0.875rem; cursor: pointer; }
 .submitted-badge { display: inline-flex; align-items: center; gap: 0.35rem; background: #dcfce7;
     color: #166534; border-radius: 20px; padding: 0.35rem 0.875rem; font-size: 0.875rem; font-weight: 600; }
+
+/* Feedback from Andy */
+.andy-feedback { background: white; border: 2px solid #7c3aed; border-radius: var(--radius);
+    overflow: hidden; margin-top: 1.5rem; }
+.andy-feedback-header { background: linear-gradient(135deg, #5b21b6, #7c3aed); color: white;
+    padding: 0.875rem 1.25rem; display: flex; align-items: center; gap: 0.625rem; }
+.andy-feedback-header h2 { margin: 0; font-size: 1rem; color: white; }
+.andy-fb-item { padding: 1.25rem 1.5rem; border-bottom: 1px solid #ede9fe; }
+.andy-fb-item:last-child { border-bottom: none; }
+.andy-fb-meta { font-size: 0.75rem; color: #7c3aed; font-weight: 600; margin-bottom: 0.5rem; }
+.andy-fb-text { font-size: 0.9375rem; line-height: 1.75; color: var(--gray-800); white-space: pre-wrap; }
+audio { width: 100%; border-radius: 6px; }
 {% endblock %}
 
 {% block content %}
@@ -122,11 +134,14 @@
     <div class="qs-result">
         <div class="qs-result-header">
             <h2>📄 Your One-Page Summary</h2>
-            <div style="display:flex;gap:0.5rem;">
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
                 <button onclick="copyResult(this)" class="btn-print" style="border-color:#c4b5fd;color:#5b21b6;">
                     Copy
                 </button>
-                <button onclick="window.print()" class="btn-print">🖨 Print / Save PDF</button>
+                <a href="{{ url_for('author_quickstart_pdf') }}" class="btn-print" style="border-color:#c4b5fd;color:#5b21b6;">
+                    ↓ PDF
+                </a>
+                <button onclick="window.print()" class="btn-print">🖨 Print</button>
             </div>
         </div>
         <div class="qs-result-body" id="qs-result-text">{{ summary | replace('**', '') }}</div>
@@ -149,6 +164,26 @@
             </div>
         </div>
     </div>
+
+    <!-- Feedback from Andy -->
+    {% if feedbacks %}
+    <div class="andy-feedback">
+        <div class="andy-feedback-header">
+            <span style="font-size:1.5rem;">🎙</span>
+            <h2>Feedback from Andy</h2>
+        </div>
+        {% for fb in feedbacks %}
+        <div class="andy-fb-item">
+            <div class="andy-fb-meta">{{ fb.created_at.strftime('%B %d, %Y') }} · {% if fb.feedback_type == 'audio' %}Voice message{% else %}Written feedback{% endif %}</div>
+            {% if fb.feedback_type == 'audio' %}
+            <audio controls src="{{ url_for('author_one_pager_feedback_audio', feedback_id=fb.id) }}"></audio>
+            {% else %}
+            <div class="andy-fb-text">{{ fb.feedback_text }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- Allow re-run -->
     <details style="margin-top:1.25rem;">

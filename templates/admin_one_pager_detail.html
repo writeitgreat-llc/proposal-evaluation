@@ -33,6 +33,17 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
 .rec-btn.start { background: #dc2626; color: white; }
 .rec-btn.stop  { background: var(--gray-600); color: white; }
 .rec-status { font-size: 0.8rem; color: var(--gray-500); margin-top: 0.5rem; min-height: 1.25em; }
+
+/* Waveform visualizer */
+#rec-visualizer { display: none; align-items: flex-end; justify-content: center;
+    gap: 3px; height: 40px; margin: 0.625rem 0; }
+#rec-visualizer.active { display: flex; }
+.rec-bar { width: 5px; border-radius: 3px; background: #dc2626;
+    min-height: 4px; transition: height 0.05s ease; }
+/* Pulsing dot on the record button */
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.rec-dot { display: inline-block; width: 10px; height: 10px; background: white;
+    border-radius: 50%; animation: pulse-dot 1s infinite; margin-right: 2px; }
 {% endblock %}
 
 {% block content %}
@@ -136,11 +147,26 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
 
                 <!-- Audio feedback panel -->
                 <div class="fb-panel" id="panel-audio">
-                    <div style="text-align:center;padding:0.5rem 0 0.75rem;">
-                        <button id="rec-start" class="rec-btn start" onclick="startRecording()">● Start Recording</button>
+                    <div style="text-align:center;padding:0.5rem 0 0.5rem;">
+                        <button id="rec-start" class="rec-btn start" onclick="startRecording()"><span class="rec-dot" style="display:none;" id="rec-dot"></span><span id="rec-btn-label">Start Recording</span></button>
                         <button id="rec-stop" class="rec-btn stop" onclick="stopRecording()" style="display:none;">■ Stop &amp; Preview</button>
                     </div>
-                    <div class="rec-status" id="rec-status">Press the button to start recording your voice message.</div>
+                    <!-- Live waveform bars -->
+                    <div id="rec-visualizer">
+                        <div class="rec-bar" style="height:8px;"></div>
+                        <div class="rec-bar" style="height:12px;"></div>
+                        <div class="rec-bar" style="height:6px;"></div>
+                        <div class="rec-bar" style="height:20px;"></div>
+                        <div class="rec-bar" style="height:10px;"></div>
+                        <div class="rec-bar" style="height:16px;"></div>
+                        <div class="rec-bar" style="height:8px;"></div>
+                        <div class="rec-bar" style="height:24px;"></div>
+                        <div class="rec-bar" style="height:10px;"></div>
+                        <div class="rec-bar" style="height:14px;"></div>
+                        <div class="rec-bar" style="height:6px;"></div>
+                        <div class="rec-bar" style="height:18px;"></div>
+                    </div>
+                    <div class="rec-status" id="rec-status" style="text-align:center;">Press the button to start recording your voice message.</div>
                     <div id="audio-preview" style="display:none;margin-top:0.75rem;">
                         <audio id="audio-playback" controls></audio>
                         <form id="audio-form" method="POST"
@@ -218,10 +244,12 @@ function switchTab(tab, btn) {
 }
 
 // Audio recording
-var mediaRecorder = null;
-var audioChunks   = [];
-var audioBlob     = null;
-var recMimeType   = '';
+var mediaRecorder  = null;
+var audioChunks    = [];
+var audioBlob      = null;
+var recMimeType    = '';
+var analyserRAF    = null;
+var audioCtx       = null;
 
 // Pick best supported MIME type (Safari needs audio/mp4)
 (function() {
@@ -233,6 +261,42 @@ var recMimeType   = '';
         }
     }
 })();
+
+var vizBars = null;
+function startVisualizer(stream) {
+    vizBars = document.querySelectorAll('#rec-visualizer .rec-bar');
+    document.getElementById('rec-visualizer').classList.add('active');
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var source   = audioCtx.createMediaStreamSource(stream);
+        var analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        var dataArr = new Uint8Array(analyser.frequencyBinCount);
+        function draw() {
+            analyserRAF = requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArr);
+            var step = Math.floor(dataArr.length / vizBars.length);
+            for (var i = 0; i < vizBars.length; i++) {
+                var val = dataArr[i * step] || 0;
+                var h   = Math.max(4, Math.round((val / 255) * 36));
+                vizBars[i].style.height = h + 'px';
+            }
+        }
+        draw();
+    } catch(e) {
+        // Fallback: CSS animation only (no analyser)
+        var vizEl = document.getElementById('rec-visualizer');
+        vizEl.style.animation = 'none';
+    }
+}
+
+function stopVisualizer() {
+    if (analyserRAF) { cancelAnimationFrame(analyserRAF); analyserRAF = null; }
+    if (audioCtx)    { try { audioCtx.close(); } catch(e){} audioCtx = null; }
+    document.getElementById('rec-visualizer').classList.remove('active');
+    if (vizBars) vizBars.forEach(function(b){ b.style.height = '4px'; });
+}
 
 function startRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -252,19 +316,21 @@ function startRecording() {
             if (e.data && e.data.size > 0) audioChunks.push(e.data);
         };
         mediaRecorder.onstop = function() {
+            stopVisualizer();
             var mime = mediaRecorder.mimeType || recMimeType || 'audio/webm';
             audioBlob = new Blob(audioChunks, { type: mime });
             var url   = URL.createObjectURL(audioBlob);
             var playback = document.getElementById('audio-playback');
             playback.src = url;
             document.getElementById('audio-preview').style.display = 'block';
-            // Stop all mic tracks
             stream.getTracks().forEach(function(t) { t.stop(); });
         };
         mediaRecorder.start();
+        startVisualizer(stream);
+        document.getElementById('rec-dot').style.display = 'inline-block';
         document.getElementById('rec-start').style.display = 'none';
         document.getElementById('rec-stop').style.display  = 'inline-flex';
-        document.getElementById('rec-status').textContent  = '🔴 Recording… press Stop when done.';
+        document.getElementById('rec-status').textContent  = 'Recording — press Stop when done.';
     }).catch(function(err) {
         document.getElementById('rec-status').textContent = 'Microphone access denied: ' + err.message;
     });
@@ -273,9 +339,10 @@ function startRecording() {
 function stopRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
+        document.getElementById('rec-dot').style.display  = 'none';
         document.getElementById('rec-stop').style.display  = 'none';
         document.getElementById('rec-start').style.display = 'inline-flex';
-        document.getElementById('rec-start').textContent   = '● Re-record';
+        document.getElementById('rec-btn-label').textContent = 'Re-record';
         document.getElementById('rec-status').textContent  = 'Preview below — send when you\'re happy.';
     }
 }

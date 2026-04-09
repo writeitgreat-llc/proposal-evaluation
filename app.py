@@ -5888,7 +5888,7 @@ def author_one_pager_feedback_audio(feedback_id):
 
 def _send_one_pager_feedback_email(author, submission, feedback):
     """Email author to let them know Andy left feedback on their one-pager."""
-    quickstart_url = f"{APP_BASE_URL}{url_for('author_coaching_quickstart')}"
+    quickstart_url = f"{APP_BASE_URL}/author/coaching/quickstart"
     feedback_type_label = 'audio message' if feedback.feedback_type == 'audio' else 'written feedback'
     html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
     <div style="max-width:600px;margin:0 auto;padding:20px;">

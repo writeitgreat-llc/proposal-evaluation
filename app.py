@@ -5968,14 +5968,54 @@ def admin_one_pager_assign(submission_id):
     if name and name not in TEAM_MEMBER_NAMES:
         flash('Unknown team member.', 'error')
         return redirect(url_for('admin_pipeline'))
-    if name != (submission.assigned_to or ''):
+    prev_name = submission.assigned_to or ''
+    if name != prev_name:
         submission.assigned_to = name or None
         submission.assigned_at  = datetime.utcnow() if name else None
         # Reset reminder tracking when (re-)assigned
         submission.reminder_1_sent_at = None
         submission.reminder_2_sent_at = None
+
+        # Capture plain values before commit (ORM objects expire after commit)
+        author_name = submission.author.name
+        book_title  = submission.book_title or 'their book'
+        admin_url   = f"{APP_BASE_URL}/admin/one-pager/{submission.id}"
+        assigned_by = current_user.name
+
         db.session.commit()
+
+        # Notify the newly assigned team member immediately
+        if name:
+            assignee_email = TEAM_MEMBER_EMAILS.get(name)
+            if assignee_email:
+                threading.Thread(
+                    target=_send_assignment_notification,
+                    args=(assignee_email, name, author_name, book_title, admin_url, assigned_by),
+                    daemon=True
+                ).start()
     return redirect(request.referrer or url_for('admin_pipeline'))
+
+
+def _send_assignment_notification(to_email, assignee_name, author_name,
+                                   book_title, admin_url, assigned_by):
+    """Email the team member who has just been assigned a one-pager to review."""
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;margin-bottom:4px;">📋 One-pager assigned to you</h2>
+        <p>Hi {assignee_name},</p>
+        <p><strong>{assigned_by}</strong> has assigned you to review
+        <strong>{author_name}</strong>'s one-pager for <em>{book_title}</em>.</p>
+        <p>Please leave written or audio feedback for the author when you're ready:</p>
+        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;
+            background:#2D1B69;color:white;text-decoration:none;
+            border-radius:5px;font-weight:bold;">Open &amp; Give Feedback →</a></p>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            You'll receive a reminder if no feedback has been sent after 48 hours.
+        </p>
+    </div></body></html>"""
+    send_email(to_email,
+               f"One-pager assigned: {author_name} — please review",
+               html_content)
 
 
 @app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')

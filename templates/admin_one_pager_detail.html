@@ -216,6 +216,28 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
             </form>
         </div>
 
+        <!-- Assignment -->
+        <div class="card" style="margin-top:1rem;">
+            <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 0.75rem;">Assigned To</h3>
+            <form method="POST" action="{{ url_for('admin_one_pager_assign', submission_id=submission.id) }}"
+                  style="display:flex;gap:0.5rem;align-items:center;">
+                <select name="assigned_to"
+                        style="flex:1;font-size:0.875rem;padding:0.4rem 0.6rem;border:1.5px solid var(--gray-200);border-radius:6px;">
+                    <option value="">Unassigned</option>
+                    {% for name in team_member_names %}
+                    <option value="{{ name }}" {% if submission.assigned_to == name %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary" style="font-size:0.8125rem;padding:0.4rem 0.875rem;white-space:nowrap;">Save</button>
+            </form>
+            {% if submission.assigned_to %}
+            <p style="font-size:0.75rem;color:var(--gray-400);margin:0.5rem 0 0;">
+                Assigned {{ submission.assigned_at.strftime('%b %d, %Y') if submission.assigned_at else '' }}
+                {% if submission.feedbacks.count() == 0 %}· <span style="color:#d97706;">No feedback yet</span>{% endif %}
+            </p>
+            {% endif %}
+        </div>
+
         <!-- Author info -->
         <div class="card" style="margin-top:1rem;">
             <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 0.75rem;">Author Info</h3>

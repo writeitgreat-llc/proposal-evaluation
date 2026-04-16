@@ -119,6 +119,15 @@ SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
 FROM_EMAIL = os.environ.get('FROM_EMAIL', '') or SMTP_USER
 TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 'anna@writeitgreat.com').split(',')
 
+# Team member name → email map (for assignment reminders)
+TEAM_MEMBER_EMAILS = {
+    'Andy':     'andy@writeitgreat.com',
+    'Virginia': 'virginia@writeitgreat.com',
+    'Ray':      'ray@writeitgreat.com',
+    'Anna':     'anna@writeitgreat.com',
+}
+TEAM_MEMBER_NAMES = list(TEAM_MEMBER_EMAILS.keys())
+
 # External API configuration (Wix integration)
 API_KEY = os.environ.get('API_KEY', '')
 
@@ -889,6 +898,12 @@ class OnePagerSubmission(db.Model):
     submitted_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     admin_notes = db.Column(db.Text)
+    # Assignment
+    assigned_to   = db.Column(db.String(100))  # team member name
+    assigned_at   = db.Column(db.DateTime)
+    # Reminder tracking
+    reminder_1_sent_at = db.Column(db.DateTime)   # 48 h reminder
+    reminder_2_sent_at = db.Column(db.DateTime)   # 96 h reminder
 
     author = db.relationship('Author', backref=db.backref('one_pager_submissions', lazy='dynamic'))
 
@@ -2199,29 +2214,52 @@ def send_author_welcome_invite_email(author, token):
 
 def send_one_pager_submitted_notification(author, submission):
     """Notify the WIG team when an author submits their one-pager for review.
-    Attaches a PDF of the full one-pager so admins can read it without logging in."""
-    app_url = APP_BASE_URL
-    admin_url = f"{app_url}/admin/one-pager/{submission.id}"
-    answers = json.loads(submission.answers_json) if submission.answers_json else {}
-    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
-    <div style="max-width:600px;margin:0 auto;padding:20px;">
-        <h2 style="color:#2D1B69;">📄 New One-Pager Submission</h2>
-        <p><strong>{author.name}</strong> ({author.email}) has submitted their one-pager for review.</p>
-        <table style="width:100%;border-collapse:collapse;margin:1rem 0;">
-            <tr><td style="padding:6px;font-weight:bold;width:140px;">Book title:</td><td style="padding:6px;">{submission.book_title or '—'}</td></tr>
-            <tr style="background:#f9f9f9;"><td style="padding:6px;font-weight:bold;">Problem solved:</td><td style="padding:6px;">{answers.get('problem','—')[:300]}</td></tr>
-            <tr><td style="padding:6px;font-weight:bold;">Target reader:</td><td style="padding:6px;">{answers.get('reader','—')[:300]}</td></tr>
+    Shows the author's verbatim answers to all 5 questions (no AI summary).
+    Attaches a PDF so admins can read it without logging in."""
+    admin_url = f"{APP_BASE_URL}/admin/one-pager/{submission.id}"
+    answers    = json.loads(submission.answers_json) if submission.answers_json else {}
+    submitted_str = submission.submitted_at.strftime('%B %d, %Y') if submission.submitted_at else 'N/A'
+
+    def qa_row(label, value, bg='white'):
+        v = (value or '—').strip()
+        return (f'<tr style="background:{bg};">'
+                f'<td style="padding:10px 12px;font-weight:700;color:#5b21b6;font-size:0.85em;'
+                f'width:180px;vertical-align:top;">{label}</td>'
+                f'<td style="padding:10px 12px;font-size:0.9em;line-height:1.6;color:#333;">{v}</td>'
+                f'</tr>')
+
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;margin:0;padding:0;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;margin-bottom:4px;">📄 New One-Pager Submission</h2>
+        <p style="margin-top:0;color:#555;">A new one-pager is ready for your review.</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            {qa_row('Author', f'{author.name} &lt;{author.email}&gt;', '#f5f3ff')}
+            {qa_row('Book Title', submission.book_title or '—')}
+            {qa_row('Submitted', submitted_str, '#f5f3ff')}
         </table>
-        <p style="font-size:0.9em;color:#555;">The full one-pager (with AI summary) is attached as a PDF.</p>
-        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:5px;font-weight:bold;">View &amp; Give Feedback in Platform →</a></p>
+
+        <h3 style="color:#2D1B69;margin-bottom:8px;">Author's Responses</h3>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            {qa_row('1. What problem does your book solve?', answers.get('problem'), '#fafafa')}
+            {qa_row('2. Who is your target reader?', answers.get('reader'))}
+            {qa_row('3. Why is your book different?', answers.get('different') or '(not provided)', '#fafafa')}
+            {qa_row('4. Why are you the right person to write it?', answers.get('why_you'))}
+            {qa_row('5. How do you plan to market it?', answers.get('marketing') or '(not provided)', '#fafafa')}
+        </table>
+
+        <p style="margin-top:20px;font-size:0.875em;color:#666;">The full one-pager is attached as a PDF.</p>
+        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;background:#B8F2B8;color:#1a3a1a;
+            text-decoration:none;border-radius:5px;font-weight:bold;">View &amp; Give Feedback in Platform →</a></p>
     </div></body></html>"""
 
     # Generate PDF attachment
     attachments = None
     try:
         pdf_bytes = generate_one_pager_pdf(submission)
-        safe_name = (author.name or 'author').replace(' ', '_')
-        attachments = [(f"one_pager_{safe_name}.pdf", pdf_bytes)]
+        safe_name  = (author.name or 'author').replace(' ', '_')
+        date_str   = (submission.submitted_at or datetime.utcnow()).strftime('%Y-%m-%d')
+        attachments = [(f"{safe_name}_OnePager_{date_str}.pdf", pdf_bytes)]
     except Exception as e:
         print(f"One-pager PDF attach error: {e}")
 
@@ -2407,13 +2445,68 @@ def check_reengagement_emails():
             print(f"Re-engagement check error: {e}")
 
 
+def check_one_pager_reminders():
+    """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback."""
+    try:
+        now = datetime.utcnow()
+        # Find submitted one-pagers that are assigned but have no feedback yet
+        pending = (OnePagerSubmission.query
+                   .filter(OnePagerSubmission.status == 'submitted',
+                           OnePagerSubmission.assigned_to.isnot(None),
+                           OnePagerSubmission.assigned_at.isnot(None))
+                   .all())
+        for sub in pending:
+            # Skip if any feedback has already been given
+            if sub.feedbacks.count() > 0:
+                continue
+            hours_since = (now - sub.assigned_at).total_seconds() / 3600
+            assignee_email = TEAM_MEMBER_EMAILS.get(sub.assigned_to)
+            if not assignee_email:
+                continue
+            author_name   = sub.author.name
+            admin_url     = f"{APP_BASE_URL}/admin/one-pager/{sub.id}"
+            assigned_date = sub.assigned_at.strftime('%B %d, %Y')
+
+            if hours_since >= 48 and not sub.reminder_1_sent_at:
+                _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                         author_name, assigned_date, admin_url)
+                sub.reminder_1_sent_at = now
+                db.session.commit()
+            elif hours_since >= 96 and not sub.reminder_2_sent_at:
+                _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                         author_name, assigned_date, admin_url)
+                sub.reminder_2_sent_at = now
+                db.session.commit()
+    except Exception as e:
+        print(f"One-pager reminder check error: {e}")
+
+
+def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date, admin_url):
+    """Send a feedback-overdue reminder to the assigned team member."""
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;">Reminder: {author_name} is waiting for your feedback</h2>
+        <p>Hi {assignee_name},</p>
+        <p>You were assigned to review <strong>{author_name}</strong>'s one-pager on {assigned_date}.
+        They haven't received any feedback yet.</p>
+        <p><a href="{admin_url}" style="display:inline-block;padding:12px 24px;background:#2D1B69;
+            color:white;text-decoration:none;border-radius:5px;font-weight:bold;">
+            Open their submission →</a></p>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            This is an automated reminder from Write It Great.
+        </p>
+    </div></body></html>"""
+    send_email(to_email, f"Reminder: {author_name} is waiting for your feedback", html_content)
+
+
 def _start_reengagement_thread():
-    """Background thread that checks re-engagement emails every hour."""
+    """Background thread that checks re-engagement and one-pager reminder emails every hour."""
     import time
     def _loop():
         time.sleep(300)  # wait 5 min after startup before first run
         while True:
             check_reengagement_emails()
+            check_one_pager_reminders()
             time.sleep(3600)  # run every hour
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
@@ -3069,8 +3162,9 @@ def author_quickstart_pdf():
     except Exception as e:
         flash('Could not generate PDF. Please try again.', 'error')
         return redirect(url_for('author_coaching_quickstart'))
-    safe_name = (current_user.name or 'one_pager').replace(' ', '_')
-    filename = f"one_pager_{safe_name}.pdf"
+    safe_name = (current_user.name or 'Author').replace(' ', '_')
+    date_str  = (submission.submitted_at or datetime.utcnow()).strftime('%Y-%m-%d')
+    filename  = f"{safe_name}_OnePager_{date_str}.pdf"
     return send_file(
         BytesIO(pdf_bytes),
         mimetype='application/pdf',
@@ -5772,7 +5866,8 @@ def admin_pipeline():
         'conversion_rate': conversion_rate,
     }
 
-    return render_template('admin_pipeline.html', rows=rows, stats=stats)
+    return render_template('admin_pipeline.html', rows=rows, stats=stats,
+                           team_member_names=TEAM_MEMBER_NAMES)
 
 
 # ============================================================================
@@ -5792,12 +5887,13 @@ def admin_one_pager_detail(submission_id):
         except Exception as e:
             flash(f'PDF generation error: {e}', 'error')
             return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
-        safe_name = (submission.author.name or 'one_pager').replace(' ', '_')
+        safe_name = (submission.author.name or 'Author').replace(' ', '_')
+        date_str  = (submission.submitted_at or submission.created_at or datetime.utcnow()).strftime('%Y-%m-%d')
         return send_file(
             BytesIO(pdf_bytes),
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=f'one_pager_{safe_name}.pdf'
+            download_name=f'{safe_name}_OnePager_{date_str}.pdf'
         )
 
     if request.method == 'POST':
@@ -5807,7 +5903,8 @@ def admin_one_pager_detail(submission_id):
     answers = json.loads(submission.answers_json) if submission.answers_json else {}
     feedbacks = submission.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all()
     return render_template('admin_one_pager_detail.html', submission=submission,
-                           answers=answers, feedbacks=feedbacks)
+                           answers=answers, feedbacks=feedbacks,
+                           team_member_names=TEAM_MEMBER_NAMES)
 
 
 @app.route('/admin/one-pager/<int:submission_id>/feedback', methods=['POST'])
@@ -5860,6 +5957,25 @@ def admin_one_pager_add_feedback(submission_id):
 
     flash('Feedback saved and author notified!', 'success')
     return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+
+
+@app.route('/admin/one-pager/<int:submission_id>/assign', methods=['POST'])
+@team_required
+def admin_one_pager_assign(submission_id):
+    """Assign (or unassign) a one-pager submission to a team member."""
+    submission = OnePagerSubmission.query.get_or_404(submission_id)
+    name = request.form.get('assigned_to', '').strip()
+    if name and name not in TEAM_MEMBER_NAMES:
+        flash('Unknown team member.', 'error')
+        return redirect(url_for('admin_pipeline'))
+    if name != (submission.assigned_to or ''):
+        submission.assigned_to = name or None
+        submission.assigned_at  = datetime.utcnow() if name else None
+        # Reset reminder tracking when (re-)assigned
+        submission.reminder_1_sent_at = None
+        submission.reminder_2_sent_at = None
+        db.session.commit()
+    return redirect(request.referrer or url_for('admin_pipeline'))
 
 
 @app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')
@@ -6227,8 +6343,12 @@ def run_migrations():
     _add('author', 'streak_days INTEGER DEFAULT 0')
     _add('author', 'last_active_date DATE')
 
-    # ── one_pager_submission (existing table, new admin_notes column) ─────────
+    # ── one_pager_submission ───────────────────────────────────────────────────
     _add('one_pager_submission', 'admin_notes TEXT')
+    _add('one_pager_submission', 'assigned_to VARCHAR(100)')
+    _add('one_pager_submission', 'assigned_at TIMESTAMP')
+    _add('one_pager_submission', 'reminder_1_sent_at TIMESTAMP')
+    _add('one_pager_submission', 'reminder_2_sent_at TIMESTAMP')
 
     # ── one_pager_feedback (new table — created via create_all below) ──────────
     # No _add needed; columns are all new with the table

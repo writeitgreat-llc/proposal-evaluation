@@ -23,6 +23,13 @@
 .path-badge.full { background: #ede9fe; color: #5b21b6; }
 .path-badge.one  { background: #fef9c3; color: #713f12; }
 
+.assignee-select { font-size: 0.75rem; padding: 0.2rem 0.4rem; border: 1.5px solid var(--gray-200);
+    border-radius: 5px; color: var(--gray-700); background: white; cursor: pointer; max-width: 120px; }
+.assignee-select:focus { outline: none; border-color: var(--primary); }
+.assignee-badge { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem;
+    font-weight: 600; color: #5b21b6; background: #ede9fe; padding: 0.15rem 0.5rem;
+    border-radius: 20px; }
+
 .filter-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .filter-btn { font-size: 0.8rem; padding: 0.3rem 0.875rem; border: 1.5px solid var(--gray-200);
     border-radius: 20px; background: white; cursor: pointer; color: var(--gray-600); text-decoration: none; }
@@ -95,6 +102,7 @@
                     <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Stage</th>
                     <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Last Active</th>
                     <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">One-Pager</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Assigned To</th>
                     <th style="padding:0.75rem 1rem;"></th>
                 </tr>
             </thead>
@@ -141,6 +149,27 @@
                            style="color:var(--primary);font-weight:600;text-decoration:none;">
                             {% if row.one_pager %}Edit →{% else %}Fill out →{% endif %}
                         </a>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.75rem 1rem;">
+                        {% if row.one_pager and row.one_pager.status == 'submitted' %}
+                        <form method="POST"
+                              action="{{ url_for('admin_one_pager_assign', submission_id=row.one_pager.id) }}"
+                              style="margin:0;">
+                            <select name="assigned_to" class="assignee-select"
+                                    onchange="this.form.submit()"
+                                    title="Assign to team member">
+                                <option value="">Unassigned</option>
+                                {% for name in team_member_names %}
+                                <option value="{{ name }}"
+                                    {% if row.one_pager.assigned_to == name %}selected{% endif %}>
+                                    {{ name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        {% else %}
+                        <span style="color:var(--gray-300);font-size:0.75rem;">—</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.875rem 1rem;display:flex;align-items:center;gap:0.5rem;">

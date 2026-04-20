@@ -128,6 +128,12 @@ TEAM_MEMBER_EMAILS = {
 }
 TEAM_MEMBER_NAMES = list(TEAM_MEMBER_EMAILS.keys())
 
+# Social media strategy feature
+BOOKING_LINK = os.environ.get('BOOKING_LINK', 'https://calendly.com/writeitgreat/strategy-call')
+MAILCHIMP_API_KEY = os.environ.get('MAILCHIMP_API_KEY', '')
+MAILCHIMP_LIST_ID = os.environ.get('MAILCHIMP_LIST_ID', '')
+MAILCHIMP_SERVER  = os.environ.get('MAILCHIMP_SERVER', 'us1')
+
 # External API configuration (Wix integration)
 API_KEY = os.environ.get('API_KEY', '')
 
@@ -925,6 +931,42 @@ class OnePagerFeedback(db.Model):
     created_by = db.relationship('AdminUser', foreign_keys=[created_by_id])
 
 
+class SocialStrategy(db.Model):
+    """AI-generated 6-month social media strategy for an author."""
+    __tablename__ = 'social_strategy'
+    id = db.Column(db.Integer, primary_key=True)
+    # Linked to an Author if they came through the one-pager flow (may be null for standalone)
+    author_id = db.Column(db.Integer, db.ForeignKey('author.id'), nullable=True)
+    one_pager_id = db.Column(db.Integer, db.ForeignKey('one_pager_submission.id'), nullable=True)
+    # Standalone / lead capture fields
+    lead_name    = db.Column(db.String(200))
+    lead_email   = db.Column(db.String(200))
+    # Source: 'one_pager' | 'standalone'
+    source = db.Column(db.String(20), default='standalone')
+    # Raw inputs and generated strategy
+    inputs_json   = db.Column(db.Text)   # answers used to generate
+    strategy_json = db.Column(db.Text)   # structured JSON from AI
+    # Admin follow-up
+    follow_up_status = db.Column(db.String(30), default='not_contacted')
+    admin_notes      = db.Column(db.Text)
+    follow_up_sent_at = db.Column(db.DateTime)
+    mailchimp_added  = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    author      = db.relationship('Author', backref=db.backref('social_strategies', lazy='dynamic'))
+    one_pager   = db.relationship('OnePagerSubmission',
+                                   backref=db.backref('social_strategy', uselist=False))
+
+
+SOCIAL_FOLLOW_UP_STATUSES = [
+    ('not_contacted', 'Not Contacted'),
+    ('call_booked',   'Call Booked'),
+    ('in_discussion', 'In Discussion'),
+    ('converted',     'Converted'),
+    ('not_interested','Not Interested'),
+]
+
+
 class KnowledgeBaseDocument(db.Model):
     """Admin-uploaded training/reference documents per module"""
     __tablename__ = 'knowledge_base_document'
@@ -1652,6 +1694,152 @@ def generate_one_pager_pdf(submission):
         raise Exception(f"One-pager PDF generation failed with {pisa_status.err} errors")
     pdf_buffer.seek(0)
     return pdf_buffer.getvalue()
+
+
+# ── Social Media Strategy ─────────────────────────────────────────────────────
+
+SOCIAL_STRATEGY_PROMPT = """You are a social media strategist specialising in building author platforms for nonfiction books.
+
+Based on the author information below, generate a tailored 6-month social media strategy outline.
+
+AUTHOR INFO:
+Book topic / description: {book_about}
+Target reader: {target_reader}
+Author background / expertise: {background}
+Platforms currently active on: {platforms}
+Current posting frequency: {posting_freq}
+
+Return ONLY valid JSON (no markdown fences) matching this exact structure:
+{{
+  "platform_recommendations": [
+    {{"platform": "LinkedIn", "reason": "one-line reason"}},
+    ...
+  ],
+  "content_pillars": [
+    {{"name": "Pillar Name", "description": "1-2 sentence description"}},
+    ...
+  ],
+  "cadence": [
+    {{"platform": "LinkedIn", "frequency": "3x/week"}},
+    ...
+  ],
+  "roadmap": [
+    {{"period": "Month 1–2", "focus": "brief focus description"}},
+    {{"period": "Month 3–4", "focus": "brief focus description"}},
+    {{"period": "Month 5–6", "focus": "brief focus description"}}
+  ],
+  "quick_wins": [
+    "Specific actionable content idea 1",
+    "Specific actionable content idea 2",
+    "Specific actionable content idea 3",
+    "Specific actionable content idea 4",
+    "Specific actionable content idea 5"
+  ]
+}}
+
+Rules:
+- Recommend 2-3 platforms most relevant to the author's topic/audience
+- Generate 3-4 content pillars derived directly from the book topic and target reader
+- Quick wins must be concrete and specific to THIS author's expertise, not generic tips
+- Return only the JSON object, nothing else
+"""
+
+
+def generate_social_strategy(inputs: dict) -> dict:
+    """Call OpenAI to generate a structured social media strategy. Returns parsed dict."""
+    prompt = SOCIAL_STRATEGY_PROMPT.format(
+        book_about    = inputs.get('book_about') or inputs.get('problem', ''),
+        target_reader = inputs.get('target_reader') or inputs.get('reader', ''),
+        background    = inputs.get('background') or inputs.get('why_you', ''),
+        platforms     = inputs.get('platforms') or 'Not specified',
+        posting_freq  = inputs.get('posting_freq') or 'Not specified',
+    )
+    response = client.chat.completions.create(
+        model='gpt-4o-mini',
+        messages=[{'role': 'user', 'content': prompt}],
+        temperature=0.7,
+        max_tokens=1400,
+    )
+    raw = response.choices[0].message.content.strip()
+    # Strip accidental markdown fences
+    if raw.startswith('```'):
+        raw = raw.split('```')[1]
+        if raw.startswith('json'):
+            raw = raw[4:]
+    return json.loads(raw)
+
+
+def generate_social_strategy_pdf(strategy_obj: SocialStrategy) -> bytes:
+    """Render the strategy as a PDF and return bytes."""
+    inputs   = json.loads(strategy_obj.inputs_json)   if strategy_obj.inputs_json   else {}
+    strategy = json.loads(strategy_obj.strategy_json) if strategy_obj.strategy_json else {}
+    html = render_template('social_strategy_pdf.html',
+                           strategy_obj=strategy_obj,
+                           inputs=inputs,
+                           strategy=strategy,
+                           booking_link=BOOKING_LINK)
+    buf = BytesIO()
+    pisa_status = pisa.CreatePDF(html, dest=buf)
+    if pisa_status.err:
+        raise Exception(f"Social strategy PDF failed with {pisa_status.err} errors")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def mailchimp_add_lead(email: str, name: str, tag: str = 'social-strategy-lead'):
+    """Add/update a contact in Mailchimp and apply a tag. Silent no-op if not configured."""
+    if not MAILCHIMP_API_KEY or not MAILCHIMP_LIST_ID:
+        return
+    try:
+        import urllib.request, hashlib
+        email_hash = hashlib.md5(email.lower().encode()).hexdigest()
+        url = (f"https://{MAILCHIMP_SERVER}.api.mailchimp.com/3.0"
+               f"/lists/{MAILCHIMP_LIST_ID}/members/{email_hash}")
+        first, *rest = name.split(' ', 1)
+        data = json.dumps({
+            'email_address': email,
+            'status_if_new': 'subscribed',
+            'merge_fields': {'FNAME': first, 'LNAME': rest[0] if rest else ''},
+            'tags': [tag],
+        }).encode()
+        req = urllib.request.Request(url, data=data, method='PUT')
+        req.add_header('Content-Type', 'application/json')
+        import base64
+        creds = base64.b64encode(f"anystring:{MAILCHIMP_API_KEY}".encode()).decode()
+        req.add_header('Authorization', f'Basic {creds}')
+        urllib.request.urlopen(req, timeout=8)
+    except Exception as e:
+        print(f"Mailchimp error: {e}")
+
+
+def send_social_strategy_email(to_email: str, name: str,
+                                strategy_obj: SocialStrategy, pdf_bytes: bytes):
+    """Email the strategy PDF to the author/lead."""
+    safe = (name or 'author').replace(' ', '_')
+    date_str = strategy_obj.created_at.strftime('%Y-%m-%d')
+    filename = f"{safe}_SocialStrategy_{date_str}.pdf"
+    view_url = f"{APP_BASE_URL}/social-strategy/result/{strategy_obj.id}"
+    html = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;">Your Free 6-Month Social Media Strategy 🎉</h2>
+        <p>Hi {name},</p>
+        <p>Based on your one-pager responses, we've put together a personalised social media
+        strategy outline to help you build your author platform before your book launches.</p>
+        <p>Your strategy is attached as a PDF — and you can also
+        <a href="{view_url}">view it online here</a>.</p>
+        <p>Want to take it further? Book a free 30-minute call with Anna to discuss a fully
+        managed strategy:</p>
+        <p><a href="{BOOKING_LINK}" style="display:inline-block;padding:12px 24px;
+            background:#2D1B69;color:white;text-decoration:none;border-radius:5px;
+            font-weight:bold;">Book a Free Call →</a></p>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            This strategy was generated by AI based on your one-pager responses. It's a
+            starting point — Anna and the team are ready to build a full, hands-on strategy
+            when you are.
+        </p>
+    </div></body></html>"""
+    send_email(to_email, "Your free 6-month social media strategy from Write It Great",
+               html, attachments=[(filename, pdf_bytes)])
 
 
 def send_email(to_email, subject, html_content, attachments=None):
@@ -3143,8 +3331,57 @@ def author_quickstart_submit():
         send_one_pager_submitted_notification(current_user, submission)
     except Exception:
         pass
+
+    # Auto-generate social media strategy in background; redirect to it
+    strategy_id = None
+    try:
+        answers  = json.loads(submission.answers_json) if submission.answers_json else {}
+        inputs   = {
+            'book_about':    answers.get('problem', ''),
+            'target_reader': answers.get('reader', ''),
+            'background':    answers.get('why_you', ''),
+            'platforms':     'Not specified',
+            'posting_freq':  'Not specified',
+        }
+        strategy_data = generate_social_strategy(inputs)
+        ss = SocialStrategy(
+            author_id    = current_user.id,
+            one_pager_id = submission.id,
+            source       = 'one_pager',
+            lead_name    = current_user.name,
+            lead_email   = current_user.email,
+            inputs_json  = json.dumps(inputs),
+            strategy_json= json.dumps(strategy_data),
+        )
+        db.session.add(ss)
+        db.session.commit()
+        strategy_id = ss.id
+        # Email PDF to author in background
+        _email_strategy_async(current_user.name, current_user.email, ss.id)
+    except Exception as e:
+        print(f"Social strategy generation error: {e}")
+
+    if strategy_id:
+        return redirect(url_for('social_strategy_result', strategy_id=strategy_id))
     flash('Your one-pager has been sent to the Write It Great team. We\'ll be in touch!', 'success')
     return redirect(url_for('author_coaching_quickstart'))
+
+
+def _email_strategy_async(author_name: str, author_email: str, strategy_id: int):
+    """Send strategy PDF email in a background thread (plain-value args only)."""
+    def _send():
+        try:
+            with app.app_context():
+                ss = SocialStrategy.query.get(strategy_id)
+                if not ss:
+                    return
+                pdf_bytes = generate_social_strategy_pdf(ss)
+                send_social_strategy_email(author_email, author_name, ss, pdf_bytes)
+                # Mailchimp
+                mailchimp_add_lead(author_email, author_name)
+        except Exception as e:
+            print(f"Strategy email error: {e}")
+    threading.Thread(target=_send, daemon=True).start()
 
 
 @app.route('/author/coaching/quickstart/pdf')
@@ -3172,6 +3409,159 @@ def author_quickstart_pdf():
         download_name=filename
     )
 
+
+# ============================================================================
+# SOCIAL MEDIA STRATEGY — PUBLIC ROUTES
+# ============================================================================
+
+@app.route('/social-strategy', methods=['GET', 'POST'])
+def social_strategy_standalone():
+    """Standalone social media strategy tool — no login required."""
+    if request.method == 'POST':
+        form_data = {
+            'book_about':    request.form.get('book_about', '').strip(),
+            'target_reader': request.form.get('target_reader', '').strip(),
+            'background':    request.form.get('background', '').strip(),
+            'platforms':     request.form.getlist('platforms'),
+            'posting_freq':  request.form.get('posting_freq', '').strip(),
+            'lead_name':     request.form.get('lead_name', '').strip(),
+            'lead_email':    request.form.get('lead_email', '').strip(),
+        }
+        if not all([form_data['book_about'], form_data['target_reader'],
+                    form_data['background'], form_data['lead_name'], form_data['lead_email']]):
+            flash('Please fill in all required fields.', 'error')
+            return render_template('social_strategy_standalone.html', form=form_data)
+
+        inputs = {k: v for k, v in form_data.items() if k not in ('lead_name', 'lead_email')}
+        inputs['platforms'] = ', '.join(form_data['platforms']) or 'Not specified'
+
+        try:
+            strategy_data = generate_social_strategy(inputs)
+        except Exception as e:
+            print(f"Strategy gen error: {e}")
+            flash('Strategy generation failed — please try again.', 'error')
+            return render_template('social_strategy_standalone.html', form=form_data)
+
+        ss = SocialStrategy(
+            source       = 'standalone',
+            lead_name    = form_data['lead_name'],
+            lead_email   = form_data['lead_email'],
+            inputs_json  = json.dumps(inputs),
+            strategy_json= json.dumps(strategy_data),
+        )
+        # Link to author account if logged in
+        if current_user.is_authenticated and getattr(current_user, 'is_author', False):
+            ss.author_id = current_user.id
+        db.session.add(ss)
+        db.session.commit()
+
+        _email_strategy_async(form_data['lead_name'], form_data['lead_email'], ss.id)
+
+        return redirect(url_for('social_strategy_result', strategy_id=ss.id))
+
+    return render_template('social_strategy_standalone.html', form={})
+
+
+@app.route('/social-strategy/result/<int:strategy_id>')
+def social_strategy_result(strategy_id):
+    """Display a generated social media strategy."""
+    ss = SocialStrategy.query.get_or_404(strategy_id)
+    strategy = json.loads(ss.strategy_json) if ss.strategy_json else {}
+    return render_template('social_strategy_result.html',
+                           strategy_obj=ss,
+                           strategy=strategy,
+                           booking_link=BOOKING_LINK)
+
+
+@app.route('/social-strategy/pdf/<int:strategy_id>')
+def social_strategy_pdf(strategy_id):
+    """Download strategy as PDF."""
+    ss = SocialStrategy.query.get_or_404(strategy_id)
+    try:
+        pdf_bytes = generate_social_strategy_pdf(ss)
+    except Exception as e:
+        flash(f'PDF generation error: {e}', 'error')
+        return redirect(url_for('social_strategy_result', strategy_id=strategy_id))
+    name = (ss.lead_name or (ss.author.name if ss.author else 'Author')).replace(' ', '_')
+    date_str = ss.created_at.strftime('%Y-%m-%d')
+    return send_file(BytesIO(pdf_bytes), mimetype='application/pdf',
+                     as_attachment=True,
+                     download_name=f"{name}_SocialStrategy_{date_str}.pdf")
+
+
+# ============================================================================
+# SOCIAL MEDIA STRATEGY — ADMIN ROUTES
+# ============================================================================
+
+@app.route('/admin/social-leads')
+@team_required
+def admin_social_leads():
+    leads = SocialStrategy.query.order_by(SocialStrategy.created_at.desc()).all()
+    return render_template('admin_social_leads.html', leads=leads,
+                           statuses=SOCIAL_FOLLOW_UP_STATUSES)
+
+
+@app.route('/admin/social-leads/<int:lead_id>/status', methods=['POST'])
+@team_required
+def admin_social_lead_status(lead_id):
+    ss = SocialStrategy.query.get_or_404(lead_id)
+    new_status = request.form.get('follow_up_status', 'not_contacted')
+    if new_status in dict(SOCIAL_FOLLOW_UP_STATUSES):
+        ss.follow_up_status = new_status
+        db.session.commit()
+    return redirect(url_for('admin_social_leads'))
+
+
+@app.route('/admin/social-leads/<int:lead_id>/notes', methods=['POST'])
+@team_required
+def admin_social_lead_notes(lead_id):
+    ss = SocialStrategy.query.get_or_404(lead_id)
+    ss.admin_notes = request.form.get('admin_notes', '').strip()
+    db.session.commit()
+    return ('', 204)
+
+
+@app.route('/admin/social-leads/<int:lead_id>/follow-up', methods=['POST'])
+@team_required
+def admin_social_lead_followup(lead_id):
+    ss = SocialStrategy.query.get_or_404(lead_id)
+    name  = ss.lead_name or (ss.author.name  if ss.author else 'there')
+    email = ss.lead_email or (ss.author.email if ss.author else None)
+    if not email:
+        flash('No email address for this lead.', 'error')
+        return redirect(url_for('admin_social_leads'))
+
+    first_name = name.split()[0]
+    result_url = f"{APP_BASE_URL}/social-strategy/result/{ss.id}"
+    html = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        <p>Hi {first_name},</p>
+        <p>Hope you've had a chance to look over the social media strategy we put together
+        based on your one-pager. It's a solid starting point — but a truly effective author
+        platform takes a bit more than a template.</p>
+        <p>I'd love to jump on a quick 30-minute call to walk through your specific situation,
+        answer any questions, and show you what a fully managed strategy could look like for you.</p>
+        <p>No pressure — just a conversation.</p>
+        <p><a href="{BOOKING_LINK}" style="display:inline-block;padding:12px 24px;
+            background:#2D1B69;color:white;text-decoration:none;border-radius:5px;
+            font-weight:bold;">Book a time here →</a></p>
+        <p>You can also <a href="{result_url}">review your strategy here</a> any time.</p>
+        <p style="margin-top:2rem;">Anna<br>Write It Great</p>
+    </div></body></html>"""
+    try:
+        send_email(email, "Your social media strategy — let's talk", html)
+        ss.follow_up_sent_at = datetime.utcnow()
+        ss.follow_up_status  = 'call_booked' if ss.follow_up_status == 'not_contacted' else ss.follow_up_status
+        db.session.commit()
+        flash(f'Follow-up email sent to {email}.', 'success')
+    except Exception as e:
+        flash(f'Email error: {e}', 'error')
+    return redirect(url_for('admin_social_leads'))
+
+
+# ============================================================================
+# COACHING MODULES
+# ============================================================================
 
 @app.route('/author/coaching/module/<int:module_order>')
 def author_coaching_module(module_order):
@@ -6390,10 +6780,8 @@ def run_migrations():
     _add('one_pager_submission', 'reminder_1_sent_at TIMESTAMP')
     _add('one_pager_submission', 'reminder_2_sent_at TIMESTAMP')
 
-    # ── one_pager_feedback (new table — created via create_all below) ──────────
-    # No _add needed; columns are all new with the table
-
-    # ── Create any new tables (one_pager_feedback, etc.) ──────────────────────
+    # ── one_pager_feedback + social_strategy (new tables via create_all) ────────
+    # No _add needed for brand-new tables
     try:
         db.create_all()
     except Exception as e:

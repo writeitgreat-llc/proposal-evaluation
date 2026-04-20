@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>6-Month Social Media Strategy: {{ strategy_obj.lead_name }}</title>
+    <style>
+        @page { size: letter; margin: 0.75in; }
+        body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; line-height: 1.5; color: #333; }
+
+        .header { text-align: center; border-bottom: 3px solid #2D1B69; padding-bottom: 15px; margin-bottom: 20px; }
+        .logo { font-size: 20pt; font-weight: bold; color: #2D1B69; }
+        .logo-accent { color: #B8F2B8; }
+        .tagline { font-size: 9pt; color: #666; margin-top: 3px; }
+        .doc-type { font-size: 10pt; font-weight: bold; color: #5b21b6; margin-top: 6px;
+                    text-transform: uppercase; letter-spacing: 0.08em; }
+
+        .meta-box { background: #f5f3ff; border: 1.5px solid #c4b5fd; border-radius: 6px;
+                    padding: 12px 16px; margin-bottom: 18px; }
+        .meta-box table { width: 100%; border-collapse: collapse; }
+        .meta-box td { padding: 3px 6px; font-size: 9.5pt; }
+        .meta-label { font-weight: bold; color: #5b21b6; width: 120px; }
+
+        h2 { font-size: 12pt; color: #2D1B69; margin: 18px 0 8px;
+             border-bottom: 1.5px solid #ede9fe; padding-bottom: 4px; }
+
+        .platform-item { margin-bottom: 10px; }
+        .platform-name { font-weight: bold; color: #1e1b4b; font-size: 10pt; }
+        .platform-reason { font-size: 9.5pt; color: #374151; }
+
+        .pillar-item { margin-bottom: 10px; }
+        .pillar-name { font-weight: bold; color: #1e1b4b; font-size: 10pt; }
+        .pillar-desc { font-size: 9.5pt; color: #374151; }
+
+        .cadence-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; }
+        .cadence-table th { background: #2D1B69; color: #fff; padding: 6px 10px;
+                            text-align: left; font-size: 9pt; }
+        .cadence-table td { padding: 6px 10px; border-bottom: 1px solid #ede9fe; color: #374151; }
+        .cadence-table tr:last-child td { border-bottom: none; }
+        .cadence-table tr:nth-child(even) td { background: #f5f3ff; }
+
+        .roadmap-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; }
+        .roadmap-table th { background: #2D1B69; color: #fff; padding: 6px 10px;
+                            text-align: left; font-size: 9pt; }
+        .roadmap-table td { padding: 6px 10px; border-bottom: 1px solid #ede9fe;
+                            vertical-align: top; color: #374151; }
+        .roadmap-table tr:last-child td { border-bottom: none; }
+        .roadmap-table tr:nth-child(even) td { background: #f5f3ff; }
+        .roadmap-table .period-cell { font-weight: bold; color: #5b21b6; white-space: nowrap; width: 30%; }
+
+        .quick-wins-list { margin: 6px 0 0 0; padding: 0; list-style: none; }
+        .quick-wins-list li { font-size: 9.5pt; color: #374151; padding: 4px 0;
+                              border-bottom: 1px solid #ede9fe; }
+        .quick-wins-list li:last-child { border-bottom: none; }
+        .win-num { font-weight: bold; color: #5b21b6; margin-right: 6px; }
+
+        .cta-box { background: #B8F2B8; border: 1.5px solid #6ee7b7; border-radius: 6px;
+                   padding: 16px 20px; margin-top: 22px; text-align: center; font-size: 9.5pt;
+                   color: #1e3a2f; line-height: 1.7; }
+        .cta-box .cta-note { font-size: 8.5pt; color: #374151; margin-bottom: 8px; }
+        .cta-box .cta-main { font-size: 10.5pt; font-weight: bold; color: #1e1b4b; margin-bottom: 8px; }
+        .cta-box a { color: #2D1B69; font-weight: bold; }
+
+        .footer { border-top: 1px solid #ddd; padding-top: 10px; margin-top: 20px;
+                  text-align: center; font-size: 8.5pt; color: #999; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo">Write It <span class="logo-accent">Great</span></div>
+    <div class="tagline">writeitgreat.com · Expert Book Coaching &amp; Publishing Strategy</div>
+    <div class="doc-type">6-Month Social Media Strategy Outline</div>
+</div>
+
+<div class="meta-box">
+    <table>
+        <tr>
+            <td class="meta-label">Author:</td>
+            <td><strong>{{ strategy_obj.lead_name }}</strong></td>
+        </tr>
+        <tr>
+            <td class="meta-label">Email:</td>
+            <td>{{ strategy_obj.lead_email }}</td>
+        </tr>
+        <tr>
+            <td class="meta-label">Book Topic:</td>
+            <td>{{ (inputs.get('book_about') or inputs.get('problem') or '')[:150] }}</td>
+        </tr>
+        <tr>
+            <td class="meta-label">Generated:</td>
+            <td>{{ strategy_obj.created_at.strftime('%B %d, %Y') if strategy_obj.created_at else 'N/A' }}</td>
+        </tr>
+    </table>
+</div>
+
+<h2>Platform Recommendations</h2>
+{% for item in strategy.platform_recommendations %}
+<div class="platform-item">
+    <div class="platform-name">{{ item.platform }}</div>
+    <div class="platform-reason">{{ item.reason }}</div>
+</div>
+{% endfor %}
+
+<h2>Content Pillars</h2>
+{% for item in strategy.content_pillars %}
+<div class="pillar-item">
+    <div class="pillar-name">{{ loop.index }}. {{ item.name }}</div>
+    <div class="pillar-desc">{{ item.description }}</div>
+</div>
+{% endfor %}
+
+<h2>Posting Cadence</h2>
+<table class="cadence-table">
+    <tr>
+        <th>Platform</th>
+        <th>Frequency</th>
+    </tr>
+    {% for item in strategy.cadence %}
+    <tr>
+        <td>{{ item.platform }}</td>
+        <td>{{ item.frequency }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<h2>6-Month Roadmap</h2>
+<table class="roadmap-table">
+    <tr>
+        <th>Period</th>
+        <th>Focus</th>
+    </tr>
+    {% for item in strategy.roadmap %}
+    <tr>
+        <td class="period-cell">{{ item.period }}</td>
+        <td>{{ item.focus }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<h2>Quick Wins This Week</h2>
+<ul class="quick-wins-list">
+    {% for win in strategy.quick_wins %}
+    <li><span class="win-num">{{ loop.index }}.</span>{{ win }}</li>
+    {% endfor %}
+</ul>
+
+<div class="cta-box">
+    <div class="cta-note">This strategy was generated by AI based on the information you provided. It is a starting point, not a finished plan.</div>
+    <div class="cta-main">Want a fully custom strategy? Book a free 30-minute call with Anna &#8594;</div>
+    <a href="{{ booking_link }}">{{ booking_link }}</a>
+</div>
+
+<div class="footer">
+    Generated by Write It Great · writeitgreat.com
+</div>
+
+</body>
+</html>

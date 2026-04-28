@@ -376,6 +376,221 @@
 .kb-dl-title { display: block; font-size: 0.875rem; font-weight: 600; color: var(--gray-900); }
 .kb-dl-meta  { display: block; font-size: 0.75rem; color: var(--gray-400); margin-top: 0.1rem; }
 .kb-dl-arrow { font-size: 0.75rem; font-weight: 600; color: var(--primary); white-space: nowrap; flex-shrink: 0; }
+
+/* ─── Module 7 Gamification ──────────────────────────────── */
+
+/* XP Bar */
+.xp-bar-wrap { background: white; border: 1.5px solid #c4b5fd; border-radius: var(--radius);
+    padding: 0.875rem 1.125rem; margin-bottom: 0; }
+.xp-bar-top { display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 0.5rem; }
+.xp-bar-label { font-size: 0.8125rem; font-weight: 700; color: #5b21b6; }
+.xp-bar-total { font-size: 0.875rem; font-weight: 800; color: #7c3aed; }
+.xp-track { position: relative; height: 12px; background: #ede9fe; border-radius: 99px;
+    overflow: visible; }
+.xp-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #a78bfa);
+    border-radius: 99px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+.xp-milestone-dot { position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 20px; height: 20px; border-radius: 50%; background: white;
+    border: 2px solid #c4b5fd; display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; cursor: default; z-index: 2; transition: all 0.3s; }
+.xp-milestone-dot.earned { border-color: #7c3aed; background: #ede9fe; animation: badge-pop 0.4s ease; }
+@keyframes badge-pop { 0%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.5)} 100%{transform:translate(-50%,-50%) scale(1)} }
+.xp-milestone-dot[title]:hover::after { content: attr(title);
+    position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%);
+    background: #1e1b4b; color: white; font-size: 0.65rem; padding: 0.2rem 0.45rem;
+    border-radius: 4px; white-space: nowrap; pointer-events: none; }
+
+/* XP Toast */
+.xp-toast { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9000;
+    background: #1e1b4b; color: white; padding: 0.75rem 1.25rem;
+    border-radius: var(--radius); font-size: 0.875rem; font-weight: 600;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25); opacity: 0; pointer-events: none;
+    transform: translateY(10px); transition: opacity 0.3s, transform 0.3s; }
+.xp-toast.show { opacity: 1; transform: translateY(0); }
+
+/* Platform Builder */
+.pb-wrap { margin: 0.875rem 1rem 0; }
+.pb-section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #5b21b6; margin-bottom: 0.5rem; }
+.pb-zones { display: grid; grid-template-columns: 1fr 1fr; gap: 0.875rem; }
+@media(max-width:640px) { .pb-zones { grid-template-columns: 1fr; } }
+.pb-zone { background: var(--gray-50); border: 2px dashed var(--gray-200);
+    border-radius: 10px; padding: 0.75rem; min-height: 160px; }
+.pb-zone.drag-over { border-color: #7c3aed; background: #f5f3ff; }
+.pb-zone-title { font-size: 0.75rem; font-weight: 600; color: var(--gray-500);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.625rem; }
+.pb-available-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 0.4rem; }
+.pb-tile { display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+    background: white; border: 1.5px solid var(--gray-200); border-radius: 8px;
+    padding: 0.5rem 0.25rem; cursor: grab; transition: all 0.2s; user-select: none;
+    font-size: 0.75rem; color: var(--gray-700); text-align: center; font-weight: 600; }
+.pb-tile:hover { border-color: #7c3aed; background: #f5f3ff; color: #5b21b6; transform: scale(1.04); }
+.pb-tile:active { cursor: grabbing; transform: scale(0.97); }
+.pb-tile.dragging { opacity: 0.4; }
+.pb-tile-icon { font-size: 1.2rem; line-height: 1; }
+.pb-active-list { display: flex; flex-direction: column; gap: 0.4rem; min-height: 100px; }
+.pb-empty-hint { text-align: center; color: var(--gray-400); font-size: 0.775rem;
+    padding: 1.5rem 0.5rem; line-height: 1.5; }
+.pb-active-item { background: white; border: 1.5px solid #c4b5fd; border-radius: 8px;
+    padding: 0.45rem 0.625rem; display: flex; align-items: center; gap: 0.5rem;
+    transition: all 0.2s; }
+.pb-active-item .pb-tile-icon { font-size: 1rem; }
+.pb-active-name { font-size: 0.8rem; font-weight: 600; color: var(--primary); flex: 1; }
+.pb-audience-input { width: 80px; padding: 0.2rem 0.4rem; border: 1px solid #c4b5fd;
+    border-radius: 5px; font-size: 0.8rem; font-family: inherit; text-align: right;
+    background: #faf9ff; color: var(--gray-900); -moz-appearance: textfield; }
+.pb-audience-input::-webkit-inner-spin-button,
+.pb-audience-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.pb-audience-input:focus { outline: none; border-color: #7c3aed; background: white; }
+.pb-remove { background: none; border: none; cursor: pointer; color: var(--gray-300);
+    font-size: 1rem; line-height: 1; padding: 0; transition: color 0.15s; }
+.pb-remove:hover { color: #dc2626; }
+.pb-summary { margin-top: 0.625rem; padding: 0.5rem 0.75rem; background: #ede9fe;
+    border-radius: 6px; font-size: 0.8125rem; color: #5b21b6; font-weight: 500; }
+.pb-insert-btn { margin-top: 0.5rem; background: white; border: 1.5px solid var(--primary);
+    color: var(--primary); font-size: 0.8125rem; padding: 0.4rem 0.875rem; cursor: pointer;
+    border-radius: var(--radius); font-family: inherit; transition: all 0.2s; }
+.pb-insert-btn:hover { background: var(--primary); color: white; }
+
+/* Publisher Character widget */
+.m7-right-col { display: flex; flex-direction: column; gap: 0.75rem;
+    position: sticky; top: 90px; max-height: calc(100vh - 110px); overflow-y: auto; }
+.m7-right-col .chat-sidebar { position: static; max-height: none; flex: 1; min-height: 280px; }
+.publisher-widget { background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); overflow: hidden; }
+.pub-widget-header { padding: 0.625rem 1rem; background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200); display: flex; align-items: center;
+    justify-content: space-between; }
+.pub-widget-header h4 { margin: 0; font-size: 0.8125rem; font-weight: 700; color: var(--primary); }
+.pub-reach-badge { font-size: 0.75rem; color: var(--gray-500); }
+.pub-body { padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.875rem; }
+.pub-svg-wrap { flex-shrink: 0; transition: transform 0.3s ease; }
+.pub-caption { flex: 1; font-size: 0.8125rem; color: var(--gray-700); line-height: 1.5;
+    font-style: italic; }
+/* Publisher character body states */
+.pub-state-0 .pub-svg-wrap { transform: rotate(4deg); }
+.pub-state-1 .pub-svg-wrap { transform: rotate(0deg); }
+.pub-state-2 .pub-svg-wrap { transform: rotate(-3deg); }
+.pub-state-3 .pub-svg-wrap { transform: rotate(-5deg); }
+.pub-state-4 .pub-svg-wrap { transform: rotate(-8deg); }
+
+/* Pitch Challenge */
+.pitch-card { background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); overflow: hidden; }
+.pitch-card-header { padding: 0.875rem 1rem; background: #fefce8;
+    border-bottom: 1px solid #fde68a; display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.pitch-card-header h3 { margin: 0; font-size: 0.9375rem; color: #92400e; }
+.pitch-card-header p  { margin: 0; font-size: 0.8125rem; color: #78350f; }
+.pitch-card-body { padding: 1rem 1.125rem; }
+.pitch-start-zone { text-align: center; padding: 1rem 0; }
+.pitch-start-btn { padding: 0.625rem 1.5rem; background: #F5A623; color: white;
+    border: none; border-radius: var(--radius); font-size: 0.9375rem; font-weight: 700;
+    cursor: pointer; font-family: inherit; transition: all 0.2s; }
+.pitch-start-btn:hover { background: #e09510; transform: scale(1.02); }
+.pitch-active { display: none; }
+.pitch-timer-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.875rem; }
+.pitch-timer-num { font-size: 2.5rem; font-weight: 800; color: #7c3aed; font-variant-numeric: tabular-nums;
+    min-width: 3ch; line-height: 1; }
+.pitch-timer-num.urgent { color: #dc2626; animation: timer-pulse 0.5s ease infinite alternate; }
+@keyframes timer-pulse { from { opacity: 1; } to { opacity: 0.5; } }
+.pitch-timer-label { font-size: 0.75rem; color: var(--gray-500); }
+.pitch-done-btn { padding: 0.45rem 1rem; background: white; border: 1.5px solid var(--gray-200);
+    color: var(--gray-600); border-radius: var(--radius); font-size: 0.8125rem;
+    cursor: pointer; font-family: inherit; margin-left: auto; }
+.pitch-done-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+#pitch-textarea { width: 100%; min-height: 100px; padding: 0.75rem; box-sizing: border-box;
+    border: 2px solid var(--gray-200); border-radius: 8px; font-size: 0.9375rem;
+    font-family: inherit; line-height: 1.65; resize: vertical; transition: border-color 0.3s; }
+#pitch-textarea:focus { outline: none; border-color: #7c3aed; }
+#pitch-textarea.running { border-color: #a78bfa;
+    animation: pitch-pulse 2s ease-in-out infinite alternate; }
+@keyframes pitch-pulse { from { border-color: #a78bfa; } to { border-color: #7c3aed; } }
+#pitch-textarea:disabled { background: var(--gray-50); color: var(--gray-600); }
+.pitch-loading { padding: 1rem; text-align: center; color: var(--gray-500); font-size: 0.875rem; }
+.pitch-feedback-card { background: #fffbeb; border: 2px solid #F5A623;
+    border-radius: var(--radius); padding: 1rem 1.125rem; margin-top: 0.875rem; }
+.pitch-feedback-card h4 { margin: 0 0 0.625rem; font-size: 0.875rem; color: #92400e;
+    font-weight: 700; }
+.pitch-feedback-card ul { margin: 0 0 0.5rem; padding-left: 1.25rem; }
+.pitch-feedback-card li { font-size: 0.875rem; color: var(--gray-700); line-height: 1.65;
+    margin-bottom: 0.35rem; }
+.pitch-suggestion { font-size: 0.8375rem; color: #78350f; background: #fef3c7;
+    padding: 0.5rem 0.75rem; border-radius: 6px; line-height: 1.6; margin: 0; }
+.pitch-retake-btn { margin-top: 0.75rem; padding: 0.4rem 0.875rem; background: white;
+    border: 1.5px solid var(--gray-200); color: var(--gray-600); border-radius: var(--radius);
+    font-size: 0.8125rem; cursor: pointer; font-family: inherit; }
+.pitch-retake-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+/* Comparable Titles Shelf */
+.shelf-card { background: white; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius); overflow: hidden; }
+.shelf-card-header { padding: 0.875rem 1rem; background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200); display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.shelf-card-header h3 { margin: 0; font-size: 0.9375rem; color: var(--primary); }
+.shelf-card-body { padding: 1rem 1.125rem; }
+.shelf-search-row { display: flex; gap: 0.5rem; margin-bottom: 0.875rem; position: relative; }
+#shelf-search { flex: 1; padding: 0.55rem 0.875rem; border: 1.5px solid var(--gray-200);
+    border-radius: 8px; font-size: 0.9rem; font-family: inherit; }
+#shelf-search:focus { outline: none; border-color: var(--primary); }
+.shelf-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
+    background: white; border: 1.5px solid var(--gray-200); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1); max-height: 280px; overflow-y: auto;
+    display: none; }
+.shelf-results.open { display: block; }
+.shelf-result-item { display: flex; align-items: center; gap: 0.625rem;
+    padding: 0.625rem 0.875rem; cursor: pointer; transition: background 0.15s;
+    border-bottom: 1px solid var(--gray-100); }
+.shelf-result-item:last-child { border-bottom: none; }
+.shelf-result-item:hover { background: #f5f3ff; }
+.shelf-result-cover { width: 32px; height: 44px; object-fit: cover; border-radius: 3px;
+    background: var(--gray-100); flex-shrink: 0; }
+.shelf-result-info { flex: 1; min-width: 0; }
+.shelf-result-title { font-size: 0.8375rem; font-weight: 600; color: var(--gray-900);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shelf-result-meta { font-size: 0.75rem; color: var(--gray-500); }
+.shelf-manual-btn { padding: 0.55rem 0.875rem; background: white; border: 1.5px solid var(--gray-200);
+    color: var(--gray-600); border-radius: 8px; font-size: 0.875rem; cursor: pointer;
+    font-family: inherit; white-space: nowrap; transition: all 0.15s; }
+.shelf-manual-btn:hover { border-color: var(--primary); color: var(--primary); }
+.shelf-books { display: flex; flex-wrap: wrap; gap: 0.75rem; min-height: 80px;
+    padding: 0.5rem 0; }
+.book-card { position: relative; width: 80px; flex-shrink: 0; }
+.book-card-cover { width: 80px; height: 110px; object-fit: cover; border-radius: 4px;
+    background: #e5e7eb; display: block; border: 2px solid transparent; }
+.book-card.fresh .book-card-cover   { border-color: #16a34a; }
+.book-card.aging .book-card-cover   { border-color: #d97706; }
+.book-card.old .book-card-cover     { border-color: #dc2626; }
+.book-card-label { font-size: 0.6rem; font-weight: 700; text-align: center;
+    margin-top: 0.15rem; line-height: 1.2; }
+.book-card.fresh .book-card-label  { color: #16a34a; }
+.book-card.aging .book-card-label  { color: #d97706; }
+.book-card.old .book-card-label    { color: #dc2626; }
+.book-card-title { font-size: 0.65rem; color: var(--gray-700); text-align: center;
+    line-height: 1.25; margin-top: 0.2rem;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book-card-remove { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px;
+    background: #dc2626; color: white; border: none; border-radius: 50%; font-size: 0.7rem;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    line-height: 1; }
+.shelf-health { margin-top: 0.75rem; padding: 0.625rem 0.875rem; background: var(--gray-50);
+    border: 1px solid var(--gray-200); border-radius: 8px; font-size: 0.8125rem; }
+.shelf-health-item { display: flex; align-items: flex-start; gap: 0.375rem;
+    color: var(--gray-700); line-height: 1.4; padding: 0.15rem 0; }
+.shelf-health-item .sh-icon { flex-shrink: 0; }
+.shelf-protip { margin-top: 0.625rem; font-size: 0.775rem; color: var(--gray-500);
+    display: flex; gap: 0.3rem; align-items: flex-start; line-height: 1.5; }
+.shelf-manual-form { display: none; margin-top: 0.625rem; padding: 0.75rem;
+    background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; }
+.shelf-manual-form.open { display: block; }
+.shelf-manual-form input { width: 100%; padding: 0.45rem 0.625rem; border: 1.5px solid var(--gray-200);
+    border-radius: 6px; font-size: 0.875rem; font-family: inherit; margin-bottom: 0.4rem;
+    box-sizing: border-box; }
+.shelf-manual-form input:focus { outline: none; border-color: var(--primary); }
+.shelf-manual-submit { padding: 0.4rem 1rem; background: var(--primary); color: white;
+    border: none; border-radius: 6px; font-size: 0.8125rem; cursor: pointer; font-family: inherit; }
 {% endblock %}
 
 {% block content %}
@@ -432,6 +647,29 @@
     <!-- LEFT: Writing panel -->
     <div class="writing-panel">
 
+        {% if module_info.order == 7 %}
+        {# ── XP Bar ─────────────────────────────────────────────────────── #}
+        {% set xp_now = marketing_data.xp_total if marketing_data else 0 %}
+        {% set xp_pct = [(xp_now / marketing_xp_max * 100), 100] | min | int %}
+        <div class="xp-bar-wrap" id="xp-bar-wrap">
+            <div class="xp-bar-top">
+                <span class="xp-bar-label">📊 Marketing Platform Strength</span>
+                <span class="xp-bar-total" id="xp-total-display">{{ xp_now }} XP</span>
+            </div>
+            <div class="xp-track">
+                <div class="xp-fill" id="xp-fill" style="width:{{ xp_pct }}%;"></div>
+                {% for threshold, badge, name in marketing_milestones %}
+                {% set dot_pct = (threshold / marketing_xp_max * 100) | int %}
+                {% set earned = xp_now >= threshold %}
+                <div class="xp-milestone-dot {% if earned %}earned{% endif %}"
+                     style="left:{{ dot_pct }}%;"
+                     title="{{ badge }} {{ name }} ({{ threshold }} XP)"
+                     data-xp="{{ threshold }}">{{ badge }}</div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Collapsible context card -->
         <details class="context-card" {% if not saved_content or not saved_content.content %}open{% endif %}>
             <summary>
@@ -466,55 +704,33 @@
             </div>
 
             {% if module_info.order == 7 %}
-            {# ── Platform number fields (Module 7 only) ─────────────────── #}
-            <div class="platform-fields" id="platform-fields">
-                <div class="platform-fields-header">
-                    <span>📊 Your Platform Numbers</span>
-                    <span class="platform-fields-hint">Fill in what you have — leave blank if not applicable</span>
-                </div>
-                <div class="platform-grid">
-                    <div class="platform-field">
-                        <label for="pf-email">✉️ Email subscribers</label>
-                        <input type="number" id="pf-email" min="0" placeholder="0">
+            {# ── Platform Builder (Module 7) ─────────────────────────────── #}
+            <div class="pb-wrap" id="platform-builder">
+                <div class="pb-section-title">📊 Platform Builder — drag channels to your active stack</div>
+                <div class="pb-zones">
+                    {# Left: available channels #}
+                    <div>
+                        <div class="pb-zone-title">Available Channels</div>
+                        <div class="pb-zone" id="pb-available">
+                            <div class="pb-available-grid" id="pb-available-grid">
+                                {# Tiles are rendered by JS from PLATFORM_CHANNELS #}
+                            </div>
+                        </div>
                     </div>
-                    <div class="platform-field">
-                        <label for="pf-instagram">📸 Instagram followers</label>
-                        <input type="number" id="pf-instagram" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-tiktok">🎵 TikTok followers</label>
-                        <input type="number" id="pf-tiktok" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-linkedin">💼 LinkedIn connections</label>
-                        <input type="number" id="pf-linkedin" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-facebook">👥 Facebook followers</label>
-                        <input type="number" id="pf-facebook" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-youtube">▶️ YouTube subscribers</label>
-                        <input type="number" id="pf-youtube" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-podcast">🎙️ Podcast listeners/mo</label>
-                        <input type="number" id="pf-podcast" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-website">🌐 Website visitors/mo</label>
-                        <input type="number" id="pf-website" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-speaking">🎤 Speaking events/yr</label>
-                        <input type="number" id="pf-speaking" min="0" placeholder="0">
-                    </div>
-                    <div class="platform-field">
-                        <label for="pf-audience">👤 Avg audience size</label>
-                        <input type="number" id="pf-audience" min="0" placeholder="0">
+                    {# Right: active stack #}
+                    <div>
+                        <div class="pb-zone-title">Your Active Platform Stack</div>
+                        <div class="pb-zone" id="pb-active">
+                            <div class="pb-active-list" id="pb-active-list">
+                                <div class="pb-empty-hint" id="pb-empty-hint">
+                                    ← Drag channels here<br>to build your stack
+                                </div>
+                            </div>
+                            <div class="pb-summary" id="pb-summary" style="display:none;"></div>
+                        </div>
                     </div>
                 </div>
-                <button type="button" id="btn-insert-platform" class="btn" style="margin-top:0.75rem;background:white;border:1.5px solid var(--primary);color:var(--primary);font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
+                <button type="button" class="pb-insert-btn" id="btn-insert-platform">
                     Insert Numbers into Draft →
                 </button>
             </div>
@@ -613,6 +829,93 @@
             </a>
         </div>
 
+        {% if module_info.order == 7 %}
+
+        {# ── 60-Second Pitch Challenge ───────────────────────────────── #}
+        {% set saved_pitch = marketing_data.pitch_text if marketing_data else '' %}
+        {% set saved_pitch_fb = marketing_data.pitch_feedback_json if marketing_data else '' %}
+        <div class="pitch-card">
+            <div class="pitch-card-header">
+                <div>
+                    <h3>⚡ The 60-Second Pitch Challenge <span style="font-size:0.75rem;font-weight:400;background:#fde68a;padding:0.1rem 0.5rem;border-radius:99px;margin-left:0.4rem;">Optional</span></h3>
+                    <p>How would you describe your book at a dinner party? Write it like you'd say it out loud.</p>
+                </div>
+            </div>
+            <div class="pitch-card-body">
+                {% if saved_pitch and saved_pitch_fb %}
+                {# Already completed — show result #}
+                <div id="pitch-done-state">
+                    <p style="font-size:0.8375rem;color:var(--gray-600);margin:0 0 0.625rem;">Your pitch:</p>
+                    <p style="font-size:0.9rem;color:var(--gray-800);background:var(--gray-50);border-radius:6px;padding:0.75rem;line-height:1.65;margin:0 0 0.75rem;">{{ saved_pitch }}</p>
+                    <div id="pitch-feedback-display"></div>
+                    <button class="pitch-retake-btn" id="pitch-retake-btn">↺ Try again</button>
+                </div>
+                <div id="pitch-fresh-state" style="display:none;">
+                    <div class="pitch-start-zone"><button class="pitch-start-btn" id="pitch-start-btn">▶ Start Challenge</button></div>
+                    <div class="pitch-active" id="pitch-active">
+                        <div class="pitch-timer-row">
+                            <div><div class="pitch-timer-num" id="pitch-timer">60</div><div class="pitch-timer-label">seconds</div></div>
+                            <button class="pitch-done-btn" id="pitch-done-btn">I'm done →</button>
+                        </div>
+                        <textarea id="pitch-textarea" placeholder="Start writing — say it like you'd say it at a dinner party…"></textarea>
+                    </div>
+                    <div id="pitch-loading" class="pitch-loading" style="display:none;">⏳ Reading your pitch…</div>
+                    <div id="pitch-feedback" style="display:none;"></div>
+                </div>
+                {% else %}
+                <div id="pitch-done-state" style="display:none;">
+                    <p style="font-size:0.8375rem;color:var(--gray-600);margin:0 0 0.625rem;">Your pitch:</p>
+                    <p id="pitch-saved-text" style="font-size:0.9rem;color:var(--gray-800);background:var(--gray-50);border-radius:6px;padding:0.75rem;line-height:1.65;margin:0 0 0.75rem;"></p>
+                    <div id="pitch-feedback-display"></div>
+                    <button class="pitch-retake-btn" id="pitch-retake-btn">↺ Try again</button>
+                </div>
+                <div id="pitch-fresh-state">
+                    <div class="pitch-start-zone"><button class="pitch-start-btn" id="pitch-start-btn">▶ Start Challenge</button></div>
+                    <div class="pitch-active" id="pitch-active">
+                        <div class="pitch-timer-row">
+                            <div><div class="pitch-timer-num" id="pitch-timer">60</div><div class="pitch-timer-label">seconds</div></div>
+                            <button class="pitch-done-btn" id="pitch-done-btn">I'm done →</button>
+                        </div>
+                        <textarea id="pitch-textarea" placeholder="Start writing — say it like you'd say it at a dinner party…"></textarea>
+                    </div>
+                    <div id="pitch-loading" class="pitch-loading" style="display:none;">⏳ Reading your pitch…</div>
+                    <div id="pitch-feedback" style="display:none;"></div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# ── Comparable Titles Card Shelf ───────────────────────────── #}
+        <div class="shelf-card">
+            <div class="shelf-card-header">
+                <div>
+                    <h3>📚 Comparable Titles — Build Your Shelf</h3>
+                    <p style="margin:0.1rem 0 0;font-size:0.8125rem;color:var(--gray-500);">Show publishers where your book sits in the market</p>
+                </div>
+                <span style="font-size:0.75rem;color:var(--gray-400);">
+                    ℹ️ <span style="cursor:help;" title="Not sure where to look? Browse Amazon bestseller lists in your genre filtered by the last 2 years. Goodreads ratings are also a good signal of reader interest.">Pro Tip</span>
+                </span>
+            </div>
+            <div class="shelf-card-body">
+                <div class="shelf-search-row">
+                    <input type="text" id="shelf-search" placeholder="Search for a comparable title…" autocomplete="off">
+                    <button type="button" class="shelf-manual-btn" id="shelf-manual-toggle">+ Add Manually</button>
+                    <div class="shelf-results" id="shelf-results"></div>
+                </div>
+                <div class="shelf-manual-form" id="shelf-manual-form">
+                    <input type="text" id="shelf-manual-title" placeholder="Book title *">
+                    <input type="text" id="shelf-manual-author" placeholder="Author">
+                    <input type="number" id="shelf-manual-year" placeholder="Year published" min="1900" max="2030">
+                    <button type="button" class="shelf-manual-submit" id="shelf-manual-submit">Add to Shelf</button>
+                </div>
+                <div class="shelf-books" id="shelf-books"></div>
+                <div class="shelf-health" id="shelf-health" style="display:none;"></div>
+                <div class="shelf-protip">ℹ️ Add 3 or more titles to unlock your shelf assessment and earn XP.</div>
+            </div>
+        </div>
+
+        {% endif %}
+
     </div>
 
     <!-- Knowledge base drawer (slides in from the right) -->
@@ -683,6 +986,90 @@
     </div>
     {% endif %}
 
+    {% if module_info.order == 7 %}<div class="m7-right-col">
+    <!-- Publisher Eyebrow Raise Meter -->
+    <div class="publisher-widget pub-state-0" id="publisher-widget">
+        <div class="pub-widget-header">
+            <h4>🧐 Publisher Reaction</h4>
+            <span class="pub-reach-badge">Reach: <strong id="pub-reach-num">0</strong></span>
+        </div>
+        <div class="pub-body">
+            <div class="pub-svg-wrap">
+                <svg id="pub-char-svg" viewBox="0 0 100 130" width="70" height="91" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Blazer body -->
+                    <path d="M28,62 L20,115 L80,115 L72,62 Z" fill="#2B4C7E"/>
+                    <!-- Shirt -->
+                    <path d="M42,62 L40,95 L60,95 L58,62 Z" fill="#f0f0f0"/>
+                    <!-- Lapels -->
+                    <path d="M42,62 L28,62 L33,82 Z" fill="#1e3a6e"/>
+                    <path d="M58,62 L72,62 L67,82 Z" fill="#1e3a6e"/>
+                    <!-- Default arms -->
+                    <g id="pub-arms-0" style="display:none">
+                        <line x1="28" y1="70" x2="68" y2="82" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                        <line x1="72" y1="70" x2="32" y2="82" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                    </g>
+                    <g id="pub-arms-1">
+                        <line x1="28" y1="70" x2="16" y2="96" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                        <line x1="72" y1="70" x2="84" y2="96" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                    </g>
+                    <g id="pub-arms-4" style="display:none">
+                        <line x1="28" y1="68" x2="12" y2="52" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                        <line x1="72" y1="68" x2="88" y2="52" stroke="#2B4C7E" stroke-width="8" stroke-linecap="round"/>
+                    </g>
+                    <!-- Neck -->
+                    <rect x="44" y="52" width="12" height="12" rx="4" fill="#f5d5a8"/>
+                    <!-- Head -->
+                    <circle cx="50" cy="38" r="20" fill="#f5d5a8"/>
+                    <!-- Hair -->
+                    <path d="M31,34 Q32,17 50,16 Q68,17 69,34 Q64,20 50,20 Q36,20 31,34 Z" fill="#3d2c18"/>
+                    <!-- Face expressions — one active at a time -->
+                    <!-- State 0: skeptical -->
+                    <g id="pub-face-0">
+                        <line x1="37" y1="31" x2="44" y2="33" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="56" y1="33" x2="63" y2="31" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="41" cy="37" r="3" fill="#1a1a2e"/>
+                        <circle cx="59" cy="37" r="3" fill="#1a1a2e"/>
+                        <path d="M41,47 Q50,44 59,47" stroke="#c0805f" stroke-width="2" fill="none" stroke-linecap="round"/>
+                    </g>
+                    <!-- State 1: neutral -->
+                    <g id="pub-face-1" style="display:none">
+                        <line x1="37" y1="30" x2="44" y2="30" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="56" y1="30" x2="63" y2="30" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="41" cy="37" r="3" fill="#1a1a2e"/>
+                        <circle cx="59" cy="37" r="3" fill="#1a1a2e"/>
+                        <line x1="43" y1="46" x2="57" y2="46" stroke="#c0805f" stroke-width="2" stroke-linecap="round"/>
+                    </g>
+                    <!-- State 2: leaning forward, slight smile -->
+                    <g id="pub-face-2" style="display:none">
+                        <line x1="37" y1="30" x2="44" y2="29" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="56" y1="29" x2="63" y2="30" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="41" cy="37" r="3" fill="#1a1a2e"/>
+                        <circle cx="59" cy="37" r="3" fill="#1a1a2e"/>
+                        <path d="M43,46 Q50,50 57,46" stroke="#c0805f" stroke-width="2" fill="none" stroke-linecap="round"/>
+                    </g>
+                    <!-- State 3: one eyebrow raised -->
+                    <g id="pub-face-3" style="display:none">
+                        <path d="M36,28 Q40,24 45,28" stroke="#3d2c18" stroke-width="2" fill="none" stroke-linecap="round"/>
+                        <line x1="56" y1="30" x2="63" y2="30" stroke="#3d2c18" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="41" cy="37" r="3.5" fill="#1a1a2e"/>
+                        <circle cx="59" cy="37" r="3.5" fill="#1a1a2e"/>
+                        <path d="M42,46 Q50,51 58,46" stroke="#c0805f" stroke-width="2" fill="none" stroke-linecap="round"/>
+                    </g>
+                    <!-- State 4: both brows raised, big smile -->
+                    <g id="pub-face-4" style="display:none">
+                        <path d="M35,27 Q40,22 46,27" stroke="#3d2c18" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                        <path d="M54,27 Q60,22 65,27" stroke="#3d2c18" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                        <circle cx="41" cy="37" r="4" fill="#1a1a2e"/>
+                        <circle cx="59" cy="37" r="4" fill="#1a1a2e"/>
+                        <path d="M40,46 Q50,55 60,46" stroke="#c0805f" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                    </g>
+                </svg>
+            </div>
+            <div class="pub-caption" id="pub-caption">"Let's see what you've got..."</div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- RIGHT: Brainstorm chat sidebar -->
     <div class="chat-sidebar">
         <div class="chat-sidebar-header">
@@ -721,6 +1108,7 @@
             </button>
         </div>
     </div>
+    {% if module_info.order == 7 %}</div>{% endif %}
 
 </div>
 {% endblock %}
@@ -1214,75 +1602,593 @@
 </script>
 
 {% if module_info.order == 7 %}
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
 <script>
 (function() {
-    var btn = document.getElementById('btn-insert-platform');
-    if (!btn) return;
-    btn.addEventListener('click', function() {
-        function val(id) {
-            var el = document.getElementById(id);
-            return el ? (parseInt(el.value, 10) || 0) : 0;
-        }
-        function fmt(n) { return n.toLocaleString(); }
+'use strict';
+/* ═══════════════════════════════════════════════════════
+   Module 7 Gamification — XP, Platform Builder,
+   Publisher Character, Pitch Challenge, Comp Titles
+   ═══════════════════════════════════════════════════════ */
+const ENROLLMENT_ID = {{ enrollment.id }};
+const XP_MAX = {{ marketing_xp_max }};
 
-        var email     = val('pf-email');
-        var instagram = val('pf-instagram');
-        var tiktok    = val('pf-tiktok');
-        var linkedin  = val('pf-linkedin');
-        var facebook  = val('pf-facebook');
-        var youtube   = val('pf-youtube');
-        var podcast   = val('pf-podcast');
-        var website   = val('pf-website');
-        var speaking  = val('pf-speaking');
-        var audience  = val('pf-audience');
+/* ── Platform channel definitions ─────────────────────── */
+const PLATFORM_CHANNELS = [
+    {id:'linkedin',   name:'LinkedIn',        icon:'💼'},
+    {id:'instagram',  name:'Instagram',       icon:'📸'},
+    {id:'tiktok',     name:'TikTok',          icon:'🎵'},
+    {id:'youtube',    name:'YouTube',         icon:'▶️'},
+    {id:'newsletter', name:'Newsletter',      icon:'✉️'},
+    {id:'podcast',    name:'Podcast',         icon:'🎙️'},
+    {id:'speaking',   name:'Public Speaking', icon:'🎤'},
+    {id:'facebook',   name:'Facebook',        icon:'👥'},
+    {id:'media',      name:'Media',           icon:'📰'},
+];
 
-        var lines = ['Your Current Platform', ''];
-        lines.push('Email list: ' + fmt(email) + ' subscribers');
-        lines.push('Instagram: ' + fmt(instagram) + ' followers');
-        lines.push('TikTok: ' + fmt(tiktok) + ' followers');
-        lines.push('LinkedIn: ' + fmt(linkedin) + ' connections/followers');
-        lines.push('Facebook: ' + fmt(facebook) + ' followers');
-        if (youtube > 0) lines.push('YouTube: ' + fmt(youtube) + ' subscribers');
-        if (podcast > 0) lines.push('Podcast: ' + fmt(podcast) + ' monthly listeners');
-        lines.push('Website: ' + fmt(website) + ' monthly visitors');
-        lines.push('Speaking: ' + fmt(speaking) + ' events per year' + (audience > 0 ? ', typical audience ' + fmt(audience) : ''));
+/* ── State ─────────────────────────────────────────────── */
+let activePlatforms = [];   // [{id, name, icon, audience}]
+let compTitles = [];        // [{id, title, author, year, cover}]
+let currentXP = {{ (marketing_data.xp_total if marketing_data else 0) }};
+let savedPitchFeedback = {{ (marketing_data.pitch_feedback_json if marketing_data and marketing_data.pitch_feedback_json else 'null') | safe }};
 
-        var block = lines.join('\n');
-        var ta = document.getElementById('content-textarea');
-        if (!ta) return;
+/* ─────────────────────────────────────────────────────────
+   1. XP SYSTEM
+   ───────────────────────────────────────────────────────── */
+function setXP(newXP) {
+    const pct = Math.min(newXP / XP_MAX * 100, 100);
+    const fill = document.getElementById('xp-fill');
+    const display = document.getElementById('xp-total-display');
+    if (fill)    fill.style.width = pct + '%';
+    if (display) display.textContent = newXP.toLocaleString() + ' XP';
+    currentXP = newXP;
+    document.querySelectorAll('.xp-milestone-dot').forEach(function(dot) {
+        if (parseInt(dot.dataset.xp) <= newXP) dot.classList.add('earned');
+    });
+}
 
-        // Prepend to textarea if empty, else append after existing content
-        if (ta.value.trim() === '') {
-            ta.value = block + '\n\n';
-        } else {
-            // Replace existing platform block if present, otherwise append
-            var marker = 'Your Current Platform';
-            var existing = ta.value;
-            var idx = existing.indexOf(marker);
-            if (idx !== -1) {
-                // Find end of platform block (two newlines or end of string)
-                var end = existing.indexOf('\n\n', idx);
-                ta.value = existing.slice(0, idx) + block + (end !== -1 ? existing.slice(end) : '');
-            } else {
-                ta.value = existing.trimEnd() + '\n\n' + block + '\n\n';
+function showXPToast(xpGained, badge) {
+    let toast = document.getElementById('xp-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'xp-toast';
+        toast.className = 'xp-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = badge
+        ? '🏅 Badge unlocked: ' + badge.name + ' ' + badge.badge
+        : '+' + xpGained + ' XP earned!';
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function() { toast.classList.remove('show'); }, 3000);
+}
+
+function saveToServer(type, data, callback) {
+    fetch('/api/marketing/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enrollment_id: ENROLLMENT_ID, type: type, data: data}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            const prev = currentXP;
+            setXP(d.xp_total);
+            if (d.xp_gained > 0) showXPToast(d.xp_gained, d.unlocked_badge);
+            if (d.unlocked_badge && typeof confetti !== 'undefined') {
+                confetti({particleCount:50, spread:60, origin:{x:0.5,y:0.5}});
             }
         }
+        if (callback) callback(d);
+    })
+    .catch(function(e) { console.warn('Marketing save error:', e); });
+}
 
-        // Trigger autosave
+/* ─────────────────────────────────────────────────────────
+   2. PLATFORM BUILDER
+   ───────────────────────────────────────────────────────── */
+const availGrid  = document.getElementById('pb-available-grid');
+const activeList = document.getElementById('pb-active-list');
+const emptyHint  = document.getElementById('pb-empty-hint');
+const pbSummary  = document.getElementById('pb-summary');
+const activeZone = document.getElementById('pb-active');
+
+function renderAvailableChannels() {
+    if (!availGrid) return;
+    availGrid.innerHTML = '';
+    PLATFORM_CHANNELS.filter(function(c) {
+        return !activePlatforms.find(function(p) { return p.id === c.id; });
+    }).forEach(function(c) {
+        const tile = document.createElement('div');
+        tile.className = 'pb-tile';
+        tile.draggable = true;
+        tile.dataset.id = c.id;
+        tile.innerHTML = '<span class="pb-tile-icon">' + c.icon + '</span>' + c.name;
+        tile.addEventListener('dragstart', function(e) {
+            e.dataTransfer.setData('pb-channel-id', c.id);
+            tile.classList.add('dragging');
+        });
+        tile.addEventListener('dragend', function() { tile.classList.remove('dragging'); });
+        tile.addEventListener('click', function() { addPlatform(c.id); });
+        availGrid.appendChild(tile);
+    });
+}
+
+function renderActivePlatforms() {
+    if (!activeList) return;
+    if (activePlatforms.length === 0) {
+        activeList.innerHTML = '';
+        if (emptyHint) activeList.appendChild(emptyHint);
+        if (pbSummary) pbSummary.style.display = 'none';
+        return;
+    }
+    if (emptyHint) emptyHint.remove();
+    activeList.innerHTML = '';
+    activePlatforms.forEach(function(p) {
+        const item = document.createElement('div');
+        item.className = 'pb-active-item';
+        item.dataset.id = p.id;
+        const ch = PLATFORM_CHANNELS.find(function(c) { return c.id === p.id; });
+        item.innerHTML = [
+            '<span class="pb-tile-icon">' + (ch ? ch.icon : '📊') + '</span>',
+            '<span class="pb-active-name">' + p.name + '</span>',
+            '<input type="number" class="pb-audience-input" min="0" placeholder="Audience size"',
+            ' value="' + (p.audience || '') + '" data-id="' + p.id + '">',
+            '<button class="pb-remove" data-id="' + p.id + '" title="Remove">✕</button>',
+        ].join('');
+        item.querySelector('.pb-remove').addEventListener('click', function() {
+            removePlatform(p.id);
+        });
+        const inp = item.querySelector('.pb-audience-input');
+        inp.addEventListener('input', function() {
+            const ap = activePlatforms.find(function(x) { return x.id === p.id; });
+            if (ap) ap.audience = parseInt(this.value) || 0;
+            updatePublisher();
+            pbSummaryUpdate();
+            clearTimeout(inp._t);
+            inp._t = setTimeout(function() { savePlatforms(); }, 800);
+        });
+        activeList.appendChild(item);
+    });
+    pbSummaryUpdate();
+    if (pbSummary) pbSummary.style.display = '';
+}
+
+function pbSummaryUpdate() {
+    if (!pbSummary) return;
+    const total = activePlatforms.reduce(function(s, p) { return s + (p.audience || 0); }, 0);
+    const n = activePlatforms.length;
+    pbSummary.textContent = 'Your platform reaches an estimated audience of '
+        + total.toLocaleString() + ' across ' + n + ' channel' + (n !== 1 ? 's' : '') + '.';
+}
+
+function addPlatform(id) {
+    if (activePlatforms.find(function(p) { return p.id === id; })) return;
+    const ch = PLATFORM_CHANNELS.find(function(c) { return c.id === id; });
+    if (!ch) return;
+    activePlatforms.push({id: ch.id, name: ch.name, icon: ch.icon, audience: 0});
+    renderAvailableChannels();
+    renderActivePlatforms();
+    savePlatforms();
+}
+
+function removePlatform(id) {
+    activePlatforms = activePlatforms.filter(function(p) { return p.id !== id; });
+    renderAvailableChannels();
+    renderActivePlatforms();
+    updatePublisher();
+    savePlatforms();
+}
+
+function savePlatforms() {
+    saveToServer('platforms', {platforms: activePlatforms});
+}
+
+/* Drag-and-drop on the active zone */
+if (activeZone) {
+    activeZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        activeZone.classList.add('drag-over');
+    });
+    activeZone.addEventListener('dragleave', function() {
+        activeZone.classList.remove('drag-over');
+    });
+    activeZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        activeZone.classList.remove('drag-over');
+        const id = e.dataTransfer.getData('pb-channel-id');
+        if (id) addPlatform(id);
+    });
+}
+
+/* Insert Numbers into Draft button */
+const insertBtn = document.getElementById('btn-insert-platform');
+if (insertBtn) {
+    insertBtn.addEventListener('click', function() {
+        const ta = document.getElementById('content-textarea');
+        if (!ta || activePlatforms.length === 0) return;
+        const lines = ['Your Current Platform', ''];
+        activePlatforms.forEach(function(p) {
+            if (p.audience && p.audience > 0)
+                lines.push(p.name + ': ' + p.audience.toLocaleString());
+        });
+        const block = lines.join('\n');
+        const marker = 'Your Current Platform';
+        const idx = ta.value.indexOf(marker);
+        if (ta.value.trim() === '') {
+            ta.value = block + '\n\n';
+        } else if (idx !== -1) {
+            const end = ta.value.indexOf('\n\n', idx);
+            ta.value = ta.value.slice(0, idx) + block + (end !== -1 ? ta.value.slice(end) : '');
+        } else {
+            ta.value = ta.value.trimEnd() + '\n\n' + block + '\n\n';
+        }
         ta.dispatchEvent(new Event('input'));
         ta.focus();
-
-        // Visual confirmation
-        btn.textContent = '✓ Numbers inserted';
-        btn.style.color = '#16a34a';
-        btn.style.borderColor = '#86efac';
-        setTimeout(function() {
-            btn.textContent = 'Insert Numbers into Draft →';
-            btn.style.color = '';
-            btn.style.borderColor = '';
-        }, 2500);
+        insertBtn.textContent = '✓ Inserted';
+        setTimeout(function() { insertBtn.textContent = 'Insert Numbers into Draft →'; }, 2500);
     });
+}
+
+/* Restore saved platforms from server */
+(function restorePlatforms() {
+    {% if marketing_data and marketing_data.platforms_json %}
+    try {
+        const saved = {{ marketing_data.platforms_json | safe }};
+        if (Array.isArray(saved) && saved.length) {
+            activePlatforms = saved;
+            renderAvailableChannels();
+            renderActivePlatforms();
+            updatePublisher();
+            return;
+        }
+    } catch(e) {}
+    {% endif %}
+    renderAvailableChannels();
 })();
+
+/* ─────────────────────────────────────────────────────────
+   3. PUBLISHER EYEBROW RAISE METER
+   ───────────────────────────────────────────────────────── */
+const PUB_STATES = [
+    {min: 0,     max: 0,     label: '"Let\'s see what you\'ve got..."'},
+    {min: 1,     max: 999,   label: '"A start. Keep going."'},
+    {min: 1000,  max: 4999,  label: '"Now you have my attention."'},
+    {min: 5000,  max: 19999, label: '"This is promising."'},
+    {min: 20000, max: Infinity, label: '"Now we\'re talking. Publishers will notice this."'},
+];
+
+let pubStateTimeout = null;
+
+function updatePublisher() {
+    clearTimeout(pubStateTimeout);
+    pubStateTimeout = setTimeout(function() {
+        const total = activePlatforms.reduce(function(s, p) { return s + (p.audience || 0); }, 0);
+        const widget = document.getElementById('publisher-widget');
+        const caption = document.getElementById('pub-caption');
+        const reachNum = document.getElementById('pub-reach-num');
+        if (!widget) return;
+        if (reachNum) reachNum.textContent = total.toLocaleString();
+
+        let stateIdx = 0;
+        PUB_STATES.forEach(function(s, i) {
+            if (total >= s.min && total <= s.max) stateIdx = i;
+        });
+
+        // Update CSS class for body posture
+        for (let i = 0; i < 5; i++) widget.classList.remove('pub-state-' + i);
+        widget.classList.add('pub-state-' + stateIdx);
+
+        // Show correct face
+        for (let i = 0; i < 5; i++) {
+            const face = document.getElementById('pub-face-' + i);
+            if (face) face.style.display = (i === stateIdx) ? '' : 'none';
+        }
+        // Show correct arms
+        ['pub-arms-0','pub-arms-1','pub-arms-4'].forEach(function(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (id === 'pub-arms-0') el.style.display = stateIdx === 0 ? '' : 'none';
+            else if (id === 'pub-arms-4') el.style.display = stateIdx === 4 ? '' : 'none';
+            else el.style.display = (stateIdx >= 1 && stateIdx <= 3) ? '' : 'none';
+        });
+        if (caption) caption.textContent = PUB_STATES[stateIdx].label;
+    }, 500);
+}
+
+/* ─────────────────────────────────────────────────────────
+   4. 60-SECOND PITCH CHALLENGE
+   ───────────────────────────────────────────────────────── */
+const pitchStartBtn  = document.getElementById('pitch-start-btn');
+const pitchActive    = document.getElementById('pitch-active');
+const pitchTimer     = document.getElementById('pitch-timer');
+const pitchTextarea  = document.getElementById('pitch-textarea');
+const pitchDoneBtn   = document.getElementById('pitch-done-btn');
+const pitchLoading   = document.getElementById('pitch-loading');
+const pitchFeedback  = document.getElementById('pitch-feedback');
+const pitchFreshState = document.getElementById('pitch-fresh-state');
+const pitchDoneState  = document.getElementById('pitch-done-state');
+const pitchRetakeBtn  = document.getElementById('pitch-retake-btn');
+let pitchInterval = null;
+let pitchSeconds = 60;
+
+function renderPitchFeedback(fb, container) {
+    if (!fb || !container) return;
+    container.innerHTML = '<div class="pitch-feedback-card">'
+        + '<h4>🎯 Pitch Feedback</h4>'
+        + '<ul>' + (fb.bullets || []).map(function(b) {
+            return '<li>' + b + '</li>';
+        }).join('') + '</ul>'
+        + '<p class="pitch-suggestion"><strong>💡 Make it punchier:</strong> ' + (fb.suggestion || '') + '</p>'
+        + '</div>';
+}
+
+if (pitchStartBtn) {
+    pitchStartBtn.closest('.pitch-start-zone').style.display = '';
+    pitchStartBtn.addEventListener('click', function() {
+        pitchStartBtn.closest('.pitch-start-zone').style.display = 'none';
+        if (pitchActive) pitchActive.style.display = '';
+        if (pitchTextarea) {
+            pitchTextarea.disabled = false;
+            pitchTextarea.value = '';
+            pitchTextarea.classList.add('running');
+            pitchTextarea.focus();
+        }
+        pitchSeconds = 60;
+        if (pitchTimer) pitchTimer.textContent = '60';
+        pitchInterval = setInterval(function() {
+            pitchSeconds--;
+            if (pitchTimer) {
+                pitchTimer.textContent = pitchSeconds;
+                if (pitchSeconds <= 10) pitchTimer.classList.add('urgent');
+            }
+            if (pitchSeconds <= 0) submitPitch();
+        }, 1000);
+    });
+}
+
+function submitPitch() {
+    clearInterval(pitchInterval);
+    if (pitchTimer) { pitchTimer.textContent = '0'; pitchTimer.classList.remove('urgent'); }
+    if (pitchTextarea) { pitchTextarea.disabled = true; pitchTextarea.classList.remove('running'); }
+    if (pitchDoneBtn) pitchDoneBtn.style.display = 'none';
+    if (pitchLoading) pitchLoading.style.display = '';
+    const text = pitchTextarea ? pitchTextarea.value.trim() : '';
+    if (!text) { if (pitchLoading) pitchLoading.style.display = 'none'; return; }
+
+    fetch('/api/marketing/pitch-eval', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enrollment_id: ENROLLMENT_ID, pitch_text: text}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (pitchLoading) pitchLoading.style.display = 'none';
+        if (d.success) {
+            setXP(d.xp_total);
+            if (d.xp_gained > 0) showXPToast(d.xp_gained, d.unlocked_badge);
+            // Show done state
+            if (pitchFreshState) pitchFreshState.style.display = 'none';
+            if (pitchDoneState) pitchDoneState.style.display = '';
+            const savedText = pitchDoneState.querySelector('#pitch-saved-text');
+            if (savedText) savedText.textContent = text;
+            const fbDisplay = document.getElementById('pitch-feedback-display');
+            renderPitchFeedback(d.feedback, fbDisplay);
+        } else if (pitchFeedback) {
+            pitchFeedback.style.display = '';
+            pitchFeedback.innerHTML = '<p style="color:#dc2626;font-size:0.875rem;">Something went wrong. Your pitch was saved.</p>';
+        }
+    })
+    .catch(function() {
+        if (pitchLoading) pitchLoading.style.display = 'none';
+    });
+}
+
+if (pitchDoneBtn) pitchDoneBtn.addEventListener('click', submitPitch);
+
+if (pitchRetakeBtn) {
+    pitchRetakeBtn.addEventListener('click', function() {
+        if (pitchDoneState) pitchDoneState.style.display = 'none';
+        if (pitchFreshState) pitchFreshState.style.display = '';
+        if (pitchActive) pitchActive.style.display = 'none';
+        if (pitchStartBtn) pitchStartBtn.closest('.pitch-start-zone').style.display = '';
+        if (pitchTimer) { pitchTimer.textContent = '60'; pitchTimer.classList.remove('urgent'); }
+        clearInterval(pitchInterval);
+    });
+}
+
+// Restore saved pitch feedback on load
+if (savedPitchFeedback && pitchFreshState && pitchDoneState) {
+    pitchFreshState.style.display = 'none';
+    pitchDoneState.style.display = '';
+    const fbDisplay = document.getElementById('pitch-feedback-display');
+    renderPitchFeedback(savedPitchFeedback, fbDisplay);
+}
+
+/* ─────────────────────────────────────────────────────────
+   5. COMPARABLE TITLES CARD SHELF
+   ───────────────────────────────────────────────────────── */
+const shelfSearch     = document.getElementById('shelf-search');
+const shelfResults    = document.getElementById('shelf-results');
+const shelfBooks      = document.getElementById('shelf-books');
+const shelfHealth     = document.getElementById('shelf-health');
+const shelfManualToggle = document.getElementById('shelf-manual-toggle');
+const shelfManualForm   = document.getElementById('shelf-manual-form');
+const shelfManualSubmit = document.getElementById('shelf-manual-submit');
+let searchTimer = null;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function bookAgeClass(year) {
+    if (!year) return '';
+    const age = CURRENT_YEAR - year;
+    if (age <= 3) return 'fresh';
+    if (age <= 5) return 'aging';
+    return 'old';
+}
+
+function bookAgeLabel(year) {
+    if (!year) return '';
+    const age = CURRENT_YEAR - year;
+    if (age <= 3) return '✅ Recent';
+    if (age <= 5) return '🟡 Getting older';
+    return '🔴 Too old';
+}
+
+function renderShelf() {
+    if (!shelfBooks) return;
+    shelfBooks.innerHTML = '';
+    compTitles.forEach(function(b) {
+        const cls = bookAgeClass(b.year);
+        const card = document.createElement('div');
+        card.className = 'book-card' + (cls ? ' ' + cls : '');
+        card.dataset.id = b.id;
+        card.innerHTML = [
+            '<img class="book-card-cover" src="' + (b.cover || '') + '"',
+            ' onerror="this.src=\'data:image/svg+xml,<svg xmlns=\\\'http://www.w3.org/2000/svg\\\' width=\\\'80\\\' height=\\\'110\\\'><rect width=\\\'80\\\' height=\\\'110\\\' fill=\\\'%23e5e7eb\\\'/><text x=\\\'40\\\' y=\\\'60\\\' text-anchor=\\\'middle\\\' fill=\\\'%239ca3af\\\' font-size=\\\'24\\\'>📚</text></svg>\'"',
+            ' alt="' + (b.title || '').replace(/"/g, '') + '">',
+            '<div class="book-card-label">' + bookAgeLabel(b.year) + '</div>',
+            '<div class="book-card-title">' + (b.title || '') + '</div>',
+            '<button class="book-card-remove" data-id="' + b.id + '" title="Remove">✕</button>',
+        ].join('');
+        card.querySelector('.book-card-remove').addEventListener('click', function(e) {
+            e.stopPropagation();
+            compTitles = compTitles.filter(function(x) { return x.id !== b.id; });
+            renderShelf();
+            renderShelfHealth();
+            saveComps();
+        });
+        shelfBooks.appendChild(card);
+    });
+    renderShelfHealth();
+}
+
+function renderShelfHealth() {
+    if (!shelfHealth) return;
+    if (compTitles.length < 2) { shelfHealth.style.display = 'none'; return; }
+    shelfHealth.style.display = '';
+    const items = [];
+    const recentCount = compTitles.filter(function(b) { return b.year && (CURRENT_YEAR - b.year) <= 3; }).length;
+    const oldCount = compTitles.filter(function(b) { return b.year && (CURRENT_YEAR - b.year) > 5; }).length;
+    if (recentCount > 0 && oldCount < compTitles.length)
+        items.push({icon:'✅', text:'Good variety of publication dates'});
+    if (oldCount === compTitles.length && compTitles.length >= 2)
+        items.push({icon:'⚠️', text:'All titles are older — try to include at least one from the last 3 years'});
+    const authors = [...new Set(compTitles.map(function(b) { return b.author; }))];
+    if (authors.length === 1 && compTitles.length >= 2)
+        items.push({icon:'⚠️', text:'All titles from the same author — try adding more variety'});
+    if (items.length === 0) items.push({icon:'✅', text:'Shelf looks well-positioned'});
+    shelfHealth.innerHTML = items.map(function(i) {
+        return '<div class="shelf-health-item"><span class="sh-icon">' + i.icon + '</span>' + i.text + '</div>';
+    }).join('');
+}
+
+function addBookToShelf(book) {
+    if (compTitles.find(function(b) { return b.id === book.id; })) return;
+    if (compTitles.length >= 10) return;
+    compTitles.push(book);
+    renderShelf();
+    saveComps();
+    if (shelfResults) { shelfResults.innerHTML = ''; shelfResults.classList.remove('open'); }
+    if (shelfSearch) shelfSearch.value = '';
+}
+
+function saveComps() {
+    saveToServer('comps', {titles: compTitles});
+}
+
+// Search handler
+if (shelfSearch) {
+    shelfSearch.addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        const q = shelfSearch.value.trim();
+        if (q.length < 2) {
+            if (shelfResults) { shelfResults.innerHTML = ''; shelfResults.classList.remove('open'); }
+            return;
+        }
+        searchTimer = setTimeout(function() {
+            if (shelfResults) {
+                shelfResults.innerHTML = '<div class="shelf-result-item" style="color:var(--gray-400);">Searching…</div>';
+                shelfResults.classList.add('open');
+            }
+            fetch('/api/books/search?q=' + encodeURIComponent(q))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!shelfResults) return;
+                if (d.fallback || !d.items || d.items.length === 0) {
+                    shelfResults.innerHTML = '<div class="shelf-result-item" style="color:var(--gray-400);">No results. Try adding manually.</div>';
+                    return;
+                }
+                shelfResults.innerHTML = '';
+                d.items.forEach(function(b) {
+                    const el = document.createElement('div');
+                    el.className = 'shelf-result-item';
+                    el.innerHTML = [
+                        '<img class="shelf-result-cover" src="' + (b.cover || '') + '"',
+                        ' onerror="this.style.visibility=\'hidden\'" alt="">',
+                        '<div class="shelf-result-info">',
+                        '<div class="shelf-result-title">' + (b.title || '') + '</div>',
+                        '<div class="shelf-result-meta">' + (b.author || 'Unknown') + (b.year ? ' · ' + b.year : '') + '</div>',
+                        '</div>',
+                    ].join('');
+                    el.addEventListener('click', function() { addBookToShelf(b); });
+                    shelfResults.appendChild(el);
+                });
+                shelfResults.classList.add('open');
+            })
+            .catch(function() {
+                if (shelfResults) shelfResults.innerHTML = '<div class="shelf-result-item" style="color:var(--gray-400);">Search unavailable. Add manually.</div>';
+            });
+        }, 400);
+    });
+    document.addEventListener('click', function(e) {
+        if (!shelfSearch.contains(e.target) && shelfResults && !shelfResults.contains(e.target)) {
+            shelfResults.classList.remove('open');
+        }
+    });
+}
+
+// Manual add toggle
+if (shelfManualToggle && shelfManualForm) {
+    shelfManualToggle.addEventListener('click', function() {
+        shelfManualForm.classList.toggle('open');
+    });
+}
+if (shelfManualSubmit) {
+    shelfManualSubmit.addEventListener('click', function() {
+        const title = (document.getElementById('shelf-manual-title').value || '').trim();
+        if (!title) return;
+        const author = (document.getElementById('shelf-manual-author').value || '').trim();
+        const year = parseInt(document.getElementById('shelf-manual-year').value) || null;
+        addBookToShelf({
+            id: 'manual_' + Date.now(),
+            title: title, author: author, year: year, cover: '',
+        });
+        document.getElementById('shelf-manual-title').value = '';
+        document.getElementById('shelf-manual-author').value = '';
+        document.getElementById('shelf-manual-year').value = '';
+        if (shelfManualForm) shelfManualForm.classList.remove('open');
+    });
+}
+
+// Restore saved comp titles
+(function restoreComps() {
+    {% if marketing_data and marketing_data.comp_titles_json %}
+    try {
+        const saved = {{ marketing_data.comp_titles_json | safe }};
+        if (Array.isArray(saved) && saved.length) {
+            compTitles = saved;
+            renderShelf();
+            return;
+        }
+    } catch(e) {}
+    {% endif %}
+})();
+
+/* init */
+setXP(currentXP);
+
+})(); // end IIFE
 </script>
 {% endif %}
+
 {% endblock %}

@@ -11,6 +11,7 @@ import hashlib
 import smtplib
 import traceback
 import threading
+import requests as http_requests
 from io import BytesIO
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
@@ -956,6 +957,59 @@ class SocialStrategy(db.Model):
     author      = db.relationship('Author', backref=db.backref('social_strategies', lazy='dynamic'))
     one_pager   = db.relationship('OnePagerSubmission',
                                    backref=db.backref('social_strategy', uselist=False))
+
+
+class MarketingModuleData(db.Model):
+    """Gamified marketing module state — XP, platforms, pitch, comp titles"""
+    __tablename__ = 'marketing_module_data'
+    id             = db.Column(db.Integer, primary_key=True)
+    enrollment_id  = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'),
+                               unique=True, nullable=False)
+    xp_total           = db.Column(db.Integer, default=0)
+    xp_actions_json    = db.Column(db.Text, default='{}')  # {action_key: true}
+    platforms_json     = db.Column(db.Text)   # [{id, name, icon, audience}]
+    pitch_text         = db.Column(db.Text)
+    pitch_feedback_json = db.Column(db.Text)  # AI feedback JSON
+    comp_titles_json   = db.Column(db.Text)   # [{id, title, author, year, cover}]
+    updated_at         = db.Column(db.DateTime, default=datetime.utcnow)
+    enrollment = db.relationship('CoachingEnrollment',
+                                 backref=db.backref('marketing_data', uselist=False))
+
+
+MARKETING_XP_AUDIENCE = {
+    'newsletter': 150, 'podcast': 100, 'speaking': 100,
+}
+MARKETING_XP_AUDIENCE_DEFAULT = 75
+
+MARKETING_XP_ACTIONS = {
+    'platform_builder': 300,
+    'comp_titles': 250,
+    'pitch_challenge': 200,
+}
+
+MARKETING_XP_MAX = 1500
+MARKETING_XP_MILESTONES = [
+    (300,  '🏗️', 'Platform Builder'),
+    (700,  '👥', 'Audience Aware'),
+    (1100, '📣', 'Getting Out There'),
+    (1500, '🚀', 'Launch Ready'),
+]
+
+
+def _get_or_create_marketing_data(enrollment_id):
+    md = MarketingModuleData.query.filter_by(enrollment_id=enrollment_id).first()
+    if not md:
+        md = MarketingModuleData(enrollment_id=enrollment_id, xp_total=0, xp_actions_json='{}')
+        db.session.add(md)
+        db.session.flush()
+    return md
+
+
+def _marketing_check_badge(old_xp, new_xp):
+    for threshold, badge, name in MARKETING_XP_MILESTONES:
+        if old_xp < threshold <= new_xp:
+            return {'badge': badge, 'name': name, 'xp': threshold}
+    return None
 
 
 SOCIAL_FOLLOW_UP_STATUSES = [
@@ -3641,6 +3695,11 @@ def author_coaching_module(module_order):
         enrollment_id=enrollment.id, module_order=1).first()
     hook_content = (m1_content.content or '') if m1_content else ''
 
+    marketing_data = None
+    if module_order == 7:
+        marketing_data = MarketingModuleData.query.filter_by(
+            enrollment_id=enrollment.id).first()
+
     return render_template(
         'author_coaching_module.html',
         enrollment=enrollment,
@@ -3661,6 +3720,9 @@ def author_coaching_module(module_order):
                 KnowledgeBaseDocument.module_order == None
             )
         ).order_by(KnowledgeBaseDocument.uploaded_at.desc()).all(),
+        marketing_data=marketing_data,
+        marketing_xp_max=MARKETING_XP_MAX,
+        marketing_milestones=MARKETING_XP_MILESTONES,
     )
 
 
@@ -4052,6 +4114,160 @@ Be specific and credible. Avoid generic advice. Think like a smart literary agen
     except Exception as e:
         print(f"Research agent error: {e}")
         return jsonify({'success': False, 'error': 'Research agent encountered an error. Please try again.'})
+
+
+@app.route('/api/marketing/save', methods=['POST'])
+def api_marketing_save():
+    """Save marketing module state (platforms / comp titles / pitch) and award XP."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    enrollment_id = data.get('enrollment_id')
+    save_type = data.get('type')
+    payload = data.get('data', {})
+    enrollment = CoachingEnrollment.query.filter_by(
+        id=enrollment_id, author_id=current_user.id, status='active').first()
+    if not enrollment:
+        return jsonify({'error': 'Not found'}), 404
+
+    md = _get_or_create_marketing_data(enrollment_id)
+    actions = json.loads(md.xp_actions_json or '{}')
+    old_xp = md.xp_total or 0
+    xp_gained = 0
+
+    if save_type == 'platforms':
+        platforms = payload.get('platforms', [])
+        md.platforms_json = json.dumps(platforms)
+        if platforms and 'platform_builder' not in actions:
+            actions['platform_builder'] = True
+            xp_gained += MARKETING_XP_ACTIONS['platform_builder']
+        for p in platforms:
+            key = f"audience_{p['id']}"
+            if p.get('audience') and int(p.get('audience') or 0) > 0 and key not in actions:
+                actions[key] = True
+                xp_gained += MARKETING_XP_AUDIENCE.get(p['id'], MARKETING_XP_AUDIENCE_DEFAULT)
+
+    elif save_type == 'comps':
+        titles = payload.get('titles', [])
+        md.comp_titles_json = json.dumps(titles)
+        if len(titles) >= 3 and 'comp_titles' not in actions:
+            actions['comp_titles'] = True
+            xp_gained += MARKETING_XP_ACTIONS['comp_titles']
+
+    elif save_type == 'pitch':
+        md.pitch_text = payload.get('pitch_text', '')
+
+    md.xp_total = old_xp + xp_gained
+    md.xp_actions_json = json.dumps(actions)
+    md.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'xp_total': md.xp_total,
+        'xp_gained': xp_gained,
+        'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total),
+    })
+
+
+@app.route('/api/marketing/pitch-eval', methods=['POST'])
+def api_marketing_pitch_eval():
+    """AI evaluation of a 60-second spoken pitch."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    enrollment_id = data.get('enrollment_id')
+    pitch_text = (data.get('pitch_text') or '').strip()
+    if not pitch_text:
+        return jsonify({'error': 'No pitch text'}), 400
+    enrollment = CoachingEnrollment.query.filter_by(
+        id=enrollment_id, author_id=current_user.id, status='active').first()
+    if not enrollment:
+        return jsonify({'error': 'Not found'}), 404
+
+    try:
+        prompt = (
+            "You are a literary agent evaluating a 60-second verbal book pitch. "
+            "Evaluate on two dimensions only: (1) Clarity — can you immediately understand "
+            "what this book is about and who it's for? (2) Intrigue — does it make you want "
+            "to know more? Give 2 bullet points of specific, warm feedback and one concrete "
+            "suggestion to make it punchier. Do not comment on completeness — this is a pitch, "
+            "not a proposal.\n\nPitch: " + pitch_text +
+            "\n\nRespond ONLY with valid JSON: "
+            '{"bullets": ["point 1", "point 2"], "suggestion": "..."}'
+        )
+        resp = client.chat.completions.create(
+            model='gpt-4o-mini',
+            messages=[{'role': 'user', 'content': prompt}],
+            temperature=0.7, max_tokens=300,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith('```'):
+            raw = raw.split('```')[1]
+            if raw.startswith('json'): raw = raw[4:]
+        feedback = json.loads(raw)
+    except Exception as e:
+        print(f"Pitch eval error: {e}")
+        feedback = {
+            'bullets': ['Your pitch clearly communicates passion for the topic.',
+                        'The concept is accessible and easy to follow.'],
+            'suggestion': 'Try opening with the specific problem your reader faces before introducing the solution.',
+        }
+
+    md = _get_or_create_marketing_data(enrollment_id)
+    md.pitch_text = pitch_text
+    md.pitch_feedback_json = json.dumps(feedback)
+    actions = json.loads(md.xp_actions_json or '{}')
+    old_xp = md.xp_total or 0
+    xp_gained = 0
+    if 'pitch_challenge' not in actions:
+        actions['pitch_challenge'] = True
+        xp_gained = MARKETING_XP_ACTIONS['pitch_challenge']
+        md.xp_total = old_xp + xp_gained
+        md.xp_actions_json = json.dumps(actions)
+    md.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'feedback': feedback,
+        'xp_total': md.xp_total,
+        'xp_gained': xp_gained,
+        'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total) if xp_gained else None,
+    })
+
+
+@app.route('/api/books/search')
+def api_books_search():
+    """Proxy Google Books API for comparable titles search."""
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify({'items': []})
+    try:
+        resp = http_requests.get(
+            'https://www.googleapis.com/books/v1/volumes',
+            params={'q': q, 'maxResults': 8, 'printType': 'books'},
+            timeout=6,
+        )
+        raw = resp.json()
+        items = []
+        for v in raw.get('items', []):
+            vi = v.get('volumeInfo', {})
+            pub = vi.get('publishedDate', '')
+            year = int(pub[:4]) if pub and len(pub) >= 4 and pub[:4].isdigit() else None
+            il = vi.get('imageLinks', {})
+            cover = (il.get('thumbnail') or il.get('smallThumbnail') or '').replace('http://', 'https://')
+            items.append({
+                'id': v.get('id', ''),
+                'title': vi.get('title', ''),
+                'author': ', '.join(vi.get('authors', [])),
+                'year': year,
+                'cover': cover,
+            })
+        return jsonify({'items': items})
+    except Exception as e:
+        print(f"Books search error: {e}")
+        return jsonify({'items': [], 'fallback': True})
 
 
 @app.route('/api/coaching/save-continue', methods=['POST'])

@@ -964,7 +964,8 @@ class MarketingModuleData(db.Model):
     __tablename__ = 'marketing_module_data'
     id             = db.Column(db.Integer, primary_key=True)
     enrollment_id  = db.Column(db.Integer, db.ForeignKey('coaching_enrollment.id'),
-                               unique=True, nullable=False)
+                               unique=True, nullable=True)
+    author_id      = db.Column(db.Integer, db.ForeignKey('author.id'), nullable=True)
     xp_total           = db.Column(db.Integer, default=0)
     xp_actions_json    = db.Column(db.Text, default='{}')  # {action_key: true}
     platforms_json     = db.Column(db.Text)   # [{id, name, icon, audience}]
@@ -1000,6 +1001,19 @@ def _get_or_create_marketing_data(enrollment_id):
     md = MarketingModuleData.query.filter_by(enrollment_id=enrollment_id).first()
     if not md:
         md = MarketingModuleData(enrollment_id=enrollment_id, xp_total=0, xp_actions_json='{}')
+        db.session.add(md)
+        db.session.flush()
+    return md
+
+
+def _get_or_create_marketing_data_standalone(author_id):
+    """Get or create a standalone (no enrollment) MarketingModuleData for an author."""
+    md = (MarketingModuleData.query
+          .filter(MarketingModuleData.author_id == author_id,
+                  MarketingModuleData.enrollment_id.is_(None))
+          .first())
+    if not md:
+        md = MarketingModuleData(author_id=author_id, xp_total=0, xp_actions_json='{}')
         db.session.add(md)
         db.session.flush()
     return md
@@ -1953,7 +1967,6 @@ def send_author_notification(proposal):
 
     score_display = f"{proposal.overall_score:.0f}" if proposal.overall_score is not None else "N/A"
     summary = evaluation.get('executiveSummary', '') or evaluation.get('summary', 'See attached report for details.')
-    tier_desc = evaluation.get('tierDescription', '')
     app_url = APP_BASE_URL
 
     subject = f"Your Book Proposal Evaluation - {proposal.book_title}"
@@ -1972,9 +1985,8 @@ def send_author_notification(proposal):
             <p>Thank you for submitting your book proposal for <strong>"{proposal.book_title}"</strong> to Write It Great. Our AI-powered evaluation system has completed a comprehensive analysis of your proposal.</p>
 
             <div style="background: #f8f6f9; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                <div style="font-size: 48px; font-weight: bold; color: {'#2e7d32' if proposal.tier == 'A' else '#1976d2' if proposal.tier == 'B' else '#f57c00' if proposal.tier == 'C' else '#d32f2f'};">{proposal.tier or 'N/A'}-Tier</div>
-                <div style="font-size: 24px; color: #2D1B69; margin: 10px 0;">{score_display}/100</div>
-                <div style="color: #666; font-style: italic;">{tier_desc}</div>
+                <div style="font-size: 48px; font-weight: bold; color: #2D1B69;">{score_display}</div>
+                <div style="color: #666; font-size: 0.9rem; margin-top: 4px;">out of 100</div>
             </div>
 
             <h3 style="color: #2D1B69;">Executive Summary</h3>
@@ -2020,8 +2032,11 @@ def send_team_notification(proposal):
 
         score_display = f"{proposal.overall_score:.0f}" if proposal.overall_score is not None else "N/A"
         summary = evaluation.get('executiveSummary', '') or evaluation.get('summary', 'No summary')
+        ai_likelihood = evaluation.get('ai_likelihood', 0)
+        ai_signals = evaluation.get('ai_signals', [])
+        ai_penalty = evaluation.get('ai_penalty_applied', 0)
 
-        subject = f"[{proposal.tier or 'N/A'}-Tier] New Proposal: {proposal.book_title}"
+        subject = f"[Score: {score_display}] New Proposal: {proposal.book_title}"
 
         # Build score breakdown
         scores = evaluation.get('scores', {})
@@ -2036,6 +2051,21 @@ def send_team_notification(proposal):
             s = score_data.get('score', 0) if isinstance(score_data, dict) else score_data
             score_rows += f"<tr><td>{label}</td><td style='text-align:center;font-weight:bold;'>{int(float(s or 0))}/100</td></tr>"
 
+        # AI detection block for team email
+        if ai_likelihood >= 50:
+            ai_colour = '#b91c1c' if ai_likelihood >= 75 else '#d97706'
+            ai_signals_html = ''.join(f'<li>{s}</li>' for s in ai_signals)
+            ai_block = f"""
+            <div style="background: #fef2f2; border: 2px solid {ai_colour}; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <div style="font-size: 18px; font-weight: bold; color: {ai_colour};">⚠️ AI-Generated Content Detected — {ai_likelihood}% likelihood</div>
+                {f'<ul style="margin: 8px 0 0; padding-left: 20px; color: #7f1d1d;">{ai_signals_html}</ul>' if ai_signals else ''}
+                {f'<div style="margin-top: 8px; color: #7f1d1d; font-size: 0.9em;">Score penalty applied: −{ai_penalty} pts</div>' if ai_penalty else ''}
+            </div>"""
+        elif ai_likelihood > 0:
+            ai_block = f'<div style="color: #6B6B7B; font-size: 0.85em; margin: 8px 0;">AI detection: {ai_likelihood}% likelihood (no penalty)</div>'
+        else:
+            ai_block = ''
+
         html_content = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6;">
@@ -2045,11 +2075,9 @@ def send_team_notification(proposal):
             </div>
             <div style="padding: 20px;">
                 <div style="text-align: center; margin: 20px 0;">
-                    <span style="display: inline-block; padding: 10px 20px; font-size: 24px; font-weight: bold; border-radius: 5px; color: white; background: {'#2e7d32' if proposal.tier == 'A' else '#1976d2' if proposal.tier == 'B' else '#f57c00' if proposal.tier == 'C' else '#d32f2f'};">
-                        TIER {proposal.tier or 'N/A'}
-                    </span>
-                    <span style="font-size: 36px; font-weight: bold; color: #2D1B69; margin-left: 20px;">{score_display}/100</span>
+                    <span style="font-size: 36px; font-weight: bold; color: #2D1B69;">{score_display}/100</span>
                 </div>
+                {ai_block}
 
                 <h2>Submission Details</h2>
                 <table style="width: 100%; border-collapse: collapse;">
@@ -2085,6 +2113,42 @@ def send_team_notification(proposal):
         print(f"Team notification error: {e}")
         traceback.print_exc()
         return False
+
+
+# ============================================================================
+# AI CONTENT DETECTION
+# ============================================================================
+
+def _detect_ai_content(text: str) -> dict:
+    """Call GPT-4o-mini to estimate the probability that text was AI-generated.
+    Returns dict with 'likelihood' (0-100), 'signals' (list[str]), 'penalty' (float)."""
+    try:
+        sample = text[:6000]  # keep cost low
+        resp = openai.chat.completions.create(
+            model='gpt-4o-mini',
+            response_format={'type': 'json_object'},
+            messages=[
+                {'role': 'system', 'content': (
+                    'You are an expert at detecting AI-generated writing in book proposals. '
+                    'Analyse the text and return JSON with: '
+                    '"likelihood" (integer 0-100, where 100 = certainly AI-written), '
+                    '"signals" (array of up to 5 short strings describing specific AI tells you found). '
+                    'Be rigorous. Human writing has imperfections, personal anecdotes, and varied sentence rhythm.'
+                )},
+                {'role': 'user', 'content': f'Analyse this book proposal excerpt:\n\n{sample}'}
+            ],
+            temperature=0.2,
+            max_tokens=300,
+        )
+        data = json.loads(resp.choices[0].message.content)
+        likelihood = max(0, min(100, int(data.get('likelihood', 0))))
+        signals = data.get('signals', [])[:5]
+        # Apply a score penalty if AI likelihood > 50: linear from 0pts at 50% to -15pts at 100%
+        penalty = max(0.0, (likelihood - 50) / 50 * 15) if likelihood > 50 else 0.0
+        return {'likelihood': likelihood, 'signals': signals, 'penalty': round(penalty, 1)}
+    except Exception as e:
+        print(f'AI detection error (non-fatal): {e}')
+        return {'likelihood': 0, 'signals': [], 'penalty': 0.0}
 
 
 # ============================================================================
@@ -2128,6 +2192,20 @@ def process_evaluation_background(app_obj, submission_id, proposal_text, proposa
             # can access it from evaluation_json without touching the Proposal model.
             evaluation['platform_data'] = platform_data or {}
             evaluation['marketing_text'] = proposal.marketing_strategy or ''
+
+            # AI content detection — run on the raw proposal text
+            ai_result = _detect_ai_content(proposal_text)
+            evaluation['ai_likelihood'] = ai_result['likelihood']
+            evaluation['ai_signals'] = ai_result['signals']
+
+            # Apply score penalty for likely-AI content
+            if ai_result['penalty'] > 0:
+                raw_score = evaluation.get('total_score', evaluation.get('overall_score', 50))
+                penalised = max(0, float(raw_score) - ai_result['penalty'])
+                evaluation['total_score'] = penalised
+                evaluation['overall_score'] = penalised
+                evaluation['ai_penalty_applied'] = ai_result['penalty']
+                print(f"AI detection: {ai_result['likelihood']}% likelihood — penalty {ai_result['penalty']}pts applied")
 
             # Always recompute advance estimate using the current submission's platform data
             compute_advance_estimate(evaluation)
@@ -4123,14 +4201,18 @@ def api_marketing_save():
         return jsonify({'error': 'Unauthorized'}), 403
     data = request.get_json() or {}
     enrollment_id = data.get('enrollment_id')
+    standalone = data.get('standalone', False)
     save_type = data.get('type')
     payload = data.get('data', {})
-    enrollment = CoachingEnrollment.query.filter_by(
-        id=enrollment_id, author_id=current_user.id, status='active').first()
-    if not enrollment:
-        return jsonify({'error': 'Not found'}), 404
 
-    md = _get_or_create_marketing_data(enrollment_id)
+    if standalone or not enrollment_id:
+        md = _get_or_create_marketing_data_standalone(current_user.id)
+    else:
+        enrollment = CoachingEnrollment.query.filter_by(
+            id=enrollment_id, author_id=current_user.id, status='active').first()
+        if not enrollment:
+            return jsonify({'error': 'Not found'}), 404
+        md = _get_or_create_marketing_data(enrollment_id)
     actions = json.loads(md.xp_actions_json or '{}')
     old_xp = md.xp_total or 0
     xp_gained = 0
@@ -4177,13 +4259,18 @@ def api_marketing_pitch_eval():
         return jsonify({'error': 'Unauthorized'}), 403
     data = request.get_json() or {}
     enrollment_id = data.get('enrollment_id')
+    standalone = data.get('standalone', False)
     pitch_text = (data.get('pitch_text') or '').strip()
     if not pitch_text:
         return jsonify({'error': 'No pitch text'}), 400
-    enrollment = CoachingEnrollment.query.filter_by(
-        id=enrollment_id, author_id=current_user.id, status='active').first()
-    if not enrollment:
-        return jsonify({'error': 'Not found'}), 404
+
+    if standalone or not enrollment_id:
+        pass  # md resolved below
+    else:
+        enrollment = CoachingEnrollment.query.filter_by(
+            id=enrollment_id, author_id=current_user.id, status='active').first()
+        if not enrollment:
+            return jsonify({'error': 'Not found'}), 404
 
     try:
         prompt = (
@@ -4214,7 +4301,10 @@ def api_marketing_pitch_eval():
             'suggestion': 'Try opening with the specific problem your reader faces before introducing the solution.',
         }
 
-    md = _get_or_create_marketing_data(enrollment_id)
+    if standalone or not enrollment_id:
+        md = _get_or_create_marketing_data_standalone(current_user.id)
+    else:
+        md = _get_or_create_marketing_data(enrollment_id)
     md.pitch_text = pitch_text
     md.pitch_feedback_json = json.dumps(feedback)
     actions = json.loads(md.xp_actions_json or '{}')
@@ -4720,6 +4810,40 @@ def author_logout():
     logout_user()
     session.pop('user_type', None)
     return redirect(url_for('author_login'))
+
+
+@app.route('/author/marketing-platform')
+@author_login_required
+def author_marketing_platform():
+    """Standalone Marketing Platform Builder — accessible without coaching enrollment."""
+    md = (MarketingModuleData.query
+          .filter(MarketingModuleData.author_id == current_user.id,
+                  MarketingModuleData.enrollment_id.is_(None))
+          .first())
+
+    xp_now = md.xp_total if md else 0
+    xp_pct = min(100, round(xp_now / MARKETING_XP_MAX * 100))
+    platforms = json.loads(md.platforms_json) if md and md.platforms_json else []
+    comp_titles = json.loads(md.comp_titles_json) if md and md.comp_titles_json else []
+    pitch_text = md.pitch_text if md else ''
+    pitch_feedback = json.loads(md.pitch_feedback_json) if md and md.pitch_feedback_json else None
+
+    milestones = [{'xp': t, 'badge': b, 'name': n,
+                   'pct': round(t / MARKETING_XP_MAX * 100),
+                   'unlocked': xp_now >= t}
+                  for t, b, n in MARKETING_XP_MILESTONES]
+
+    return render_template(
+        'author_marketing_platform.html',
+        xp_now=xp_now,
+        xp_pct=xp_pct,
+        xp_max=MARKETING_XP_MAX,
+        milestones=milestones,
+        platforms=platforms,
+        comp_titles=comp_titles,
+        pitch_text=pitch_text,
+        pitch_feedback=pitch_feedback,
+    )
 
 
 @app.route('/author/dashboard')
@@ -6976,6 +7100,18 @@ def run_migrations():
             conn.execute(text("UPDATE homework_submission SET status = 'pending_review' WHERE status IS NULL"))
     except Exception:
         pass
+
+    # ── marketing_module_data ──────────────────────────────────────────────────
+    _add('marketing_module_data', 'author_id INTEGER')
+    # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless)
+    if is_pg:
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    'ALTER TABLE marketing_module_data ALTER COLUMN enrollment_id DROP NOT NULL'
+                ))
+        except Exception:
+            pass
 
     # ── Repair: ensure every active enrollment has a row for each module ───────
     try:

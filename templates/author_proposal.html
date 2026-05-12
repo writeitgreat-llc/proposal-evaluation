@@ -39,21 +39,8 @@
 /* Score Display */
 .score-display { display: flex; justify-content: center; gap: 30px; margin: 30px 0; flex-wrap: wrap; }
 .score-box { text-align: center; padding: 25px 35px; background: #f5f5f5; border-radius: 12px; min-width: 150px; }
-.score-box.tier-a { border-top: 4px solid #10B981; }
-.score-box.tier-b { border-top: 4px solid #3B82F6; }
-.score-box.tier-c { border-top: 4px solid #F59E0B; }
-.score-box.tier-d { border-top: 4px solid #EF4444; }
 .score-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #6B6B7B; margin-bottom: 8px; }
 .score-value { font-size: 3rem; font-weight: 700; }
-.tier-a .score-value { color: #10B981; }
-.tier-b .score-value { color: #3B82F6; }
-.tier-c .score-value { color: #F59E0B; }
-.tier-d .score-value { color: #EF4444; }
-.tier-description { text-align: center; padding: 15px; background: #f5f5f5; border-radius: 8px; margin-bottom: 25px; font-weight: 500; }
-.tier-description.tier-a { color: #10B981; }
-.tier-description.tier-b { color: #3B82F6; }
-.tier-description.tier-c { color: #F59E0B; }
-.tier-description.tier-d { color: #EF4444; }
 
 /* Book Info */
 .book-info { text-align: center; margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid #e0e0e0; }
@@ -204,18 +191,14 @@
 
 {% else %}
 {# ========== FULL EVALUATION REPORT ========== #}
-{% set tier = proposal.tier or 'C' %}
-{% set tier_lower = tier|lower %}
 {% set total_score = evaluation.get('total_score', evaluation.get('overall_score', proposal.overall_score or 0)) %}
 {% set exec_summary = evaluation.get('executiveSummary', '') or evaluation.get('summary', 'Your proposal has been evaluated.') %}
-{% set tier_desc = evaluation.get('tierDescription', '') %}
 {% set scores = evaluation.get('scores', {}) %}
 {% set detailed = evaluation.get('detailedAnalysis', {}) %}
 {% set red_flags = evaluation.get('redFlags', []) or evaluation.get('red_flags', []) %}
 {% set strengths = evaluation.get('strengths', []) %}
 {% set improvements = evaluation.get('improvements', []) %}
 {% set priority_plan = evaluation.get('priorityActionPlan', []) %}
-{% set path_a = evaluation.get('pathToATier', '') %}
 {% set adv_est = evaluation.get('advanceEstimate', {}) %}
 {% set next_steps = evaluation.get('recommendedNextSteps', []) or evaluation.get('next_steps', []) %}
 {% set old_categories = evaluation.get('categories', {}) %}
@@ -232,19 +215,11 @@
 
         <!-- Score Display -->
         <div class="score-display">
-            <div class="score-box tier-{{ tier_lower }}">
-                <div class="score-label">Tier</div>
-                <div class="score-value">{{ tier }}</div>
-            </div>
             <div class="score-box" style="border-top: 4px solid #2D1B69;">
                 <div class="score-label">Overall Score</div>
                 <div class="score-value" style="color: #2D1B69;">{{ total_score|round|int }}</div>
             </div>
         </div>
-
-        {% if tier_desc %}
-        <div class="tier-description tier-{{ tier_lower }}">{{ tier_desc }}</div>
-        {% endif %}
 
         <!-- Book Info -->
         <div class="book-info">
@@ -424,13 +399,6 @@
         {% endfor %}
         {% endif %}
 
-        <!-- Path to A-Tier -->
-        {% if path_a %}
-        <div class="path-to-a">
-            <h4>Your Path to A-Tier</h4>
-            <p>{{ path_a }}</p>
-        </div>
-        {% endif %}
 
         <!-- Advance Estimate -->
         {% if adv_est and adv_est.get('reasoning') %}

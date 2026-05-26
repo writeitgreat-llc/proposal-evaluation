@@ -1310,8 +1310,9 @@
     if (markCompleteBtn) {
         markCompleteBtn.addEventListener('click', async () => {
             const content = textarea ? textarea.value.trim() : '';
-            if (content.length < 100) {
-                alert('Please write more before marking this section complete.');
+            const wordCount = content.trim().split(/\s+/).filter(w => w.length > 0).length;
+            if (wordCount < 50) {
+                alert('Please write at least 50 words before submitting for review. Aim for a few substantive paragraphs.');
                 return;
             }
 

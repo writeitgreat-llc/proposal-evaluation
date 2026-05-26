@@ -3150,53 +3150,72 @@ def _review_homework_with_ai(module_info, content, author_name, book_title):
     title_line = f'Book title: "{book_title}"\n' if book_title else ''
     kb_context = _get_kb_context(module_info['order'])
 
-    prompt = f"""You are a literary agent reviewing a homework submission for a book proposal coaching program. Your job is to give HONEST, ACCURATE feedback based strictly on what the author actually wrote — nothing more.
+    # Hard pre-screen — skip the AI call entirely for clearly thin submissions
+    if word_count < 30:
+        return True, [
+            '→ This submission is too short to review. Please write at least a few substantive paragraphs addressing the homework prompt before submitting.',
+        ], False
 
-Module {module_info['order']}: {module_info['title']}
+    # Split into system + user messages so the rules are loaded before the model sees the content.
+    # The system message establishes the evaluation contract; the user message provides content.
+    system_msg = f"""You are a strict, honest book proposal coach reviewing a homework submission.
+
+EVALUATION CONTRACT — you must follow every rule below without exception:
+
+1. READ the submission carefully. Your first task is to summarize in one sentence what the author ACTUALLY wrote. Record this as "what_submitted".
+
+2. RELEVANCE CHECK: Decide if the submission genuinely addresses the homework prompt. If it is gibberish, random text, filler, a placeholder, or clearly off-topic — set is_relevant=false. Do not soften this.
+
+3. FEEDBACK RULES:
+   - If is_relevant=false OR word_count < 50: write ONLY → bullets explaining what is missing. DO NOT open with praise. Do not say "great effort".
+   - If is_relevant=true: you MAY use ✓ bullets, but ONLY for things you can point to in the actual submitted text. You must be able to finish the sentence "The author wrote ___" with a real quote. If you cannot, write a → bullet instead.
+   - NEVER fabricate specifics (comparable titles, credentials, unique angles, methodologies, frameworks) that the author did not explicitly write.
+   - Every → bullet must name something MISSING from this specific submission, not generic advice.
+
+4. publisher_ready = true ONLY if a real publisher's editor would find this section complete and credible as submitted.{kb_context}
+
+Return ONLY valid JSON:
+{{
+  "what_submitted": "one sentence describing what the author actually wrote",
+  "is_relevant": true or false,
+  "publisher_ready": true or false,
+  "word_count_adequate": true or false,
+  "feedback_bullets": ["bullet 1", "bullet 2", ...]
+}}"""
+
+    user_msg = f"""HOMEWORK MODULE {module_info['order']}: {module_info['title']}
 {title_line}Author: {author_name}
-Word count submitted: {word_count}
+Word count: {word_count}
 
-WHAT THE AUTHOR WAS ASKED TO WRITE:
+HOMEWORK PROMPT (what the author was asked to write):
 {module_info['homework_prompt']}
 
-AUTHOR'S SUBMISSION:
+SUBMITTED TEXT — read this exactly as written, do not infer:
 ---
 {content[:30000]}
----{kb_context}
+---
 
-CRITICAL RULES — violating these is a failure:
-1. If the submission is gibberish, random characters, test text, or clearly does not address the homework prompt, set publisher_ready=false and state this plainly in your first bullet. Do NOT open with praise.
-2. If word_count < 50, the submission is insufficient — tell the author to write a real response.
-3. NEVER invent or reference details that are not explicitly written in the submission. Do not mention comparable titles, credentials, frameworks, angles, or any other specifics unless they literally appear in the text above.
-4. "✓ " bullets are ONLY for things genuinely present and strong. If the submission has no strengths worth praising, use only "→ " bullets.
-5. If knowledge base guidelines are included above, use them to measure the submission against the expected standard.
-
-Return a JSON object:
-{{
-    "publisher_ready": true or false,
-    "feedback_bullets": ["bullet 1", "bullet 2", "bullet 3"],
-    "word_count_adequate": true or false
-}}
-
-publisher_ready = true only if a real editor would find this section credible and complete as-is.
-feedback_bullets: 3-5 bullets. If weak/gibberish: all "→ " bullets. If genuinely strong: 1-2 "✓ " bullets then "→ " bullets. Keep each bullet to 1-2 sentences, specific to what is actually written.
-word_count_adequate = true if the submission is substantive enough for a real proposal section (generally 80+ words with relevant content)."""
+Now follow the evaluation contract and return JSON."""
 
     try:
         response = client.chat.completions.create(
             model='gpt-4o-mini',
-            messages=[{'role': 'user', 'content': prompt}],
+            messages=[
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user',   'content': user_msg},
+            ],
             response_format={'type': 'json_object'},
-            temperature=0.3,
-            max_tokens=800
+            temperature=0.1,
+            max_tokens=900,
         )
         result = json.loads(response.choices[0].message.content)
-        publisher_ready = bool(result.get('publisher_ready', False))
+        is_relevant    = bool(result.get('is_relevant', True))
+        publisher_ready = bool(result.get('publisher_ready', False)) and is_relevant
         bullets = result.get('feedback_bullets', [])
+        print(f"AI review — module {module_info['order']}: relevant={is_relevant}, "
+              f"publisher_ready={publisher_ready}, what_submitted={result.get('what_submitted','')!r}")
         if not bullets:
-            bullets = ['Review complete. Keep refining and resubmit when ready.']
-        # Always advance — authors can always move to the next module.
-        # publisher_ready signals quality without being a gate.
+            bullets = ['→ Please revisit the homework prompt and submit a fuller response.']
         return True, bullets, publisher_ready
     except Exception as e:
         print(f"AI homework review error: {e}")
@@ -4061,8 +4080,8 @@ def api_coaching_homework_submit():
         if not enrollment_id or not module_order or not content:
             return jsonify({'success': False, 'error': 'Missing required fields.'})
 
-        if len(content) < 50:
-            return jsonify({'success': False, 'error': 'Please write at least a few sentences.'})
+        if len(content.split()) < 30:
+            return jsonify({'success': False, 'error': 'Please write at least a few substantive sentences before submitting for review.'})
 
         enrollment = CoachingEnrollment.query.filter_by(
             id=enrollment_id, author_id=current_user.id).first()

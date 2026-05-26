@@ -4923,10 +4923,24 @@ def author_proposal_detail(submission_id):
     if evaluation:
         compute_advance_estimate(evaluation)
     friendly_status = AUTHOR_STATUS_LABELS.get(proposal.status, proposal.status)
+
+    # Detect if this was submitted via the coaching system
+    is_coaching_proposal = (proposal.original_filename == 'coaching_proposal.txt')
+    enrollment = None
+    if is_coaching_proposal:
+        enrollment = CoachingEnrollment.query.filter_by(
+            author_id=current_user.id, status='active').first()
+        if not enrollment:
+            enrollment = CoachingEnrollment.query.filter_by(
+                author_id=current_user.id).order_by(
+                CoachingEnrollment.enrolled_at.desc()).first()
+
     return render_template('author_proposal.html',
                          proposal=proposal,
                          evaluation=evaluation,
-                         friendly_status=friendly_status)
+                         friendly_status=friendly_status,
+                         is_coaching_proposal=is_coaching_proposal,
+                         enrollment=enrollment)
 
 
 @app.route('/author/forgot-password', methods=['GET', 'POST'])

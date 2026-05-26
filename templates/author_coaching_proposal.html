@@ -118,6 +118,19 @@
 
 <div class="proposal-body">
 
+    <!-- Edit instruction banner (shown when coming to edit) -->
+    <div class="no-print" style="background:#ede9fe;border:1.5px solid #c4b5fd;border-radius:var(--radius);
+         padding:1rem 1.25rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:0.875rem;flex-wrap:wrap;">
+        <span style="font-size:1.25rem;">✏️</span>
+        <div style="flex:1;min-width:0;">
+            <strong style="color:#4c1d95;font-size:0.9375rem;">Edit any section below</strong>
+            <p style="margin:0.1rem 0 0;font-size:0.8125rem;color:#5b21b6;line-height:1.5;">
+                Click <strong>Edit section →</strong> on any row to open that module, make your changes, and resubmit for review.
+                Once you're happy, come back here and click <strong>Submit for Full Evaluation</strong>.
+            </p>
+        </div>
+    </div>
+
     <!-- Progress bar -->
     {% set done_count = sections | selectattr('status', 'eq', 'approved') | list | length %}
     {% set content_count = sections | selectattr('content') | list | length %}
@@ -191,6 +204,19 @@
             {% if s.word_count %}
             <span class="section-word-count">{{ s.word_count }} words</span>
             {% endif %}
+            {% if s.status != 'locked' %}
+            <a href="{{ url_for('author_coaching_module', module_order=s.module.order) }}"
+               class="no-print"
+               style="margin-left:0.5rem;font-size:0.8rem;font-weight:600;color:var(--primary);
+                      text-decoration:none;white-space:nowrap;padding:0.25rem 0.625rem;
+                      border:1.5px solid var(--primary);border-radius:6px;transition:all 0.15s;"
+               onmouseover="this.style.background='var(--primary)';this.style.color='white';"
+               onmouseout="this.style.background='';this.style.color='var(--primary)';">
+                ✏️ Edit section →
+            </a>
+            {% else %}
+            <span style="font-size:0.75rem;color:var(--gray-300);margin-left:0.5rem;">🔒 Locked</span>
+            {% endif %}
         </div>
 
         {% if has_content %}
@@ -200,10 +226,8 @@
             <p>Nothing written here yet.</p>
             {% if s.status != 'locked' %}
             <a href="{{ url_for('author_coaching_module', module_order=s.module.order) }}">
-                Write your {{ s.module.homework_label }} →
+                Start writing →
             </a>
-            {% else %}
-            <p style="font-size:0.8125rem;color:var(--gray-300);">🔒 Unlocks after completing the previous section</p>
             {% endif %}
         </div>
         {% endif %}

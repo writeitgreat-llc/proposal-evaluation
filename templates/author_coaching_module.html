@@ -736,9 +736,8 @@
             </div>
             {% endif %}
 
-            {# Publisher-ready = ai_approved=True on latest submission. Always editable otherwise. #}
             {% set is_publisher_ready = latest_submission and latest_submission.ai_approved %}
-            {% if not is_publisher_ready %}
+            {% set is_already_submitted = latest_submission is not none %}
             <div class="fmt-toolbar" id="fmt-toolbar" style="padding:0.5rem 1rem;border-bottom:1px solid var(--gray-100);">
                 <button class="fmt-btn bold"   data-action="bold"    title="Bold (Ctrl+B)"><b>B</b></button>
                 <button class="fmt-btn italic" data-action="italic"  title="Italic (Ctrl+I)"><i>I</i></button>
@@ -748,16 +747,12 @@
                 <div class="fmt-toolbar-sep"></div>
                 <button class="fmt-btn" data-action="bullet" title="Bullet list" style="font-size:1rem;line-height:1;">•</button>
             </div>
-            {% endif %}
             <textarea id="content-textarea"
-                      placeholder="Start writing here… your draft saves automatically as you type."
-                      {% if is_publisher_ready %}disabled{% endif %}>{{ saved_content.content if saved_content and saved_content.content else '' }}</textarea>
+                      placeholder="Start writing here… your draft saves automatically as you type.">{{ saved_content.content if saved_content and saved_content.content else '' }}</textarea>
 
             <div class="writing-footer">
-                {# Word count — always computed from textarea value on load (bug fix) #}
                 <span class="word-count"><span id="word-count">0</span> words</span>
                 <div class="writing-actions">
-                    {% if not is_publisher_ready %}
                     {% if module_resources or kb_docs %}
                     <button id="btn-kb" class="btn" title="Examples, templates &amp; tips for this section"
                             style="background:white;border:1.5px solid var(--gray-300);color:var(--gray-700);font-size:0.875rem;padding:0.45rem 0.875rem;cursor:pointer;border-radius:var(--radius);">
@@ -767,12 +762,7 @@
                     <button id="btn-research" class="btn" style="background:white;border:1.5px solid #7c3aed;color:#7c3aed;font-size:0.875rem;padding:0.45rem 1rem;cursor:pointer;border-radius:var(--radius);">
                         🔍 Research
                     </button>
-                    <button id="btn-mark-complete" class="btn btn-primary"
-                            title="Submits your writing for AI review. The AI gives specific feedback and unlocks the next section when ready."
-                            style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
-                        Submit for Review →
-                    </button>
-                    {% else %}
+                    {% if is_publisher_ready %}
                     <span style="font-size:0.875rem;color:#16a34a;font-weight:600;">✓ Publisher-ready</span>
                     {% if module_info.order < total_modules %}
                     <a href="{{ url_for('author_coaching_module', module_order=module_info.order + 1) }}"
@@ -780,6 +770,17 @@
                         Continue to Section {{ module_info.order + 1 }} →
                     </a>
                     {% endif %}
+                    <button id="btn-mark-complete" class="btn"
+                            style="font-size:0.8125rem;padding:0.45rem 1rem;cursor:pointer;background:white;border:1.5px solid var(--gray-300);color:var(--gray-600);"
+                            title="Made improvements? Resubmit for a fresh AI review.">
+                        ↺ Resubmit for Review
+                    </button>
+                    {% else %}
+                    <button id="btn-mark-complete" class="btn btn-primary"
+                            title="Submits your writing for AI review. The AI gives specific feedback and unlocks the next section when ready."
+                            style="font-size:0.875rem;padding:0.45rem 1.125rem;cursor:pointer;">
+                        {% if is_already_submitted %}↺ Resubmit for Review{% else %}Submit for Review →{% endif %}
+                    </button>
                     {% endif %}
                 </div>
             </div>
@@ -799,16 +800,15 @@
             <div id="research-body"></div>
         </div>
 
-        {% if is_publisher_ready and latest_submission.ai_feedback %}
-        <!-- Publisher-ready feedback preserved on page reload -->
-        <div class="feedback-approved-block" style="margin-top:0.5rem;">
-            <strong style="color:#14532d;">✓ Publisher-ready</strong>
-            <div class="feedback-block-text">{{ latest_submission.ai_feedback }}</div>
-        </div>
-        {% elif latest_submission and not is_publisher_ready and latest_submission.ai_feedback %}
-        <!-- Needs-work feedback preserved on page reload -->
-        <div id="server-feedback-block" style="background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:1rem 1.125rem;margin-top:0.5rem;">
-            <strong style="font-size:0.875rem;color:var(--gray-700);">You're making great progress! Here are a few ways to strengthen this section:</strong>
+        {% if latest_submission and latest_submission.ai_feedback %}
+        <!-- Previous AI feedback preserved on page reload -->
+        <div id="server-feedback-block" class="{% if is_publisher_ready %}feedback-approved-block{% endif %}"
+             style="{% if not is_publisher_ready %}background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--radius);{% endif %}padding:1rem 1.125rem;margin-top:0.5rem;">
+            {% if is_publisher_ready %}
+            <strong style="color:#14532d;font-size:0.875rem;">✓ Publisher-ready — last feedback:</strong>
+            {% else %}
+            <strong style="font-size:0.875rem;color:var(--gray-700);">Last review feedback:</strong>
+            {% endif %}
             <ul style="margin:0.5rem 0 0;padding-left:1.25rem;">
                 {% for bullet in latest_submission.ai_feedback.split('\n') if bullet.strip() %}
                 <li style="font-size:0.8375rem;line-height:1.65;color:var(--gray-700);margin-bottom:0.35rem;">{{ bullet.strip() }}</li>
@@ -1338,28 +1338,33 @@
                     return;
                 }
 
-                const nextLink = d.program_complete
-                    ? `<a href="/author/coaching/proposal" class="next-mod-btn">View Your Complete Draft Proposal →</a>`
-                    : d.next_module
-                        ? `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Section ${d.next_module} →</a>`
-                        : `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
+                let nextLink = '';
+                if (d.program_complete) {
+                    nextLink = `<a href="/author/coaching/proposal" class="next-mod-btn">View Your Complete Draft Proposal →</a>`;
+                } else if (d.next_module) {
+                    nextLink = `<a href="/author/coaching/module/${d.next_module}" class="next-mod-btn">Continue to Section ${d.next_module} →</a>`;
+                } else if (!d.was_resubmission) {
+                    nextLink = `<a href="/author/coaching" class="next-mod-btn">Back to Program Overview →</a>`;
+                }
 
                 completeResult.innerHTML = renderBullets(d.feedback_bullets, d.publisher_ready) + nextLink;
 
                 if (d.publisher_ready) {
-                    if (textarea) textarea.disabled = true;
-                    markCompleteBtn.style.display = 'none';
-                    if (researchBtn) researchBtn.style.display = 'none';
-                    const scBtn = document.getElementById('btn-save-continue');
-                    if (scBtn) scBtn.style.display = 'none';
+                    // Update button to resubmit style (keep visible for further improvements)
+                    markCompleteBtn.disabled = false;
+                    markCompleteBtn.textContent = '↺ Resubmit for Review';
+                    markCompleteBtn.style.background = 'white';
+                    markCompleteBtn.style.border = '1.5px solid var(--gray-300)';
+                    markCompleteBtn.style.color = 'var(--gray-600)';
+                    markCompleteBtn.classList.remove('btn-primary');
                 } else {
                     markCompleteBtn.disabled = false;
-                    markCompleteBtn.textContent = 'Mark Complete & Continue →';
+                    markCompleteBtn.textContent = '↺ Resubmit for Review';
                 }
                 completeResult.scrollIntoView({behavior:'smooth', block:'nearest'});
             } catch(e) {
                 markCompleteBtn.disabled = false;
-                markCompleteBtn.textContent = 'Mark Complete & Continue →';
+                markCompleteBtn.textContent = '↺ Resubmit for Review';
                 completeResult.innerHTML = '<p style="color:var(--error);font-size:0.875rem;">Network error. Please try again.</p>';
             }
         });

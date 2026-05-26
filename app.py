@@ -3146,24 +3146,30 @@ def _review_homework_with_ai(module_info, content, author_name, book_title):
     approved is always True so authors can always advance through the programme.
     publisher_ready reflects the AI's honest assessment of submission quality.
     """
+    word_count = len(content.split())
     title_line = f'Book title: "{book_title}"\n' if book_title else ''
-    prompt = f"""You are a warm, encouraging literary agent reviewing a homework submission for a book proposal coaching program.
+    kb_context = _get_kb_context(module_info['order'])
+
+    prompt = f"""You are a literary agent reviewing a homework submission for a book proposal coaching program. Your job is to give HONEST, ACCURATE feedback based strictly on what the author actually wrote — nothing more.
 
 Module {module_info['order']}: {module_info['title']}
 {title_line}Author: {author_name}
+Word count submitted: {word_count}
 
-HOMEWORK PROMPT GIVEN TO THE AUTHOR:
+WHAT THE AUTHOR WAS ASKED TO WRITE:
 {module_info['homework_prompt']}
 
 AUTHOR'S SUBMISSION:
 ---
 {content[:30000]}
----
+---{kb_context}
 
-Review this submission with a constructive, encouraging eye. Your feedback must:
-1. LEAD with what is working — be specific and genuine, not generic praise
-2. Identify 1-2 specific areas to strengthen with clear direction
-3. Be actionable — tell the author exactly what to add, change, or sharpen
+CRITICAL RULES — violating these is a failure:
+1. If the submission is gibberish, random characters, test text, or clearly does not address the homework prompt, set publisher_ready=false and state this plainly in your first bullet. Do NOT open with praise.
+2. If word_count < 50, the submission is insufficient — tell the author to write a real response.
+3. NEVER invent or reference details that are not explicitly written in the submission. Do not mention comparable titles, credentials, frameworks, angles, or any other specifics unless they literally appear in the text above.
+4. "✓ " bullets are ONLY for things genuinely present and strong. If the submission has no strengths worth praising, use only "→ " bullets.
+5. If knowledge base guidelines are included above, use them to measure the submission against the expected standard.
 
 Return a JSON object:
 {{
@@ -3172,18 +3178,16 @@ Return a JSON object:
     "word_count_adequate": true or false
 }}
 
-Rules:
-- publisher_ready = true if an editor would find this section credible and compelling as written
-- feedback_bullets = 3-5 concise bullets. The FIRST 1-2 bullets MUST begin with "✓ " and highlight what's genuinely strong. Remaining bullets begin with "→ " and give specific improvement direction. Reference what the author actually wrote — no generic advice.
-- word_count_adequate = true if the submission is substantive enough for a real proposal section
-- Tone: honest but warm — this author is doing the hard work of writing a real book"""
+publisher_ready = true only if a real editor would find this section credible and complete as-is.
+feedback_bullets: 3-5 bullets. If weak/gibberish: all "→ " bullets. If genuinely strong: 1-2 "✓ " bullets then "→ " bullets. Keep each bullet to 1-2 sentences, specific to what is actually written.
+word_count_adequate = true if the submission is substantive enough for a real proposal section (generally 80+ words with relevant content)."""
 
     try:
         response = client.chat.completions.create(
             model='gpt-4o-mini',
             messages=[{'role': 'user', 'content': prompt}],
             response_format={'type': 'json_object'},
-            temperature=0.4,
+            temperature=0.3,
             max_tokens=800
         )
         result = json.loads(response.choices[0].message.content)
@@ -4101,27 +4105,29 @@ def api_coaching_homework_submit():
         submission.ai_reviewed_at = datetime.utcnow()
         submission.status = 'approved'             # always advance
 
+        was_already_approved = mp.status == 'approved'
+        next_order = module_order + 1
+
         if approved:
             mp.status = 'approved'
             mp.completed_at = datetime.utcnow()
 
-            next_order = module_order + 1
-            if next_order <= len(COACHING_MODULES):
-                # Unlock next module — create the row if it was somehow deleted
-                next_mp = _get_or_create_module_progress(enrollment_id, next_order)
-                next_mp.status = 'in_progress'
-                next_mp.unlocked_at = datetime.utcnow()
-                enrollment.current_module = next_order
-
-            else:
-                # All modules complete
-                enrollment.status = 'completed'
-                enrollment.completed_at = datetime.utcnow()
-                try:
-                    if send_coaching_complete_email(current_user, enrollment):
-                        enrollment.complete_email_sent = True
-                except Exception:
-                    pass
+            if not was_already_approved:
+                # First time this module is completed — unlock the next one
+                if next_order <= len(COACHING_MODULES):
+                    next_mp = _get_or_create_module_progress(enrollment_id, next_order)
+                    next_mp.status = 'in_progress'
+                    next_mp.unlocked_at = datetime.utcnow()
+                    enrollment.current_module = next_order
+                else:
+                    # All modules complete
+                    enrollment.status = 'completed'
+                    enrollment.completed_at = datetime.utcnow()
+                    try:
+                        if send_coaching_complete_email(current_user, enrollment):
+                            enrollment.complete_email_sent = True
+                    except Exception:
+                        pass
 
         db.session.commit()
 
@@ -4131,8 +4137,9 @@ def api_coaching_homework_submit():
             'publisher_ready': publisher_ready,
             'feedback_bullets': feedback if isinstance(feedback, list) else [feedback],
             'status': submission.status,
-            'next_module': next_order if approved and next_order <= len(COACHING_MODULES) else None,
-            'program_complete': approved and module_order == len(COACHING_MODULES),
+            'next_module': next_order if approved and not was_already_approved and next_order <= len(COACHING_MODULES) else None,
+            'program_complete': approved and not was_already_approved and module_order == len(COACHING_MODULES),
+            'was_resubmission': was_already_approved,
         })
 
     except Exception as e:

@@ -214,6 +214,42 @@
 .shelf-manual-form input:focus { outline: none; border-color: var(--primary); }
 .shelf-manual-submit { padding: 0.4rem 1rem; background: var(--primary); color: white;
     border: none; border-radius: 6px; font-size: 0.8125rem; cursor: pointer; font-family: inherit; }
+
+/* ── Sales Projection Calculator ── */
+.sp-format-btns { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.875rem; }
+.sp-fmt-btn { padding: 0.35rem 0.75rem; background: white; border: 1.5px solid var(--gray-200);
+    color: var(--gray-600); border-radius: 20px; font-size: 0.8rem; cursor: pointer;
+    font-family: inherit; font-weight: 600; transition: all 0.15s; }
+.sp-fmt-btn:hover { border-color: #7c3aed; color: #5b21b6; }
+.sp-fmt-btn.active { background: #7c3aed; border-color: #7c3aed; color: white; }
+.sp-input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.875rem; margin-bottom: 1.25rem; }
+@media(max-width:560px) { .sp-input-grid { grid-template-columns: 1fr; } }
+.sp-input-group { display: flex; flex-direction: column; gap: 0.3rem; }
+.sp-label { font-size: 0.8rem; font-weight: 600; color: var(--gray-700); }
+.sp-input { padding: 0.45rem 0.625rem; border: 1.5px solid var(--gray-200); border-radius: 6px;
+    font-size: 0.875rem; font-family: inherit; box-sizing: border-box; }
+.sp-input:focus { outline: none; border-color: #7c3aed; }
+.sp-input-readonly { background: var(--gray-50); color: var(--gray-600); cursor: default; }
+.sp-input-hint { font-size: 0.725rem; color: var(--gray-400); }
+.sp-range { width: 100%; accent-color: #7c3aed; cursor: pointer; }
+.sp-range-labels { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--gray-400); margin-top: 0.15rem; }
+.sp-results { background: #f8f4ff; border: 1.5px solid #c4b5fd; border-radius: 8px; padding: 1rem; }
+.sp-result-table { margin-bottom: 0.875rem; }
+.sp-row { display: grid; grid-template-columns: 1.6fr 1fr 1.25fr; gap: 0.5rem;
+    padding: 0.375rem 0; border-bottom: 1px solid #e9d5ff; align-items: center; font-size: 0.875rem; color: var(--gray-700); }
+.sp-row:last-child { border-bottom: none; }
+.sp-row-head { font-size: 0.725rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #5b21b6; padding-bottom: 0.5rem; }
+.sp-row em { font-size: 0.7rem; color: #7c3aed; font-style: normal; font-weight: 600; }
+.sp-row-total { border-top: 2px solid #7c3aed; border-bottom: none; margin-top: 0.25rem;
+    padding-top: 0.5rem; font-weight: 700; color: #4c1d95; }
+.sp-amount { font-weight: 600; color: var(--gray-800); }
+.sp-total-amt { font-size: 1rem; color: #4c1d95; }
+.sp-advance-box { background: white; border-radius: 6px; padding: 0.75rem; text-align: center; }
+.sp-advance-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #5b21b6; margin-bottom: 0.25rem; }
+.sp-advance-range { font-size: 1.25rem; font-weight: 800; color: #4c1d95; margin-bottom: 0.25rem; }
+.sp-advance-hint { font-size: 0.725rem; color: var(--gray-400); line-height: 1.4; }
 {% endblock %}
 
 {% block content %}
@@ -346,6 +382,74 @@
                 <div class="shelf-books" id="shelf-books"></div>
                 <div class="shelf-health" id="shelf-health" style="display:none;"></div>
                 <div class="shelf-protip">ℹ️ Add 3 or more titles to unlock your shelf assessment and earn XP.</div>
+            </div>
+        </div>
+
+        <!-- Sales Projection Calculator -->
+        <div class="mp-card">
+            <div class="mp-card-header">
+                <h2>💰 Sales Projection Calculator</h2>
+                <p>Estimate royalty income and advance potential based on your platform reach</p>
+            </div>
+            <div class="mp-card-body">
+                <div class="pb-section-title">Book Format</div>
+                <div class="sp-format-btns" id="sp-format-btns">
+                    <button class="sp-fmt-btn active" data-rate="10">📘 Hardcover (10%)</button>
+                    <button class="sp-fmt-btn" data-rate="8">📄 Trade Paper (8%)</button>
+                    <button class="sp-fmt-btn" data-rate="25">📱 Ebook (25%)</button>
+                    <button class="sp-fmt-btn" data-rate="25">🎧 Audio (25%)</button>
+                </div>
+                <div class="sp-input-grid">
+                    <div class="sp-input-group">
+                        <label class="sp-label" for="sp-price">Retail Price ($)</label>
+                        <input type="number" id="sp-price" value="27" min="1" max="999" step="0.5" class="sp-input">
+                    </div>
+                    <div class="sp-input-group">
+                        <label class="sp-label" for="sp-royalty">Royalty Rate (%)</label>
+                        <input type="number" id="sp-royalty" value="10" min="1" max="50" step="0.5" class="sp-input">
+                    </div>
+                    <div class="sp-input-group">
+                        <label class="sp-label" for="sp-audience">Platform Audience</label>
+                        <input type="number" id="sp-audience" value="0" min="0" class="sp-input sp-input-readonly" readonly tabindex="-1">
+                        <span class="sp-input-hint">Auto-filled from Platform Builder above</span>
+                    </div>
+                    <div class="sp-input-group">
+                        <label class="sp-label" for="sp-conv-rate">Conversion Rate: <strong id="sp-conv-label">1.0%</strong></label>
+                        <input type="range" id="sp-conv-rate" min="0.1" max="5" step="0.1" value="1" class="sp-range">
+                        <div class="sp-range-labels"><span>0.1%</span><span>5%</span></div>
+                    </div>
+                    <div class="sp-input-group" style="grid-column:1/-1;">
+                        <label class="sp-label" for="sp-units-override">Year 1 Units <span style="font-weight:400;color:var(--gray-400);">(leave blank to use platform estimate)</span></label>
+                        <input type="number" id="sp-units-override" placeholder="Auto-calculated from audience × conversion" min="0" class="sp-input" style="max-width:300px;">
+                    </div>
+                </div>
+                <div class="sp-results">
+                    <div class="sp-result-table">
+                        <div class="sp-row sp-row-head">
+                            <span>Year</span><span>Units</span><span>Royalty Income</span>
+                        </div>
+                        <div class="sp-row">
+                            <span>Year 1</span><span id="sp-u1">—</span><span id="sp-r1" class="sp-amount">—</span>
+                        </div>
+                        <div class="sp-row">
+                            <span>Year 2 <em>+20%</em></span><span id="sp-u2">—</span><span id="sp-r2" class="sp-amount">—</span>
+                        </div>
+                        <div class="sp-row">
+                            <span>Year 3 <em>+10%</em></span><span id="sp-u3">—</span><span id="sp-r3" class="sp-amount">—</span>
+                        </div>
+                        <div class="sp-row sp-row-total">
+                            <span>3-Year Total</span><span id="sp-u-total">—</span><span id="sp-r-total" class="sp-amount sp-total-amt">—</span>
+                        </div>
+                    </div>
+                    <div class="sp-advance-box">
+                        <div class="sp-advance-label">Typical Advance Range</div>
+                        <div class="sp-advance-range" id="sp-advance-range">—</div>
+                        <div class="sp-advance-hint">First-year earnings × 0.5–1.5× (debut author typical range)</div>
+                    </div>
+                </div>
+                <p style="font-size:0.75rem;color:var(--gray-400);margin:0.75rem 0 0;line-height:1.5;">
+                    ℹ️ Estimates only. Actual results depend on distribution, marketing, publisher, and market conditions.
+                </p>
             </div>
         </div>
 
@@ -668,6 +772,7 @@
             const reachNum = document.getElementById('pub-reach-num');
             if (!widget) return;
             if (reachNum) reachNum.textContent = total.toLocaleString();
+            updateSalesCalc(total);
             let stateIdx = 0;
             PUB_STATES.forEach(function(s, i) { if (total >= s.min && total <= s.max) stateIdx = i; });
             for (let i = 0; i < 5; i++) widget.classList.remove('pub-state-' + i);
@@ -940,6 +1045,75 @@
             if (Array.isArray(saved) && saved.length) { compTitles = saved; renderShelf(); }
         } catch(e) {}
         {% endif %}
+    })();
+
+    /* ── Sales Projection Calculator ── */
+    function updateSalesCalc(platformTotal) {
+        const audienceEl = document.getElementById('sp-audience');
+        if (audienceEl) {
+            audienceEl.value = platformTotal || 0;
+            runSalesCalc();
+        }
+    }
+
+    function runSalesCalc() {
+        const price    = parseFloat(document.getElementById('sp-price') && document.getElementById('sp-price').value) || 0;
+        const royalty  = parseFloat(document.getElementById('sp-royalty') && document.getElementById('sp-royalty').value) / 100 || 0;
+        const audience = parseInt(document.getElementById('sp-audience') && document.getElementById('sp-audience').value) || 0;
+        const conv     = parseFloat(document.getElementById('sp-conv-rate') && document.getElementById('sp-conv-rate').value) / 100 || 0.01;
+        const overrideEl = document.getElementById('sp-units-override');
+        const overrideVal = overrideEl && overrideEl.value.trim();
+
+        const autoUnits = Math.round(audience * conv);
+        const y1 = overrideVal ? (parseInt(overrideVal) || 0) : autoUnits;
+        const y2 = Math.round(y1 * 1.20);
+        const y3 = Math.round(y2 * 1.10);
+
+        const royPerBook = price * royalty;
+        const r1 = y1 * royPerBook;
+        const r2 = y2 * royPerBook;
+        const r3 = y3 * royPerBook;
+        const rTotal = r1 + r2 + r3;
+
+        function fmtMoney(n) { return '$' + Math.round(n).toLocaleString(); }
+        function fmtN(n) { return Math.round(n).toLocaleString(); }
+
+        var el;
+        el = document.getElementById('sp-u1'); if (el) el.textContent = fmtN(y1);
+        el = document.getElementById('sp-r1'); if (el) el.textContent = fmtMoney(r1);
+        el = document.getElementById('sp-u2'); if (el) el.textContent = fmtN(y2);
+        el = document.getElementById('sp-r2'); if (el) el.textContent = fmtMoney(r2);
+        el = document.getElementById('sp-u3'); if (el) el.textContent = fmtN(y3);
+        el = document.getElementById('sp-r3'); if (el) el.textContent = fmtMoney(r3);
+        el = document.getElementById('sp-u-total'); if (el) el.textContent = fmtN(y1 + y2 + y3);
+        el = document.getElementById('sp-r-total'); if (el) el.textContent = fmtMoney(rTotal);
+        el = document.getElementById('sp-advance-range');
+        if (el) el.textContent = fmtMoney(r1 * 0.5) + ' – ' + fmtMoney(r1 * 1.5);
+    }
+
+    (function initSalesCalc() {
+        var convRange = document.getElementById('sp-conv-rate');
+        var convLabel = document.getElementById('sp-conv-label');
+        if (convRange && convLabel) {
+            convRange.addEventListener('input', function() {
+                convLabel.textContent = parseFloat(convRange.value).toFixed(1) + '%';
+                runSalesCalc();
+            });
+        }
+        ['sp-price', 'sp-royalty', 'sp-units-override'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener('input', runSalesCalc);
+        });
+        document.querySelectorAll('.sp-fmt-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.sp-fmt-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                var royaltyEl = document.getElementById('sp-royalty');
+                if (royaltyEl) royaltyEl.value = btn.dataset.rate;
+                runSalesCalc();
+            });
+        });
+        runSalesCalc();
     })();
 
 })();

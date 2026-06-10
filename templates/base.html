@@ -28,6 +28,7 @@
                 {% endif %}
                 <a href="{{ url_for('admin_publishers') }}">Publishers</a>
                 <a href="{{ url_for('admin_social_leads') }}">📱 Social Leads</a>
+                <a href="{{ url_for('admin_marketing_leads') }}">🎯 Services Leads</a>
                 <a href="{{ url_for('admin_logout') }}">Logout</a>
                 <a href="{{ url_for('index') }}" class="btn-accent">Submit Proposal</a>
                 {% elif current_user.is_authenticated and current_user.is_author %}

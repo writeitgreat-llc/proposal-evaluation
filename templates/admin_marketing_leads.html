@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Social Media Services Leads — Admin{% endblock %}
+
+{% block extra_css %}
+.page-header { background: var(--primary); color: white; padding: 1.5rem 2rem; }
+.page-header h1 { color: var(--accent); font-size: 1.25rem; margin: 0 0 0.25rem; }
+.page-header p  { color: rgba(255,255,255,0.7); font-size: 0.875rem; margin: 0; }
+
+.status-select { font-size: 0.75rem; padding: 0.2rem 0.4rem; border: 1.5px solid var(--gray-200);
+    border-radius: 5px; color: var(--gray-700); background: white; cursor: pointer; }
+.status-select:focus { outline: none; border-color: var(--primary); }
+
+.fit-badge { font-size: 0.7rem; font-weight: 800; padding: 0.2rem 0.55rem; border-radius: 20px;
+    text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.fit-hot  { background: #fee2e2; color: #b91c1c; }
+.fit-warm { background: #fef9c3; color: #92400e; }
+.fit-cold { background: #dbeafe; color: #1e40af; }
+
+.notes-input { width: 100%; padding: 0.3rem 0.5rem; border: 1.5px solid var(--gray-200);
+    border-radius: 5px; font-size: 0.8rem; font-family: inherit; resize: none; min-height: 36px; }
+.notes-input:focus { outline: none; border-color: var(--primary); }
+
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.875rem; margin: 1.5rem 0; }
+.stat-card { background: white; border: 1.5px solid var(--gray-200); border-radius: var(--radius);
+    padding: 1rem; text-align: center; }
+.stat-card .num { font-size: 1.6rem; font-weight: 800; color: var(--primary); line-height: 1; }
+.stat-card .lbl { font-size: 0.75rem; color: var(--gray-500); margin-top: 0.25rem; }
+
+.score-pill { display: inline-block; font-size: 0.8rem; font-weight: 700; color: var(--gray-700);
+    background: var(--gray-100); border-radius: 6px; padding: 0.15rem 0.5rem; }
+.booked-flag { font-size: 0.7rem; font-weight: 700; color: #166534; background: #dcfce7;
+    border-radius: 4px; padding: 0.15rem 0.4rem; white-space: nowrap; }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+        <div>
+            <h1>🎯 Social Media Services Leads</h1>
+            <p>Authors who built a platform with the Marketing Platform Builder — sorted by services fit</p>
+        </div>
+        <a href="{{ url_for('admin_dashboard') }}" style="color:rgba(255,255,255,0.7);font-size:0.875rem;text-decoration:none;">← Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="num">{{ leads | length }}</div>
+            <div class="lbl">Total Leads</div>
+        </div>
+        <div class="stat-card">
+            <div class="num" style="color:#b91c1c;">{{ leads | selectattr('md.services_fit','eq','hot') | list | length }}</div>
+            <div class="lbl">🔥 Hot</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">{{ leads | selectattr('md.call_clicked_at') | list | length }}</div>
+            <div class="lbl">Clicked Book-a-Call</div>
+        </div>
+        <div class="stat-card">
+            <div class="num" style="color:#16a34a;">{{ leads | selectattr('md.services_status','eq','converted') | list | length }}</div>
+            <div class="lbl">Converted</div>
+        </div>
+    </div>
+
+    {% if leads %}
+    <div class="card" style="padding:0;overflow:hidden;">
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Author</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Fit</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Score</th>
+                    <th style="padding:0.75rem 1rem;text-align:right;font-size:0.8125rem;color:var(--gray-600);">Reach</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Activity</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Status</th>
+                    <th style="padding:0.75rem 1rem;text-align:left;font-size:0.8125rem;color:var(--gray-600);">Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for lead in leads %}
+            {% set md = lead.md %}
+            <tr style="border-bottom:1px solid var(--gray-100);vertical-align:top;"
+                onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+                <td style="padding:0.875rem 1rem;">
+                    <div style="font-weight:600;font-size:0.9rem;color:var(--gray-900);">{{ lead.author.name }}</div>
+                    <div style="font-size:0.75rem;color:var(--gray-400);">
+                        <a href="mailto:{{ lead.author.email }}" style="color:var(--gray-400);">{{ lead.author.email }}</a>
+                    </div>
+                </td>
+                <td style="padding:0.875rem 1rem;">
+                    <span class="fit-badge fit-{{ md.services_fit }}">
+                        {% if md.services_fit == 'hot' %}🔥 Hot{% elif md.services_fit == 'warm' %}Warm{% else %}Cold{% endif %}
+                    </span>
+                </td>
+                <td style="padding:0.875rem 1rem;">
+                    <span class="score-pill">{{ md.platform_score if md.platform_score is not none else '—' }}/100</span>
+                </td>
+                <td style="padding:0.875rem 1rem;text-align:right;font-size:0.875rem;color:var(--gray-700);white-space:nowrap;">
+                    {{ '{:,}'.format(lead.reach) }}
+                </td>
+                <td style="padding:0.875rem 1rem;font-size:0.75rem;color:var(--gray-500);white-space:nowrap;">
+                    {% if md.call_clicked_at %}
+                    <span class="booked-flag">📞 Booked {{ md.call_clicked_at.strftime('%b %d') }}</span><br>
+                    {% endif %}
+                    <span>Updated {{ md.updated_at.strftime('%b %d, %Y') if md.updated_at else '—' }}</span>
+                </td>
+                <td style="padding:0.875rem 1rem;">
+                    <form method="POST" action="{{ url_for('admin_marketing_lead_status', md_id=md.id) }}">
+                        <select name="services_status" class="status-select" onchange="this.form.submit()">
+                            {% for val, label in statuses %}
+                            <option value="{{ val }}" {% if md.services_status == val %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                </td>
+                <td style="padding:0.875rem 1rem;min-width:180px;">
+                    <form method="POST" action="{{ url_for('admin_marketing_lead_notes', md_id=md.id) }}">
+                        <textarea name="services_admin_notes" class="notes-input"
+                                  placeholder="Add notes…"
+                                  onblur="this.form.submit()">{{ md.services_admin_notes or '' }}</textarea>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:3rem;color:var(--gray-500);">
+        <p style="font-size:1.1rem;">No services leads yet.</p>
+        <p>Leads appear here when authors enter their audience numbers in the
+        <a href="{{ url_for('author_marketing_platform') }}" style="color:var(--primary);font-weight:600;">Marketing Platform Builder</a>.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

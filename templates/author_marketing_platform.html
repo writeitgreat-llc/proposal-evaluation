@@ -250,6 +250,31 @@
     letter-spacing: 0.06em; color: #5b21b6; margin-bottom: 0.25rem; }
 .sp-advance-range { font-size: 1.25rem; font-weight: 800; color: #4c1d95; margin-bottom: 0.25rem; }
 .sp-advance-hint { font-size: 0.725rem; color: var(--gray-400); line-height: 1.4; }
+
+/* ── Services upsell (score-aware) ── */
+.services-upsell { border-radius: var(--radius); padding: 1.125rem 1.125rem 1rem;
+    border: 1.5px solid; transition: all 0.3s; }
+.services-upsell.tone-hot  { background: linear-gradient(135deg,#fff1f2,#ffe4e6); border-color: #fca5a5; }
+.services-upsell.tone-warm { background: linear-gradient(135deg,#fffbeb,#fef3c7); border-color: #fcd34d; }
+.services-upsell.tone-cold { background: linear-gradient(135deg,#eff6ff,#dbeafe); border-color: #93c5fd; }
+.su-badge { display: inline-block; font-size: 0.65rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 0.2rem 0.5rem; border-radius: 20px; margin-bottom: 0.5rem; }
+.tone-hot  .su-badge { background: #b91c1c; color: white; }
+.tone-warm .su-badge { background: #92400e; color: white; }
+.tone-cold .su-badge { background: #1e40af; color: white; }
+.services-upsell h4 { margin: 0 0 0.4rem; font-size: 0.9375rem; line-height: 1.35; color: var(--gray-900); }
+.services-upsell p.su-body { margin: 0 0 0.875rem; font-size: 0.8rem; line-height: 1.55; color: var(--gray-700); }
+.su-cta { width: 100%; border: none; border-radius: var(--radius); padding: 0.6rem 1rem;
+    font-size: 0.875rem; font-weight: 700; cursor: pointer; font-family: inherit; color: white;
+    transition: transform 0.15s, filter 0.15s; }
+.tone-hot  .su-cta { background: #dc2626; }
+.tone-warm .su-cta { background: #d97706; }
+.tone-cold .su-cta { background: #2563eb; }
+.su-cta:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.su-fineprint { margin: 0.5rem 0 0; font-size: 0.7rem; color: var(--gray-400); text-align: center; }
+.su-secondary { margin: 0.75rem 0 0; text-align: center; }
+.su-secondary a { font-size: 0.75rem; color: var(--gray-500); text-decoration: none; }
+.su-secondary a:hover { color: var(--primary); text-decoration: underline; }
 {% endblock %}
 
 {% block content %}
@@ -541,11 +566,24 @@
             {% endfor %}
         </div>
 
-        <!-- Back to proposal -->
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--radius);padding:0.875rem 1rem;">
-            <p style="margin:0 0 0.625rem;font-size:0.8125rem;color:#14532d;font-weight:600;">Ready to submit?</p>
-            <p style="margin:0 0 0.75rem;font-size:0.775rem;color:#166534;line-height:1.5;">Upload your finished book proposal for a full expert evaluation.</p>
-            <a href="{{ url_for('index') }}" class="btn btn-primary" style="font-size:0.8125rem;padding:0.45rem 1rem;display:inline-block;text-decoration:none;">Submit a Proposal →</a>
+        <!-- Social-media-services upsell (score-aware, updates live as the platform changes) -->
+        <div class="services-upsell tone-{{ upsell.tone }}" id="services-upsell"
+             {% if not upsell.show %}style="display:none;"{% endif %}>
+            <span class="su-badge" id="su-badge">Done-for-you social</span>
+            <h4 id="su-headline">{{ upsell.headline }}</h4>
+            <p class="su-body" id="su-body">{{ upsell.body }}</p>
+            <button class="su-cta" id="su-cta">{{ upsell.cta or 'Book a strategy call' }}</button>
+            <p class="su-fineprint">30-min call · no obligation</p>
+            <div class="su-secondary">
+                <a href="{{ url_for('index') }}">or submit a finished proposal →</a>
+            </div>
+        </div>
+
+        <!-- Fallback when no platform built yet -->
+        <div id="services-upsell-empty" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--radius);padding:0.875rem 1rem;{% if upsell.show %}display:none;{% endif %}">
+            <p style="margin:0 0 0.625rem;font-size:0.8125rem;color:#14532d;font-weight:600;">Want a stronger platform?</p>
+            <p style="margin:0 0 0.75rem;font-size:0.775rem;color:#166534;line-height:1.5;">Add your channels and audience numbers above to see how your platform stacks up — and how we can help grow it.</p>
+            <a href="{{ url_for('index') }}" style="font-size:0.775rem;color:#166534;text-decoration:none;font-weight:600;">Submit a Proposal →</a>
         </div>
 
     </div>
@@ -623,6 +661,7 @@
                 if (d.unlocked_badge && typeof confetti !== 'undefined') {
                     confetti({particleCount:50, spread:60, origin:{x:0.5,y:0.5}});
                 }
+                if (d.upsell) renderUpsell(d.upsell);
             }
             if (callback) callback(d);
         })
@@ -864,6 +903,7 @@
                 if (savedText) savedText.textContent = text;
                 const fbDisplay = document.getElementById('pitch-feedback-display');
                 renderPitchFeedback(d.feedback, fbDisplay);
+                if (d.upsell) renderUpsell(d.upsell);
             } else if (pitchFeedback) {
                 pitchFeedback.style.display = '';
                 pitchFeedback.innerHTML = '<p style="color:#dc2626;font-size:0.875rem;">Something went wrong. Your pitch was saved.</p>';
@@ -1045,6 +1085,52 @@
             if (Array.isArray(saved) && saved.length) { compTitles = saved; renderShelf(); }
         } catch(e) {}
         {% endif %}
+    })();
+
+    /* ── Services upsell (score-aware) ── */
+    const SERVICES_CALL_URL = {{ services_call_url | tojson }};
+
+    function renderUpsell(upsell) {
+        const card  = document.getElementById('services-upsell');
+        const empty = document.getElementById('services-upsell-empty');
+        if (!card) return;
+        if (!upsell || !upsell.show) {
+            card.style.display = 'none';
+            if (empty) empty.style.display = '';
+            return;
+        }
+        card.classList.remove('tone-hot', 'tone-warm', 'tone-cold', 'tone-none');
+        card.classList.add('tone-' + (upsell.tone || 'warm'));
+        const h = document.getElementById('su-headline');
+        const b = document.getElementById('su-body');
+        const c = document.getElementById('su-cta');
+        if (h) h.textContent = upsell.headline || '';
+        if (b) b.textContent = upsell.body || '';
+        if (c) c.textContent = upsell.cta || 'Book a strategy call';
+        card.style.display = '';
+        if (empty) empty.style.display = 'none';
+    }
+
+    (function initBookCall() {
+        const btn = document.getElementById('su-cta');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.textContent = 'Opening…';
+            fetch('/api/marketing/book-call', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({}),
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                const url = (d && d.url) ? d.url : SERVICES_CALL_URL;
+                window.open(url, '_blank');
+            })
+            .catch(function() { window.open(SERVICES_CALL_URL, '_blank'); })
+            .finally(function() { btn.disabled = false; btn.textContent = original; });
+        });
     })();
 
     /* ── Sales Projection Calculator ── */

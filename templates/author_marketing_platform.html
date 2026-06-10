@@ -713,7 +713,7 @@
             <p class="su-body" id="su-body">{{ upsell.body }}</p>
             <button class="su-cta" id="su-cta">{{ upsell.cta or 'Book a strategy call' }}</button>
             <p class="su-fineprint">30-min call · no obligation</p>
-            <div class="su-secondary">
+            <div class="su-secondary author-only">
                 <a href="{{ url_for('index') }}">or submit a finished proposal →</a>
             </div>
         </div>
@@ -722,7 +722,7 @@
         <div id="services-upsell-empty" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--radius);padding:0.875rem 1rem;{% if upsell.show %}display:none;{% endif %}">
             <p style="margin:0 0 0.625rem;font-size:0.8125rem;color:#14532d;font-weight:600;">Want a stronger platform?</p>
             <p style="margin:0 0 0.75rem;font-size:0.775rem;color:#166534;line-height:1.5;">Add your channels and audience numbers above to see how your platform stacks up — and how we can help grow it.</p>
-            <a href="{{ url_for('index') }}" style="font-size:0.775rem;color:#166534;text-decoration:none;font-weight:600;">Submit a Proposal →</a>
+            <a href="{{ url_for('index') }}" class="author-only" style="font-size:0.775rem;color:#166534;text-decoration:none;font-weight:600;">Submit a Proposal →</a>
         </div>
 
     </div>

@@ -122,7 +122,7 @@ TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 
 
 # Booking link for the social-media-services upsell (Calendly / Cal.com).
 # Set SERVICES_CALL_URL in Heroku Config Vars.
-SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/writeitgreat/strategy-call')
+SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/anna-tokei/meet-with-anna')
 
 # Woodpecker cold-email integration — qualified marketing-platform leads are
 # pushed into a Woodpecker campaign for automated re-marketing.
@@ -1106,9 +1106,46 @@ def _compute_platform_score(md):
     return score, fit
 
 
-def _services_upsell_payload(fit, total_reach):
-    """Score-aware upsell copy shown in the marketing platform sidebar."""
+def _services_upsell_payload(fit, total_reach, mode='author'):
+    """Score-aware upsell copy shown in the marketing platform sidebar.
+
+    Copy adapts to the user's mode: 'author' (publisher-focused framing) or
+    'creator' (audience-growth framing, no book references).
+    """
     reach_str = f"{total_reach:,}"
+
+    if mode == 'creator':
+        if fit == 'hot':
+            return {
+                'show': True, 'tone': 'hot',
+                'headline': 'Your platform is just getting started',
+                'body': (f"You're reaching about {reach_str} people right now. Our done-for-you "
+                         "social media service builds and runs your channels for you — so you can "
+                         "grow your audience faster without the daily grind."),
+                'cta': 'Book a free strategy call',
+            }
+        if fit == 'warm':
+            return {
+                'show': True, 'tone': 'warm',
+                'headline': "You've got real momentum",
+                'body': (f"A platform of ~{reach_str} is a genuine asset. On a quick call we'll show "
+                         "you how a managed strategy turns that audience into real engagement and growth."),
+                'cta': 'Book a strategy call',
+            }
+        if fit == 'cold':
+            return {
+                'show': True, 'tone': 'cold',
+                'headline': 'You have a strong platform — let’s amplify it',
+                'body': (f"With ~{reach_str} in reach, you're already ahead of the curve. We help "
+                         "established creators convert better and grow louder. Curious what that looks like?"),
+                'cta': 'Talk to our team',
+            }
+        return {
+            'show': False,
+            'headline': '', 'body': '', 'cta': 'Book a strategy call', 'tone': 'none',
+        }
+
+    # ── Author mode (default) ──
     if fit == 'hot':
         return {
             'show': True, 'tone': 'hot',
@@ -1162,7 +1199,7 @@ def _refresh_services_lead(md, author):
         except Exception as e:
             print(f"Services lead dispatch error: {e}")
 
-    return _services_upsell_payload(fit, total_reach)
+    return _services_upsell_payload(fit, total_reach, md.platform_mode or 'author')
 
 
 def _send_services_alert_async(author_id, md_id, reason):
@@ -5363,9 +5400,9 @@ def author_marketing_platform():
     # Initial services-upsell state (recomputed live by JS as the author edits).
     if md:
         _score, _fit = _compute_platform_score(md)
-        upsell = _services_upsell_payload(_fit, _marketing_reach(md))
+        upsell = _services_upsell_payload(_fit, _marketing_reach(md), md.platform_mode or 'author')
     else:
-        upsell = _services_upsell_payload(None, 0)
+        upsell = _services_upsell_payload(None, 0, platform_mode or 'author')
 
     return render_template(
         'author_marketing_platform.html',

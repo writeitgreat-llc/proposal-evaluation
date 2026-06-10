@@ -335,6 +335,10 @@
 .plan-ch-tactics li { font-size: 0.825rem; line-height: 1.5; color: var(--gray-700); margin-bottom: 0.2rem; }
 .plan-ideas { margin: 0; padding-left: 1.1rem; }
 .plan-ideas li { font-size: 0.825rem; line-height: 1.5; color: var(--gray-700); margin-bottom: 0.25rem; }
+.plan-experiments { margin: 0; padding-left: 0; list-style: none; }
+.plan-experiments li { font-size: 0.825rem; line-height: 1.5; color: var(--gray-700);
+    margin-bottom: 0.4rem; padding: 0.45rem 0.6rem; background: #f5f3ff;
+    border-left: 3px solid #a78bfa; border-radius: 0 6px 6px 0; }
 .plan-trend { background: #fef9c3; border-left: 4px solid #f59e0b; padding: 0.55rem 0.75rem;
     border-radius: 0 6px 6px 0; margin: 0.75rem 0 0; font-size: 0.825rem; line-height: 1.55; color: #713f12; }
 .plan-trend strong { color: #92400e; }
@@ -1376,6 +1380,12 @@
                     }
                     html += '</div>';
                 });
+            }
+
+            if (m.experiments && m.experiments.length) {
+                html += '<div class="plan-sec-label">Tests to Run</div><ul class="plan-experiments">';
+                m.experiments.forEach(function(x) { html += '<li>🧪 ' + esc(x) + '</li>'; });
+                html += '</ul>';
             }
 
             if (m.content_ideas && m.content_ideas.length) {

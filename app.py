@@ -4807,7 +4807,10 @@ def api_marketing_pitch_eval():
 
 @app.route('/api/marketing/generate-plan', methods=['POST'])
 def api_marketing_generate_plan():
-    """AI-generated 90-day marketing activity plan based on the author's platform and goals."""
+    """AI-generated 90-day marketing activity plan based on the author's platform and goals.
+
+    Produces a rich, trend-informed plan, persists it, awards XP, and returns it for display.
+    """
     if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
         return jsonify({'error': 'Unauthorized'}), 403
 
@@ -4816,47 +4819,119 @@ def api_marketing_generate_plan():
     platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
 
     platform_lines = '\n'.join(
-        f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers"
+        f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers/subscribers"
         for p in platforms
-    ) or '- (no channels added yet)'
+    ) or '- (no channels added yet — recommend the best 2-3 channels for their goals)'
 
-    channel_ids = json.dumps([p['id'] for p in platforms if p.get('id')])
+    channel_names = ', '.join(p.get('name', p.get('id', '?')) for p in platforms) or 'their chosen channels'
 
     prompt = (
-        "You are an expert social media growth strategist creating a personalised 90-day "
-        "marketing activity plan for a content creator.\n\n"
+        "You are a senior social media growth strategist in 2026 building a detailed, "
+        "personalised 90-day marketing plan for a content creator. You are deeply current on "
+        "2025-2026 marketing trends: short-form video dominance (TikTok, Reels, Shorts), "
+        "authentic founder/creator-led content, community-first engagement, email/newsletter "
+        "ownership over rented audiences, AI-assisted content workflows, repurposing one piece "
+        "of pillar content across channels, SEO-driven discovery, and consistency over virality.\n\n"
         f"Their current platform:\n{platform_lines}\n\n"
-        f"Their goals: {goals or 'Build a consistent audience and establish their brand online'}\n\n"
-        "Write a 90-day plan split into 3 monthly phases. For each phase produce:\n"
-        "1. A `focus` field — 2-3 concrete sentences describing the month's priority and strategy.\n"
-        "2. A `channels` array — one entry per channel listed above with a specific, realistic "
-        "weekly activity goal (e.g. '2 videos/week', '1 email newsletter', '3 short-form posts/week').\n\n"
-        "Rules:\n"
-        "- Month 1: foundation — establish habits, set up systems, learn what works.\n"
-        "- Month 2: momentum — increase consistency, test new formats, engage community.\n"
-        "- Month 3: scale — double down on top performers, review metrics, plan next quarter.\n"
-        "- Advice must be specific to the creator's actual channels and goals.\n"
-        "- Keep activity goals achievable for someone doing this part-time.\n\n"
-        f"Only use these exact channel id values in the channels arrays: {channel_ids}\n\n"
-        "Respond ONLY with valid JSON:\n"
-        '{"month1":{"focus":"...","channels":[{"id":"...","activity":"..."}]},'
-        '"month2":{"focus":"...","channels":[...]},'
-        '"month3":{"focus":"...","channels":[...]}}'
+        f"Their stated goals: {goals or 'Build a consistent audience and establish their personal brand online'}\n\n"
+        "Build a 90-day plan in 3 monthly phases. Each phase MUST contain:\n"
+        "- `theme`: a short 2-4 word phase name.\n"
+        "- `focus`: 2-3 sentences on the month's strategic priority and WHY (tie to a current trend).\n"
+        "- `channels`: array of objects, one per channel they use ("+channel_names+"), each with:\n"
+        "    - `name`: the channel name\n"
+        "    - `cadence`: a specific posting frequency (e.g. '3 short-form videos/week')\n"
+        "    - `tactics`: array of 2-3 concrete, channel-specific actions for the month\n"
+        "- `content_ideas`: array of 3-4 specific, ready-to-use content/post ideas for the month.\n"
+        "- `trend_tip`: one sentence naming a current 2025-2026 trend and how to apply it this month.\n"
+        "- `kpi`: the single most important metric to track this month and a realistic target.\n\n"
+        "Phase arc:\n"
+        "- Month 1 'Foundation': set up systems, define content pillars, establish posting habits, "
+        "baseline metrics.\n"
+        "- Month 2 'Momentum': raise consistency, test formats, lean into engagement and collaborations, "
+        "double down on what's working.\n"
+        "- Month 3 'Scale': amplify top performers, repurpose across channels, build funnels "
+        "(email capture/offers), review data and plan the next quarter.\n\n"
+        "Be specific to their actual channels and goals. Keep it realistic for a part-time creator. "
+        "Avoid generic filler.\n\n"
+        "Respond ONLY with valid JSON in exactly this shape:\n"
+        '{"month1":{"theme":"...","focus":"...","channels":[{"name":"...","cadence":"...","tactics":["...","..."]}],'
+        '"content_ideas":["...","..."],"trend_tip":"...","kpi":"..."},'
+        '"month2":{...same shape...},"month3":{...same shape...}}'
     )
 
     try:
         resp = client.chat.completions.create(
-            model='gpt-4o-mini',
+            model='gpt-4o',
             messages=[{'role': 'user', 'content': prompt}],
             response_format={'type': 'json_object'},
             temperature=0.7,
-            max_tokens=900,
+            max_tokens=2200,
         )
         plan = json.loads(resp.choices[0].message.content)
-        return jsonify({'success': True, 'plan': plan})
     except Exception as e:
         print(f"Generate plan error: {e}")
         return jsonify({'success': False, 'error': 'Could not generate plan. Please try again.'}), 500
+
+    plan['goals'] = goals
+    plan['generated_at'] = datetime.utcnow().strftime('%B %d, %Y')
+
+    # Persist + award XP (first generated plan unlocks the plan milestone).
+    md = _get_or_create_marketing_data_standalone(current_user.id)
+    md.plan_90day_json = json.dumps(plan)
+    actions = json.loads(md.xp_actions_json or '{}')
+    old_xp = md.xp_total or 0
+    xp_gained = 0
+    if 'plan_90day' not in actions:
+        actions['plan_90day'] = True
+        xp_gained = MARKETING_XP_ACTIONS.get('plan_90day', 250)
+        md.xp_total = old_xp + xp_gained
+        md.xp_actions_json = json.dumps(actions)
+    md.updated_at = datetime.utcnow()
+    upsell = _refresh_services_lead(md, current_user)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'plan': plan,
+        'xp_total': md.xp_total,
+        'xp_gained': xp_gained,
+        'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total) if xp_gained else None,
+        'upsell': upsell,
+    })
+
+
+@app.route('/author/marketing-platform/plan.pdf')
+@author_login_required
+def author_marketing_plan_pdf():
+    """Download the creator's 90-day marketing plan as a clean PDF."""
+    md = (MarketingModuleData.query
+          .filter(MarketingModuleData.author_id == current_user.id,
+                  MarketingModuleData.enrollment_id.is_(None))
+          .first())
+    plan = json.loads(md.plan_90day_json) if md and md.plan_90day_json else None
+    if not plan or not any(plan.get('month' + str(i)) for i in (1, 2, 3)):
+        flash('Generate your 90-day plan first.', 'error')
+        return redirect(url_for('author_marketing_platform'))
+
+    months = []
+    for i in (1, 2, 3):
+        m = plan.get('month' + str(i))
+        if m:
+            months.append((i, m))
+
+    html = render_template('marketing_plan_pdf.html',
+                           plan=plan, months=months, author=current_user)
+    pdf_buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html, dest=pdf_buffer)
+    if pisa_status.err:
+        flash('PDF generation failed. Please try again.', 'error')
+        return redirect(url_for('author_marketing_platform'))
+    pdf_buffer.seek(0)
+    name = (current_user.name or 'My').replace(' ', '_')
+    date_str = datetime.utcnow().strftime('%Y-%m-%d')
+    return send_file(BytesIO(pdf_buffer.getvalue()), mimetype='application/pdf',
+                     as_attachment=True,
+                     download_name=f"{name}_90Day_Marketing_Plan_{date_str}.pdf")
 
 
 @app.route('/api/marketing/book-call', methods=['POST'])

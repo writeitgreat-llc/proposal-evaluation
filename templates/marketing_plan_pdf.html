@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>90-Day Marketing Plan</title>
+    <style>
+        @page { size: letter; margin: 0.7in; }
+        body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; line-height: 1.5; color: #333; }
+
+        .header { text-align: center; border-bottom: 3px solid #2D1B69; padding-bottom: 14px; margin-bottom: 18px; }
+        .logo { font-size: 20pt; font-weight: bold; color: #2D1B69; }
+        .logo-accent { color: #7c3aed; }
+        .tagline { font-size: 9pt; color: #666; margin-top: 3px; }
+        .doc-type { font-size: 11pt; font-weight: bold; color: #5b21b6; margin-top: 6px;
+                    text-transform: uppercase; letter-spacing: 0.08em; }
+
+        .meta-box { background: #f5f3ff; border: 1.5px solid #c4b5fd; border-radius: 6px;
+                    padding: 10px 14px; margin-bottom: 18px; }
+        .meta-box table { width: 100%; border-collapse: collapse; }
+        .meta-box td { padding: 3px 6px; font-size: 9.5pt; vertical-align: top; }
+        .meta-label { font-weight: bold; color: #5b21b6; width: 90px; }
+
+        .month { margin-bottom: 22px; page-break-inside: avoid; }
+        .month-head { background: #2D1B69; color: #fff; padding: 9px 14px; border-radius: 6px 6px 0 0; }
+        .month-num { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.1em; color: #c4b5fd; }
+        .month-theme { font-size: 13pt; font-weight: bold; margin-top: 2px; }
+        .month-body { border: 1.5px solid #ede9fe; border-top: none; border-radius: 0 0 6px 6px; padding: 12px 14px; }
+
+        .focus { font-size: 9.8pt; line-height: 1.6; color: #1e1b4b; margin-bottom: 12px; }
+
+        .sec-label { font-size: 8pt; font-weight: bold; text-transform: uppercase;
+                     letter-spacing: 0.07em; color: #6d28d9; margin: 12px 0 5px; }
+
+        .channel { margin-bottom: 9px; padding-left: 8px; border-left: 3px solid #c4b5fd; }
+        .channel-name { font-weight: bold; font-size: 10pt; color: #2D1B69; }
+        .channel-cadence { font-size: 8.5pt; color: #7c3aed; font-weight: bold; }
+        .channel-tactics { margin: 3px 0 0; padding-left: 16px; }
+        .channel-tactics li { font-size: 9pt; line-height: 1.5; color: #374151; margin-bottom: 2px; }
+
+        .ideas { margin: 0; padding-left: 16px; }
+        .ideas li { font-size: 9pt; line-height: 1.5; color: #374151; margin-bottom: 3px; }
+
+        .trend-tip { background: #fef9c3; border-left: 4px solid #f59e0b; padding: 8px 12px;
+                     margin: 10px 0; font-size: 9pt; line-height: 1.55; color: #713f12; }
+        .trend-tip strong { color: #92400e; }
+
+        .kpi { background: #ecfdf5; border-left: 4px solid #10b981; padding: 8px 12px;
+               margin-top: 8px; font-size: 9pt; line-height: 1.55; color: #065f46; }
+        .kpi strong { color: #047857; }
+
+        .footer { border-top: 1px solid #ddd; padding-top: 10px; margin-top: 18px;
+                  text-align: center; font-size: 8.5pt; color: #999; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo">Write It <span class="logo-accent">Great</span></div>
+    <div class="tagline">writeitgreat.com</div>
+    <div class="doc-type">90-Day Marketing Plan</div>
+</div>
+
+<div class="meta-box">
+    <table>
+        <tr>
+            <td class="meta-label">Prepared for:</td>
+            <td><strong>{{ author.name }}</strong></td>
+        </tr>
+        {% if plan.goals %}
+        <tr>
+            <td class="meta-label">Your goals:</td>
+            <td>{{ plan.goals }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td class="meta-label">Generated:</td>
+            <td>{{ plan.generated_at or '' }}</td>
+        </tr>
+    </table>
+</div>
+
+{% set month_meta = {1: 'Month 1 · Days 1–30', 2: 'Month 2 · Days 31–60', 3: 'Month 3 · Days 61–90'} %}
+{% for num, m in months %}
+<div class="month">
+    <div class="month-head">
+        <div class="month-num">{{ month_meta[num] }}</div>
+        <div class="month-theme">{{ m.theme or ('Month ' ~ num) }}</div>
+    </div>
+    <div class="month-body">
+        {% if m.focus %}<div class="focus">{{ m.focus }}</div>{% endif %}
+
+        {% if m.channels %}
+        <div class="sec-label">Channel Activities</div>
+        {% for c in m.channels %}
+        <div class="channel">
+            <div><span class="channel-name">{{ c.name }}</span>
+                {% if c.cadence %}<span class="channel-cadence">— {{ c.cadence }}</span>{% endif %}
+            </div>
+            {% if c.tactics %}
+            <ul class="channel-tactics">
+                {% for t in c.tactics %}<li>{{ t }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        {% if m.content_ideas %}
+        <div class="sec-label">Content Ideas</div>
+        <ul class="ideas">
+            {% for idea in m.content_ideas %}<li>{{ idea }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if m.trend_tip %}
+        <div class="trend-tip"><strong>📈 Trend to ride:</strong> {{ m.trend_tip }}</div>
+        {% endif %}
+
+        {% if m.kpi %}
+        <div class="kpi"><strong>🎯 Track this:</strong> {{ m.kpi }}</div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<div class="footer">
+    Generated by Write It Great · writeitgreat.com<br>
+    This plan is a starting point — adapt it as you learn what resonates with your audience.
+</div>
+
+</body>
+</html>

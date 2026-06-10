@@ -105,6 +105,13 @@
         {% endfor %}
         {% endif %}
 
+        {% if m.experiments %}
+        <div class="sec-label">Tests to Run</div>
+        <ul class="ideas">
+            {% for x in m.experiments %}<li>🧪 {{ x }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+
         {% if m.content_ideas %}
         <div class="sec-label">Content Ideas</div>
         <ul class="ideas">

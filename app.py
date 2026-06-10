@@ -4818,44 +4818,79 @@ def api_marketing_generate_plan():
     goals     = (data.get('goals') or '').strip()
     platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
 
-    platform_lines = '\n'.join(
-        f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers/subscribers"
-        for p in platforms
-    ) or '- (no channels added yet — recommend the best 2-3 channels for their goals)'
-
-    channel_names = ', '.join(p.get('name', p.get('id', '?')) for p in platforms) or 'their chosen channels'
+    if platforms:
+        platform_lines = '\n'.join(
+            f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers/subscribers"
+            for p in platforms
+        )
+        channel_names = ', '.join(p.get('name', p.get('id', '?')) for p in platforms)
+        channel_instruction = (
+            "`channels`: an array with one object PER CHANNEL they actually use ("
+            + channel_names + "). If their goal clearly depends on a channel they "
+            "haven't added yet (e.g. an email list, YouTube, or a blog for SEO), you "
+            "may add 1-2 recommended channels too. Each channel object has:\n"
+        )
+    else:
+        platform_lines = '- (They have not added channels yet.)'
+        channel_instruction = (
+            "`channels`: an array of 3-5 channel objects. INFER the right channels from "
+            "their goals (e.g. a TikTok goal -> TikTok as primary, plus Instagram Reels / "
+            "YouTube Shorts for repurposing, plus an email list to own the audience). "
+            "Each channel object has:\n"
+        )
 
     prompt = (
-        "You are a senior social media growth strategist in 2026 building a detailed, "
-        "personalised 90-day marketing plan for a content creator. You are deeply current on "
-        "2025-2026 marketing trends: short-form video dominance (TikTok, Reels, Shorts), "
-        "authentic founder/creator-led content, community-first engagement, email/newsletter "
-        "ownership over rented audiences, AI-assisted content workflows, repurposing one piece "
-        "of pillar content across channels, SEO-driven discovery, and consistency over virality.\n\n"
+        "You are a world-class social media growth strategist in 2026, the kind creators pay "
+        "$5k/month to. You're writing a DETAILED, hands-on, do-this-exactly 90-day marketing "
+        "plan for one creator. This is not a high-level overview — it should read like a "
+        "step-by-step playbook they can execute without hiring anyone.\n\n"
+        "You are deeply current on 2025-2026 trends and tactics: short-form video dominance "
+        "(TikTok, Reels, Shorts), the first-2-seconds hook, on-screen text/caption hooks, "
+        "search-optimised captions and spoken keywords (TikTok & YouTube now function as search "
+        "engines), 'silent-watch' design (text overlays for muted viewers), serialised/episodic "
+        "content, carousels and 'saveable' value posts, creator-led authentic POV over polished "
+        "ads, community replies-as-content, email/newsletter ownership over rented audiences, "
+        "repurposing one pillar idea into 5-7 assets, batching/AI-assisted workflows, and "
+        "consistency beating virality.\n\n"
         f"Their current platform:\n{platform_lines}\n\n"
         f"Their stated goals: {goals or 'Build a consistent audience and establish their personal brand online'}\n\n"
         "Build a 90-day plan in 3 monthly phases. Each phase MUST contain:\n"
         "- `theme`: a short 2-4 word phase name.\n"
-        "- `focus`: 2-3 sentences on the month's strategic priority and WHY (tie to a current trend).\n"
-        "- `channels`: array of objects, one per channel they use ("+channel_names+"), each with:\n"
+        "- `focus`: 2-3 sentences on the month's strategic priority and WHY, tied to a real trend.\n"
+        "- " + channel_instruction +
         "    - `name`: the channel name\n"
-        "    - `cadence`: a specific posting frequency (e.g. '3 short-form videos/week')\n"
-        "    - `tactics`: array of 2-3 concrete, channel-specific actions for the month\n"
-        "- `content_ideas`: array of 3-4 specific, ready-to-use content/post ideas for the month.\n"
-        "- `trend_tip`: one sentence naming a current 2025-2026 trend and how to apply it this month.\n"
-        "- `kpi`: the single most important metric to track this month and a realistic target.\n\n"
+        "    - `cadence`: an EXACT posting frequency with numbers (e.g. '4-5 short-form videos/week + 2 stories/day', "
+        "'2 LinkedIn articles/week + 3 text posts/week', '1 newsletter/week').\n"
+        "    - `tactics`: array of 3-4 SPECIFIC, do-this-now actions. Include concrete numbers, "
+        "the WHY, and channel-native craft. Examples of the depth required: 'Open every video in "
+        "the first 1.5s with a bold on-screen text hook stating the payoff (e.g. \"3x your views "
+        "without dancing\"); test question-hooks vs. result-hooks.' / 'Put your primary keyword in "
+        "the spoken first line, the on-screen text, AND the caption so the video ranks in TikTok "
+        "search.' / 'Reply to every comment in the first 60 min with a video reply to feed the "
+        "algorithm.' Make tactics this concrete.\n"
+        "- `experiments`: array of 2-3 specific tests to run this month, each phrased as a mini "
+        "A/B test with what to compare and what metric decides the winner. Cover things like: "
+        "on-screen text styles, hook types, video length, posting times, caption length, thumbnail/"
+        "cover frame, hashtag sets. Example: 'Post 6 videos: 3 with a text-hook in the first frame, "
+        "3 without. After a week, keep whichever has higher average watch-through and drop the other.'\n"
+        "- `content_ideas`: array of 4-5 specific, ready-to-film/write post ideas WITH the format "
+        "named (e.g. 'POV skit: ...', 'Carousel: 5 mistakes ...', 'LinkedIn article: ...').\n"
+        "- `trend_tip`: one sentence naming a current 2025-2026 trend and exactly how to apply it this month.\n"
+        "- `kpi`: the single most important metric to track this month, WITH a realistic numeric target "
+        "(e.g. 'Average watch-through > 45%' or '+500 email subscribers').\n\n"
         "Phase arc:\n"
-        "- Month 1 'Foundation': set up systems, define content pillars, establish posting habits, "
-        "baseline metrics.\n"
-        "- Month 2 'Momentum': raise consistency, test formats, lean into engagement and collaborations, "
-        "double down on what's working.\n"
-        "- Month 3 'Scale': amplify top performers, repurpose across channels, build funnels "
-        "(email capture/offers), review data and plan the next quarter.\n\n"
-        "Be specific to their actual channels and goals. Keep it realistic for a part-time creator. "
-        "Avoid generic filler.\n\n"
+        "- Month 1 'Foundation': set up systems and content pillars, lock a sustainable posting cadence, "
+        "nail the hook + on-screen-text formula, baseline metrics, start an email capture.\n"
+        "- Month 2 'Momentum': raise volume and consistency, run format/hook experiments, lean into "
+        "engagement, replies-as-content and 1-2 collaborations, double down on early winners.\n"
+        "- Month 3 'Scale': amplify and repurpose top performers across channels, build the funnel "
+        "(lead magnet -> email -> offer), pursue bigger collabs, review the data and plan next quarter.\n\n"
+        "Be specific to their ACTUAL channels and goals. Keep it realistic for a busy part-time "
+        "creator (assume ~5-7 focused hours/week). Quantify everything. Zero generic filler — every "
+        "line should be actionable.\n\n"
         "Respond ONLY with valid JSON in exactly this shape:\n"
-        '{"month1":{"theme":"...","focus":"...","channels":[{"name":"...","cadence":"...","tactics":["...","..."]}],'
-        '"content_ideas":["...","..."],"trend_tip":"...","kpi":"..."},'
+        '{"month1":{"theme":"...","focus":"...","channels":[{"name":"...","cadence":"...","tactics":["...","...","..."]}],'
+        '"experiments":["...","..."],"content_ideas":["...","...","..."],"trend_tip":"...","kpi":"..."},'
         '"month2":{...same shape...},"month3":{...same shape...}}'
     )
 
@@ -4864,8 +4899,8 @@ def api_marketing_generate_plan():
             model='gpt-4o',
             messages=[{'role': 'user', 'content': prompt}],
             response_format={'type': 'json_object'},
-            temperature=0.7,
-            max_tokens=2200,
+            temperature=0.75,
+            max_tokens=4500,
         )
         plan = json.loads(resp.choices[0].message.content)
     except Exception as e:

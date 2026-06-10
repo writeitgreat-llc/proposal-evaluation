@@ -124,6 +124,14 @@ TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 
 # Set SERVICES_CALL_URL in Heroku Config Vars.
 SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/writeitgreat/strategy-call')
 
+# Woodpecker cold-email integration — qualified marketing-platform leads are
+# pushed into a Woodpecker campaign for automated re-marketing.
+# Set WOODPECKER_API_KEY in Heroku Config Vars. The campaign is resolved by
+# name at runtime so the ID never has to be hard-coded.
+WOODPECKER_API_KEY = os.environ.get('WOODPECKER_API_KEY', '')
+WOODPECKER_CAMPAIGN_NAME = os.environ.get('WOODPECKER_CAMPAIGN_NAME', 'Anna Platform Re-marketing')
+WOODPECKER_BASE = os.environ.get('WOODPECKER_BASE', 'https://api.woodpecker.co/rest/v1')
+
 # Team member name → email map (for assignment reminders)
 TEAM_MEMBER_EMAILS = {
     'Andy':     'andy@writeitgreat.com',
@@ -984,6 +992,7 @@ class MarketingModuleData(db.Model):
     services_status     = db.Column(db.String(30), default='not_contacted')  # SOCIAL_FOLLOW_UP_STATUSES
     services_admin_notes = db.Column(db.Text)
     call_clicked_at     = db.Column(db.DateTime)           # when author clicked "Book a call"
+    woodpecker_added    = db.Column(db.Boolean, default=False)  # enrolled in re-marketing campaign
     enrollment = db.relationship('CoachingEnrollment',
                                  backref=db.backref('marketing_data', uselist=False))
 
@@ -1148,21 +1157,30 @@ def _refresh_services_lead(md, author):
                 daemon=True,
             ).start()
         except Exception as e:
-            print(f"Services alert dispatch error: {e}")
+            print(f"Services lead dispatch error: {e}")
 
     return _services_upsell_payload(fit, total_reach)
 
 
 def _send_services_alert_async(author_id, md_id, reason):
-    """Background-thread wrapper: re-load rows inside an app context and email the team."""
+    """Background worker for a services lead: email the team and (once) enrol the
+    prospect into the Woodpecker re-marketing campaign with their score/plan."""
     with app.app_context():
         author = Author.query.get(author_id)
         md = MarketingModuleData.query.get(md_id)
-        if author and md:
+        if not (author and md):
+            return
+        try:
+            send_services_lead_alert(author, md, reason)
+        except Exception as e:
+            print(f"Services lead alert error: {e}")
+        if not md.woodpecker_added:
             try:
-                send_services_lead_alert(author, md, reason)
+                if woodpecker_add_prospect(author, md):
+                    md.woodpecker_added = True
+                    db.session.commit()
             except Exception as e:
-                print(f"Services lead alert error: {e}")
+                print(f"Woodpecker enrol error: {e}")
 
 
 SOCIAL_FOLLOW_UP_STATUSES = [
@@ -2031,6 +2049,100 @@ def mailchimp_add_lead(email: str, name: str, tag: str = 'social-strategy-lead')
         urllib.request.urlopen(req, timeout=8)
     except Exception as e:
         print(f"Mailchimp error: {e}")
+
+
+# ── Woodpecker (cold-email re-marketing) ────────────────────────────────────
+_woodpecker_campaign_cache = {}  # name(lower) → id
+
+
+def _woodpecker_get_campaign_id(name):
+    """Resolve a Woodpecker campaign ID by its name (cached). None if not found."""
+    if not WOODPECKER_API_KEY or not name:
+        return None
+    key = name.strip().lower()
+    if key in _woodpecker_campaign_cache:
+        return _woodpecker_campaign_cache[key]
+    try:
+        resp = http_requests.get(
+            f"{WOODPECKER_BASE}/campaign_list",
+            headers={'x-api-key': WOODPECKER_API_KEY},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"Woodpecker campaign_list failed: {resp.status_code} {resp.text[:200]}")
+            return None
+        campaigns = resp.json()
+        for c in (campaigns if isinstance(campaigns, list) else []):
+            if (c.get('name') or '').strip().lower() == key:
+                _woodpecker_campaign_cache[key] = c.get('id')
+                return c.get('id')
+        print(f"Woodpecker: campaign {name!r} not found among {len(campaigns) if isinstance(campaigns, list) else 0} campaigns")
+    except Exception as e:
+        print(f"Woodpecker campaign lookup error: {e}")
+    return None
+
+
+def woodpecker_add_prospect(author, md):
+    """Enrol a qualified marketing-platform lead into the Woodpecker campaign,
+    carrying their score / platform / pitch as snippets. Returns True on success.
+    Silent no-op if Woodpecker isn't configured."""
+    if not WOODPECKER_API_KEY:
+        print("Woodpecker not configured - skipping")
+        return False
+    campaign_id = _woodpecker_get_campaign_id(WOODPECKER_CAMPAIGN_NAME)
+    if not campaign_id:
+        return False
+    try:
+        platforms = json.loads(md.platforms_json or '[]')
+    except Exception:
+        platforms = []
+    try:
+        comps = json.loads(md.comp_titles_json or '[]')
+    except Exception:
+        comps = []
+
+    reach = _marketing_reach(md)
+    channels = ', '.join(
+        f"{p.get('name', p.get('id', ''))} ({int(p.get('audience') or 0):,})"
+        for p in platforms if int(p.get('audience') or 0) > 0
+    )
+    comp_str = ', '.join(c.get('title', '') for c in comps if c.get('title'))
+    pitch = (md.pitch_text or '').strip()
+    name_parts = (author.name or '').split()
+    first_name = name_parts[0] if name_parts else ''
+    last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+    prospect = {
+        'email': author.email,
+        'first_name': first_name,
+        'last_name': last_name,
+        # Snippets carry everything they built so campaign copy can reference it.
+        'snippet1': str(md.platform_score if md.platform_score is not None else ''),
+        'snippet2': (md.services_fit or ''),
+        'snippet3': f"{reach:,}",
+        'snippet4': channels,
+        'snippet5': comp_str,
+        'snippet6': pitch[:600],
+        'snippet7': f"{APP_BASE_URL}/admin/marketing-leads",
+    }
+    body = {
+        'update': True,  # update snippets if the prospect already exists
+        'campaign': {'campaign_id': campaign_id},
+        'prospects': [prospect],
+    }
+    try:
+        resp = http_requests.post(
+            f"{WOODPECKER_BASE}/add_prospects_campaign",
+            json=body,
+            headers={'x-api-key': WOODPECKER_API_KEY, 'Content-Type': 'application/json'},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        print(f"Woodpecker add_prospects failed: {resp.status_code} {resp.text[:300]}")
+    except Exception as e:
+        print(f"Woodpecker add prospect error: {e}")
+    return False
 
 
 def send_social_strategy_email(to_email: str, name: str,
@@ -3803,10 +3915,26 @@ def admin_marketing_leads():
             author = Author.query.get(md.enrollment.author_id)
         if not author:
             continue
+        try:
+            platforms = json.loads(md.platforms_json or '[]')
+        except Exception:
+            platforms = []
+        try:
+            comps = json.loads(md.comp_titles_json or '[]')
+        except Exception:
+            comps = []
+        try:
+            pitch_feedback = json.loads(md.pitch_feedback_json) if md.pitch_feedback_json else None
+        except Exception:
+            pitch_feedback = None
         leads.append({
             'md': md,
             'author': author,
             'reach': _marketing_reach(md),
+            'platforms': [p for p in platforms if int(p.get('audience') or 0) > 0],
+            'comps': comps,
+            'pitch': md.pitch_text,
+            'pitch_feedback': pitch_feedback,
         })
     # Hot first, then warm, then cold; within a tier, most recently active first.
     fit_rank = {'hot': 0, 'warm': 1, 'cold': 2}
@@ -7443,6 +7571,7 @@ def run_migrations():
     _add('marketing_module_data', "services_status VARCHAR(30) DEFAULT 'not_contacted'")
     _add('marketing_module_data', 'services_admin_notes TEXT')
     _add('marketing_module_data', 'call_clicked_at TIMESTAMP')
+    _add('marketing_module_data', 'woodpecker_added BOOLEAN DEFAULT FALSE')
     # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless)
     if is_pg:
         try:

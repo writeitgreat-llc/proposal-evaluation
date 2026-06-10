@@ -31,6 +31,26 @@
     background: var(--gray-100); border-radius: 6px; padding: 0.15rem 0.5rem; }
 .booked-flag { font-size: 0.7rem; font-weight: 700; color: #166534; background: #dcfce7;
     border-radius: 4px; padding: 0.15rem 0.4rem; white-space: nowrap; }
+.wp-flag { font-size: 0.65rem; font-weight: 700; color: #7c2d12; background: #ffedd5;
+    border-radius: 4px; padding: 0.15rem 0.4rem; white-space: nowrap; }
+
+.plan-toggle { font-size: 0.75rem; color: var(--primary); cursor: pointer; font-weight: 600;
+    background: none; border: none; padding: 0; }
+.plan-toggle:hover { text-decoration: underline; }
+.plan-detail { background: var(--gray-50); }
+.plan-detail td { padding: 1rem 1.25rem !important; }
+.plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+@media(max-width:720px){ .plan-grid { grid-template-columns: 1fr; } }
+.plan-block h4 { margin: 0 0 0.5rem; font-size: 0.8rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #5b21b6; }
+.plan-channel { display: flex; justify-content: space-between; font-size: 0.85rem;
+    color: var(--gray-700); padding: 0.2rem 0; border-bottom: 1px solid var(--gray-200); }
+.plan-channel:last-child { border-bottom: none; }
+.plan-comp { font-size: 0.85rem; color: var(--gray-700); padding: 0.15rem 0; }
+.plan-pitch { font-size: 0.85rem; color: var(--gray-800); line-height: 1.55; background: white;
+    border: 1px solid var(--gray-200); border-radius: 6px; padding: 0.625rem 0.75rem; }
+.plan-fb { font-size: 0.8rem; color: var(--gray-600); margin: 0.5rem 0 0; padding-left: 1.1rem; }
+.plan-empty { font-size: 0.8rem; color: var(--gray-400); font-style: italic; }
 {% endblock %}
 
 {% block content %}
@@ -88,6 +108,7 @@
                     <div style="font-size:0.75rem;color:var(--gray-400);">
                         <a href="mailto:{{ lead.author.email }}" style="color:var(--gray-400);">{{ lead.author.email }}</a>
                     </div>
+                    <button type="button" class="plan-toggle" onclick="togglePlan('plan-{{ md.id }}', this)" style="margin-top:0.3rem;">▸ View plan</button>
                 </td>
                 <td style="padding:0.875rem 1rem;">
                     <span class="fit-badge fit-{{ md.services_fit }}">
@@ -103,6 +124,9 @@
                 <td style="padding:0.875rem 1rem;font-size:0.75rem;color:var(--gray-500);white-space:nowrap;">
                     {% if md.call_clicked_at %}
                     <span class="booked-flag">📞 Booked {{ md.call_clicked_at.strftime('%b %d') }}</span><br>
+                    {% endif %}
+                    {% if md.woodpecker_added %}
+                    <span class="wp-flag">🪶 In campaign</span><br>
                     {% endif %}
                     <span>Updated {{ md.updated_at.strftime('%b %d, %Y') if md.updated_at else '—' }}</span>
                 </td>
@@ -123,10 +147,51 @@
                     </form>
                 </td>
             </tr>
+            <tr class="plan-detail" id="plan-{{ md.id }}" style="display:none;">
+                <td colspan="7">
+                    <div class="plan-grid">
+                        <div class="plan-block">
+                            <h4>🏗️ Platform ({{ '{:,}'.format(lead.reach) }} reach)</h4>
+                            {% if lead.platforms %}
+                            {% for p in lead.platforms %}
+                            <div class="plan-channel"><span>{{ p.name or p.id }}</span><strong>{{ '{:,}'.format(p.audience|int) }}</strong></div>
+                            {% endfor %}
+                            {% else %}<div class="plan-empty">No channels with audience entered.</div>{% endif %}
+
+                            <h4 style="margin-top:1rem;">📚 Comparable Titles</h4>
+                            {% if lead.comps %}
+                            {% for c in lead.comps %}
+                            <div class="plan-comp">• {{ c.title }}{% if c.author %} — <span style="color:var(--gray-400);">{{ c.author }}</span>{% endif %}{% if c.year %} ({{ c.year }}){% endif %}</div>
+                            {% endfor %}
+                            {% else %}<div class="plan-empty">No comparable titles added.</div>{% endif %}
+                        </div>
+                        <div class="plan-block">
+                            <h4>🎤 60-Second Pitch</h4>
+                            {% if lead.pitch %}
+                            <div class="plan-pitch">{{ lead.pitch }}</div>
+                            {% if lead.pitch_feedback and lead.pitch_feedback.bullets %}
+                            <ul class="plan-fb">
+                                {% for b in lead.pitch_feedback.bullets %}<li>{{ b }}</li>{% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% else %}<div class="plan-empty">No pitch recorded.</div>{% endif %}
+                        </div>
+                    </div>
+                </td>
+            </tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
+    <script>
+    function togglePlan(id, btn) {
+        var row = document.getElementById(id);
+        if (!row) return;
+        var open = row.style.display === 'none';
+        row.style.display = open ? '' : 'none';
+        btn.textContent = open ? '▾ Hide plan' : '▸ View plan';
+    }
+    </script>
     {% else %}
     <div class="card" style="text-align:center;padding:3rem;color:var(--gray-500);">
         <p style="font-size:1.1rem;">No services leads yet.</p>

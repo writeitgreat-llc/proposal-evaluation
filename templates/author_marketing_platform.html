@@ -552,9 +552,20 @@
         <div class="mp-card creator-only" id="plan-90day-card">
             <div class="mp-card-header">
                 <h2>🗓️ 90-Day Marketing Activity Plan</h2>
-                <p>Set your channel goals for each month to build momentum and stay consistent</p>
+                <p>Tell us your goals and we'll generate a personalised plan — or fill it in yourself</p>
             </div>
             <div class="mp-card-body">
+                <!-- AI generation input -->
+                <div style="background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;padding:1rem;margin-bottom:1.25rem;">
+                    <label class="plan-focus-lbl" for="plan-goals" style="color:#5b21b6;display:block;margin-bottom:0.375rem;">✨ What are your goals for the next 90 days?</label>
+                    <textarea id="plan-goals" class="plan-focus-ta" style="min-height:60px;border-color:#c4b5fd;"
+                        placeholder="e.g. Grow my newsletter to 500 subscribers, post 3x/week on TikTok, start a YouTube channel, build brand awareness for my coaching business…"></textarea>
+                    <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.625rem;flex-wrap:wrap;">
+                        <button type="button" id="plan-generate-btn" style="padding:0.45rem 1.1rem;background:#7c3aed;color:white;border:none;border-radius:var(--radius);font-size:0.875rem;font-weight:700;cursor:pointer;font-family:inherit;transition:background 0.15s;">✨ Generate my plan</button>
+                        <span id="plan-gen-loading" style="display:none;font-size:0.8125rem;color:#5b21b6;">⏳ Building your personalised plan…</span>
+                        <span id="plan-gen-error" style="display:none;font-size:0.8125rem;color:#dc2626;"></span>
+                    </div>
+                </div>
                 <div class="plan-phases">
                     <div class="plan-phase">
                         <div class="plan-phase-hd">
@@ -702,7 +713,7 @@
             <p class="su-body" id="su-body">{{ upsell.body }}</p>
             <button class="su-cta" id="su-cta">{{ upsell.cta or 'Book a strategy call' }}</button>
             <p class="su-fineprint">30-min call · no obligation</p>
-            <div class="su-secondary">
+            <div class="su-secondary author-only">
                 <a href="{{ url_for('index') }}">or submit a finished proposal →</a>
             </div>
         </div>
@@ -711,7 +722,7 @@
         <div id="services-upsell-empty" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--radius);padding:0.875rem 1rem;{% if upsell.show %}display:none;{% endif %}">
             <p style="margin:0 0 0.625rem;font-size:0.8125rem;color:#14532d;font-weight:600;">Want a stronger platform?</p>
             <p style="margin:0 0 0.75rem;font-size:0.775rem;color:#166534;line-height:1.5;">Add your channels and audience numbers above to see how your platform stacks up — and how we can help grow it.</p>
-            <a href="{{ url_for('index') }}" style="font-size:0.775rem;color:#166534;text-decoration:none;font-weight:600;">Submit a Proposal →</a>
+            <a href="{{ url_for('index') }}" class="author-only" style="font-size:0.775rem;color:#166534;text-decoration:none;font-weight:600;">Submit a Proposal →</a>
         </div>
 
     </div>
@@ -1368,6 +1379,8 @@
 
     function gatherPlan() {
         var plan = {};
+        var goalsEl = document.getElementById('plan-goals');
+        if (goalsEl && goalsEl.value.trim()) plan.goals = goalsEl.value.trim();
         [1, 2, 3].forEach(function(phase) {
             var focusEl = document.getElementById('plan-focus-' + phase);
             var channels = [];
@@ -1405,6 +1418,9 @@
         }
     })();
 
+    // Expose to global scope (inline onclick handlers need window scope)
+    window.savePlan = savePlan;
+
     var planSaveBtn = document.getElementById('plan-save-btn');
     if (planSaveBtn) planSaveBtn.addEventListener('click', savePlan);
 
@@ -1417,6 +1433,64 @@
             window._planBlurTimer = setTimeout(savePlan, 600);
         }
     }, true);
+
+    /* ── AI Plan Generator ── */
+    (function() {
+        var btn     = document.getElementById('plan-generate-btn');
+        var goalsEl = document.getElementById('plan-goals');
+        var loading = document.getElementById('plan-gen-loading');
+        var errEl   = document.getElementById('plan-gen-error');
+        if (!btn) return;
+
+        // Restore saved goals on load
+        if (plan90day && plan90day.goals && goalsEl) goalsEl.value = plan90day.goals;
+
+        btn.addEventListener('click', function() {
+            var goals = goalsEl ? goalsEl.value.trim() : '';
+            if (loading) loading.style.display = '';
+            if (errEl)   errEl.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Generating…';
+
+            fetch('/api/marketing/generate-plan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({goals: goals, platforms: activePlatforms}),
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (loading) loading.style.display = 'none';
+                btn.disabled = false;
+                btn.textContent = '✨ Generate my plan';
+                if (d.success && d.plan) {
+                    // Store goals inside plan so they survive page reloads
+                    d.plan.goals = goals;
+                    plan90day = d.plan;
+                    // Populate focus textareas
+                    [1, 2, 3].forEach(function(phase) {
+                        var focusEl = document.getElementById('plan-focus-' + phase);
+                        var saved   = d.plan['month' + phase];
+                        if (focusEl && saved) focusEl.value = saved.focus || '';
+                    });
+                    // Re-render channel rows with AI activity suggestions
+                    renderPlanChannels();
+                    // Persist to server
+                    savePlan();
+                } else {
+                    if (errEl) {
+                        errEl.textContent = d.error || 'Something went wrong — please try again.';
+                        errEl.style.display = '';
+                    }
+                }
+            })
+            .catch(function() {
+                if (loading) loading.style.display = 'none';
+                btn.disabled = false;
+                btn.textContent = '✨ Generate my plan';
+                if (errEl) { errEl.textContent = 'Network error — please try again.'; errEl.style.display = ''; }
+            });
+        });
+    })();
 
     /* ── Sales Projection Calculator ── */
     function updateSalesCalc(platformTotal) {

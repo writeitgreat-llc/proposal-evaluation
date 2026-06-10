@@ -122,7 +122,7 @@ TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 
 
 # Booking link for the social-media-services upsell (Calendly / Cal.com).
 # Set SERVICES_CALL_URL in Heroku Config Vars.
-SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/writeitgreat/strategy-call')
+SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/anna-tokei/meet-with-anna')
 
 # Woodpecker cold-email integration — qualified marketing-platform leads are
 # pushed into a Woodpecker campaign for automated re-marketing.
@@ -1106,9 +1106,46 @@ def _compute_platform_score(md):
     return score, fit
 
 
-def _services_upsell_payload(fit, total_reach):
-    """Score-aware upsell copy shown in the marketing platform sidebar."""
+def _services_upsell_payload(fit, total_reach, mode='author'):
+    """Score-aware upsell copy shown in the marketing platform sidebar.
+
+    Copy adapts to the user's mode: 'author' (publisher-focused framing) or
+    'creator' (audience-growth framing, no book references).
+    """
     reach_str = f"{total_reach:,}"
+
+    if mode == 'creator':
+        if fit == 'hot':
+            return {
+                'show': True, 'tone': 'hot',
+                'headline': 'Your platform is just getting started',
+                'body': (f"You're reaching about {reach_str} people right now. Our done-for-you "
+                         "social media service builds and runs your channels for you — so you can "
+                         "grow your audience faster without the daily grind."),
+                'cta': 'Book a free strategy call',
+            }
+        if fit == 'warm':
+            return {
+                'show': True, 'tone': 'warm',
+                'headline': "You've got real momentum",
+                'body': (f"A platform of ~{reach_str} is a genuine asset. On a quick call we'll show "
+                         "you how a managed strategy turns that audience into real engagement and growth."),
+                'cta': 'Book a strategy call',
+            }
+        if fit == 'cold':
+            return {
+                'show': True, 'tone': 'cold',
+                'headline': 'You have a strong platform — let’s amplify it',
+                'body': (f"With ~{reach_str} in reach, you're already ahead of the curve. We help "
+                         "established creators convert better and grow louder. Curious what that looks like?"),
+                'cta': 'Talk to our team',
+            }
+        return {
+            'show': False,
+            'headline': '', 'body': '', 'cta': 'Book a strategy call', 'tone': 'none',
+        }
+
+    # ── Author mode (default) ──
     if fit == 'hot':
         return {
             'show': True, 'tone': 'hot',
@@ -1162,7 +1199,7 @@ def _refresh_services_lead(md, author):
         except Exception as e:
             print(f"Services lead dispatch error: {e}")
 
-    return _services_upsell_payload(fit, total_reach)
+    return _services_upsell_payload(fit, total_reach, md.platform_mode or 'author')
 
 
 def _send_services_alert_async(author_id, md_id, reason):
@@ -4768,6 +4805,60 @@ def api_marketing_pitch_eval():
     })
 
 
+@app.route('/api/marketing/generate-plan', methods=['POST'])
+def api_marketing_generate_plan():
+    """AI-generated 90-day marketing activity plan based on the author's platform and goals."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json() or {}
+    goals     = (data.get('goals') or '').strip()
+    platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
+
+    platform_lines = '\n'.join(
+        f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers"
+        for p in platforms
+    ) or '- (no channels added yet)'
+
+    channel_ids = json.dumps([p['id'] for p in platforms if p.get('id')])
+
+    prompt = (
+        "You are an expert social media growth strategist creating a personalised 90-day "
+        "marketing activity plan for a content creator.\n\n"
+        f"Their current platform:\n{platform_lines}\n\n"
+        f"Their goals: {goals or 'Build a consistent audience and establish their brand online'}\n\n"
+        "Write a 90-day plan split into 3 monthly phases. For each phase produce:\n"
+        "1. A `focus` field — 2-3 concrete sentences describing the month's priority and strategy.\n"
+        "2. A `channels` array — one entry per channel listed above with a specific, realistic "
+        "weekly activity goal (e.g. '2 videos/week', '1 email newsletter', '3 short-form posts/week').\n\n"
+        "Rules:\n"
+        "- Month 1: foundation — establish habits, set up systems, learn what works.\n"
+        "- Month 2: momentum — increase consistency, test new formats, engage community.\n"
+        "- Month 3: scale — double down on top performers, review metrics, plan next quarter.\n"
+        "- Advice must be specific to the creator's actual channels and goals.\n"
+        "- Keep activity goals achievable for someone doing this part-time.\n\n"
+        f"Only use these exact channel id values in the channels arrays: {channel_ids}\n\n"
+        "Respond ONLY with valid JSON:\n"
+        '{"month1":{"focus":"...","channels":[{"id":"...","activity":"..."}]},'
+        '"month2":{"focus":"...","channels":[...]},'
+        '"month3":{"focus":"...","channels":[...]}}'
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model='gpt-4o-mini',
+            messages=[{'role': 'user', 'content': prompt}],
+            response_format={'type': 'json_object'},
+            temperature=0.7,
+            max_tokens=900,
+        )
+        plan = json.loads(resp.choices[0].message.content)
+        return jsonify({'success': True, 'plan': plan})
+    except Exception as e:
+        print(f"Generate plan error: {e}")
+        return jsonify({'success': False, 'error': 'Could not generate plan. Please try again.'}), 500
+
+
 @app.route('/api/marketing/book-call', methods=['POST'])
 def api_marketing_book_call():
     """Record that an author clicked the social-services 'Book a call' CTA and
@@ -5309,9 +5400,9 @@ def author_marketing_platform():
     # Initial services-upsell state (recomputed live by JS as the author edits).
     if md:
         _score, _fit = _compute_platform_score(md)
-        upsell = _services_upsell_payload(_fit, _marketing_reach(md))
+        upsell = _services_upsell_payload(_fit, _marketing_reach(md), md.platform_mode or 'author')
     else:
-        upsell = _services_upsell_payload(None, 0)
+        upsell = _services_upsell_payload(None, 0, platform_mode or 'author')
 
     return render_template(
         'author_marketing_platform.html',

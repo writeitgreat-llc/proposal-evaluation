@@ -1254,6 +1254,11 @@
     /* ── Mode Management ── */
     var currentMode  = {{ platform_mode | tojson }};
     var plan90day    = {{ plan_90day | tojson }};   // declared here so renderPlan() can use it on load
+    var MONTH_META = {
+        1: {num: 'Month 1 · Days 1–30', fallback: 'Foundation'},
+        2: {num: 'Month 2 · Days 31–60', fallback: 'Momentum'},
+        3: {num: 'Month 3 · Days 61–90', fallback: 'Scale'},
+    };
 
     var CREATOR_PUB_STATES = [
         {min: 0,     max: 0,     label: '"Let\'s map your audience..."'},
@@ -1321,13 +1326,7 @@
     })();
 
     /* ── 90-Day Marketing Activity Plan (read-only, AI-generated) ── */
-    // plan90day declared above in Mode Management so renderPlan() can use it on load.
-
-    var MONTH_META = {
-        1: {num: 'Month 1 · Days 1–30', fallback: 'Foundation'},
-        2: {num: 'Month 2 · Days 31–60', fallback: 'Momentum'},
-        3: {num: 'Month 3 · Days 61–90', fallback: 'Scale'},
-    };
+    // plan90day and MONTH_META declared above in Mode Management so renderPlan() can use them on load.
 
     function esc(s) {
         return String(s == null ? '' : s)

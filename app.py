@@ -993,6 +993,8 @@ class MarketingModuleData(db.Model):
     services_admin_notes = db.Column(db.Text)
     call_clicked_at     = db.Column(db.DateTime)           # when author clicked "Book a call"
     woodpecker_added    = db.Column(db.Boolean, default=False)  # enrolled in re-marketing campaign
+    platform_mode       = db.Column(db.String(10))              # 'author' | 'creator' (None = not chosen)
+    plan_90day_json     = db.Column(db.Text)                    # 90-day plan for creator mode
     enrollment = db.relationship('CoachingEnrollment',
                                  backref=db.backref('marketing_data', uselist=False))
 
@@ -1006,6 +1008,7 @@ MARKETING_XP_ACTIONS = {
     'platform_builder': 300,
     'comp_titles': 250,
     'pitch_challenge': 200,
+    'plan_90day': 250,
 }
 
 MARKETING_XP_MAX = 1500
@@ -4640,6 +4643,23 @@ def api_marketing_save():
     elif save_type == 'pitch':
         md.pitch_text = payload.get('pitch_text', '')
 
+    elif save_type == 'mode':
+        mode = payload.get('mode')
+        if mode in ('author', 'creator'):
+            md.platform_mode = mode
+
+    elif save_type == 'plan':
+        plan = payload.get('plan', {})
+        md.plan_90day_json = json.dumps(plan)
+        has_content = any(
+            (phase.get('focus') or '').strip()
+            for phase in plan.values()
+            if isinstance(phase, dict)
+        )
+        if has_content and 'plan_90day' not in actions:
+            actions['plan_90day'] = True
+            xp_gained += MARKETING_XP_ACTIONS.get('plan_90day', 250)
+
     md.xp_total = old_xp + xp_gained
     md.xp_actions_json = json.dumps(actions)
     md.updated_at = datetime.utcnow()
@@ -4666,6 +4686,7 @@ def api_marketing_pitch_eval():
     enrollment_id = data.get('enrollment_id')
     standalone = data.get('standalone', False)
     pitch_text = (data.get('pitch_text') or '').strip()
+    pitch_mode = data.get('mode', 'author')
     if not pitch_text:
         return jsonify({'error': 'No pitch text'}), 400
 
@@ -4678,16 +4699,27 @@ def api_marketing_pitch_eval():
             return jsonify({'error': 'Not found'}), 404
 
     try:
-        prompt = (
-            "You are a literary agent evaluating a 60-second verbal book pitch. "
-            "Evaluate on two dimensions only: (1) Clarity — can you immediately understand "
-            "what this book is about and who it's for? (2) Intrigue — does it make you want "
-            "to know more? Give 2 bullet points of specific, warm feedback and one concrete "
-            "suggestion to make it punchier. Do not comment on completeness — this is a pitch, "
-            "not a proposal.\n\nPitch: " + pitch_text +
-            "\n\nRespond ONLY with valid JSON: "
-            '{"bullets": ["point 1", "point 2"], "suggestion": "..."}'
-        )
+        if pitch_mode == 'creator':
+            prompt = (
+                "You are a social media strategist evaluating a 60-second personal brand pitch. "
+                "Evaluate on two dimensions: (1) Clarity — can you immediately understand "
+                "what this person does and who they serve? (2) Intrigue — does it make you want "
+                "to follow or engage? Give 2 bullet points of specific, warm feedback and one concrete "
+                "suggestion to make it more compelling.\n\nPitch: " + pitch_text +
+                "\n\nRespond ONLY with valid JSON: "
+                '{"bullets": ["point 1", "point 2"], "suggestion": "..."}'
+            )
+        else:
+            prompt = (
+                "You are a literary agent evaluating a 60-second verbal book pitch. "
+                "Evaluate on two dimensions only: (1) Clarity — can you immediately understand "
+                "what this book is about and who it's for? (2) Intrigue — does it make you want "
+                "to know more? Give 2 bullet points of specific, warm feedback and one concrete "
+                "suggestion to make it punchier. Do not comment on completeness — this is a pitch, "
+                "not a proposal.\n\nPitch: " + pitch_text +
+                "\n\nRespond ONLY with valid JSON: "
+                '{"bullets": ["point 1", "point 2"], "suggestion": "..."}'
+            )
         resp = client.chat.completions.create(
             model='gpt-4o-mini',
             messages=[{'role': 'user', 'content': prompt}],
@@ -5266,6 +5298,8 @@ def author_marketing_platform():
     comp_titles = json.loads(md.comp_titles_json) if md and md.comp_titles_json else []
     pitch_text = md.pitch_text if md else ''
     pitch_feedback = json.loads(md.pitch_feedback_json) if md and md.pitch_feedback_json else None
+    platform_mode = md.platform_mode if md else None
+    plan_90day = json.loads(md.plan_90day_json) if md and md.plan_90day_json else {}
 
     milestones = [{'xp': t, 'badge': b, 'name': n,
                    'pct': round(t / MARKETING_XP_MAX * 100),
@@ -5291,6 +5325,8 @@ def author_marketing_platform():
         pitch_feedback=pitch_feedback,
         upsell=upsell,
         services_call_url=SERVICES_CALL_URL,
+        platform_mode=platform_mode,
+        plan_90day=plan_90day,
     )
 
 
@@ -7572,6 +7608,8 @@ def run_migrations():
     _add('marketing_module_data', 'services_admin_notes TEXT')
     _add('marketing_module_data', 'call_clicked_at TIMESTAMP')
     _add('marketing_module_data', 'woodpecker_added BOOLEAN DEFAULT FALSE')
+    _add('marketing_module_data', "platform_mode VARCHAR(10)")
+    _add('marketing_module_data', 'plan_90day_json TEXT')
     # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless)
     if is_pg:
         try:

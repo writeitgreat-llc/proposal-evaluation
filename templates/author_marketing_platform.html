@@ -1320,6 +1320,10 @@
         if (app)    app.style.display = 'none';
     }
 
+    // Expose to global scope so inline onclick handlers can reach them
+    window.selectMode = selectMode;
+    window.resetMode  = resetMode;
+
     // Apply on load if already set
     (function() {
         if (currentMode) applyMode(currentMode);

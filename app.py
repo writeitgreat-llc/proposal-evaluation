@@ -4768,6 +4768,60 @@ def api_marketing_pitch_eval():
     })
 
 
+@app.route('/api/marketing/generate-plan', methods=['POST'])
+def api_marketing_generate_plan():
+    """AI-generated 90-day marketing activity plan based on the author's platform and goals."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json() or {}
+    goals     = (data.get('goals') or '').strip()
+    platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
+
+    platform_lines = '\n'.join(
+        f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers"
+        for p in platforms
+    ) or '- (no channels added yet)'
+
+    channel_ids = json.dumps([p['id'] for p in platforms if p.get('id')])
+
+    prompt = (
+        "You are an expert social media growth strategist creating a personalised 90-day "
+        "marketing activity plan for a content creator.\n\n"
+        f"Their current platform:\n{platform_lines}\n\n"
+        f"Their goals: {goals or 'Build a consistent audience and establish their brand online'}\n\n"
+        "Write a 90-day plan split into 3 monthly phases. For each phase produce:\n"
+        "1. A `focus` field — 2-3 concrete sentences describing the month's priority and strategy.\n"
+        "2. A `channels` array — one entry per channel listed above with a specific, realistic "
+        "weekly activity goal (e.g. '2 videos/week', '1 email newsletter', '3 short-form posts/week').\n\n"
+        "Rules:\n"
+        "- Month 1: foundation — establish habits, set up systems, learn what works.\n"
+        "- Month 2: momentum — increase consistency, test new formats, engage community.\n"
+        "- Month 3: scale — double down on top performers, review metrics, plan next quarter.\n"
+        "- Advice must be specific to the creator's actual channels and goals.\n"
+        "- Keep activity goals achievable for someone doing this part-time.\n\n"
+        f"Only use these exact channel id values in the channels arrays: {channel_ids}\n\n"
+        "Respond ONLY with valid JSON:\n"
+        '{"month1":{"focus":"...","channels":[{"id":"...","activity":"..."}]},'
+        '"month2":{"focus":"...","channels":[...]},'
+        '"month3":{"focus":"...","channels":[...]}}'
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model='gpt-4o-mini',
+            messages=[{'role': 'user', 'content': prompt}],
+            response_format={'type': 'json_object'},
+            temperature=0.7,
+            max_tokens=900,
+        )
+        plan = json.loads(resp.choices[0].message.content)
+        return jsonify({'success': True, 'plan': plan})
+    except Exception as e:
+        print(f"Generate plan error: {e}")
+        return jsonify({'success': False, 'error': 'Could not generate plan. Please try again.'}), 500
+
+
 @app.route('/api/marketing/book-call', methods=['POST'])
 def api_marketing_book_call():
     """Record that an author clicked the social-services 'Book a call' CTA and

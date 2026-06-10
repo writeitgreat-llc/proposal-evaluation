@@ -588,6 +588,9 @@
                         <span id="plan-gen-loading" class="plan-gen-loading" style="display:none;">⏳ Building your personalised plan…</span>
                         <span id="plan-gen-error" class="plan-gen-error" style="display:none;"></span>
                     </div>
+                    <div id="plan-last-generated" style="display:none; margin-top:0.5rem; font-size:0.78rem; color:#7c3aed;">
+                        📅 Plan last generated: <span id="plan-gen-date"></span> — update your goals above and click <strong>Regenerate</strong> for a fresh plan.
+                    </div>
                 </div>
 
                 <!-- Rendered (read-only) plan -->
@@ -1410,6 +1413,12 @@
         if (hasPlan) {
             var btn = document.getElementById('plan-generate-btn');
             if (btn) btn.textContent = '✨ Regenerate plan';
+            var stamp = document.getElementById('plan-last-generated');
+            var dateEl = document.getElementById('plan-gen-date');
+            if (stamp && plan90day.generated_at) {
+                if (dateEl) dateEl.textContent = plan90day.generated_at;
+                stamp.style.display = '';
+            }
         }
         renderPlan();
     })();
@@ -1441,6 +1450,13 @@
             if (d.success && d.plan) {
                 plan90day = d.plan;
                 renderPlan();
+                // Show/update the "last generated" stamp.
+                var stamp = document.getElementById('plan-last-generated');
+                var dateEl = document.getElementById('plan-gen-date');
+                if (stamp && d.plan.generated_at) {
+                    if (dateEl) dateEl.textContent = d.plan.generated_at;
+                    stamp.style.display = '';
+                }
                 // XP + upsell come back from the server (it persists the plan).
                 if (typeof d.xp_total === 'number') setXP(d.xp_total);
                 if (d.xp_gained > 0) showXPToast(d.xp_gained, d.unlocked_badge);

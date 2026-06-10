@@ -120,6 +120,18 @@ SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
 FROM_EMAIL = os.environ.get('FROM_EMAIL', '') or SMTP_USER
 TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 'anna@writeitgreat.com').split(',')
 
+# Booking link for the social-media-services upsell (Calendly / Cal.com).
+# Set SERVICES_CALL_URL in Heroku Config Vars.
+SERVICES_CALL_URL = os.environ.get('SERVICES_CALL_URL', 'https://calendly.com/writeitgreat/strategy-call')
+
+# Woodpecker cold-email integration — qualified marketing-platform leads are
+# pushed into a Woodpecker campaign for automated re-marketing.
+# Set WOODPECKER_API_KEY in Heroku Config Vars. The campaign is resolved by
+# name at runtime so the ID never has to be hard-coded.
+WOODPECKER_API_KEY = os.environ.get('WOODPECKER_API_KEY', '')
+WOODPECKER_CAMPAIGN_NAME = os.environ.get('WOODPECKER_CAMPAIGN_NAME', 'Anna Platform Re-marketing')
+WOODPECKER_BASE = os.environ.get('WOODPECKER_BASE', 'https://api.woodpecker.co/rest/v1')
+
 # Team member name → email map (for assignment reminders)
 TEAM_MEMBER_EMAILS = {
     'Andy':     'andy@writeitgreat.com',
@@ -973,6 +985,14 @@ class MarketingModuleData(db.Model):
     pitch_feedback_json = db.Column(db.Text)  # AI feedback JSON
     comp_titles_json   = db.Column(db.Text)   # [{id, title, author, year, cover}]
     updated_at         = db.Column(db.DateTime, default=datetime.utcnow)
+    # ── Lead qualification for social-media-services upsell ──
+    platform_score      = db.Column(db.Integer)            # 0-100 platform strength (computed)
+    services_fit        = db.Column(db.String(10))         # 'hot' | 'warm' | 'cold' | None
+    services_alert_sent = db.Column(db.Boolean, default=False)  # team alerted once on qualify
+    services_status     = db.Column(db.String(30), default='not_contacted')  # SOCIAL_FOLLOW_UP_STATUSES
+    services_admin_notes = db.Column(db.Text)
+    call_clicked_at     = db.Column(db.DateTime)           # when author clicked "Book a call"
+    woodpecker_added    = db.Column(db.Boolean, default=False)  # enrolled in re-marketing campaign
     enrollment = db.relationship('CoachingEnrollment',
                                  backref=db.backref('marketing_data', uselist=False))
 
@@ -1024,6 +1044,143 @@ def _marketing_check_badge(old_xp, new_xp):
         if old_xp < threshold <= new_xp:
             return {'badge': badge, 'name': name, 'xp': threshold}
     return None
+
+
+# Owned-audience channels (the platform a publisher cares about most)
+MARKETING_OWNED_CHANNELS = {'newsletter', 'substack', 'blog', 'podcast'}
+
+
+def _marketing_reach(md):
+    """Total estimated audience across all platforms with a number entered."""
+    try:
+        platforms = json.loads(md.platforms_json or '[]')
+    except Exception:
+        platforms = []
+    return sum(int(p.get('audience') or 0) for p in platforms)
+
+
+def _compute_platform_score(md):
+    """Return (platform_score 0-100, services_fit) from saved marketing data.
+
+    platform_score measures how strong/publisher-ready the platform looks.
+    services_fit measures how good a prospect they are for done-for-you social:
+    a motivated author with a *weak* platform is the ideal customer ('hot');
+    someone already at scale is a harder sell ('cold').
+    """
+    import math
+    try:
+        platforms = json.loads(md.platforms_json or '[]')
+    except Exception:
+        platforms = []
+    try:
+        comps = json.loads(md.comp_titles_json or '[]')
+    except Exception:
+        comps = []
+    pitch_done = bool(md.pitch_feedback_json)
+
+    total_reach = sum(int(p.get('audience') or 0) for p in platforms)
+    channels = len([p for p in platforms if int(p.get('audience') or 0) > 0])
+    has_owned = any(p.get('id') in MARKETING_OWNED_CHANNELS and int(p.get('audience') or 0) > 0
+                    for p in platforms)
+
+    # Strength score (0-100): reach dominates, with credit for diversity/owned/pitch.
+    reach_score = min(60.0, (math.log10(total_reach + 1) / 5.0) * 60.0)  # ~100k reach ≈ full 60
+    diversity_score = min(20.0, channels * 5.0)
+    owned_score = 15.0 if has_owned else 0.0
+    pitch_score = 5.0 if pitch_done else 0.0
+    score = int(round(reach_score + diversity_score + owned_score + pitch_score))
+
+    # Fit: only qualify someone who has actually engaged with the tool.
+    engaged = total_reach > 0 or pitch_done or len(comps) >= 1
+    if not engaged:
+        fit = None
+    elif total_reach < 2000:
+        fit = 'hot'
+    elif total_reach < 15000:
+        fit = 'warm'
+    else:
+        fit = 'cold'
+    return score, fit
+
+
+def _services_upsell_payload(fit, total_reach):
+    """Score-aware upsell copy shown in the marketing platform sidebar."""
+    reach_str = f"{total_reach:,}"
+    if fit == 'hot':
+        return {
+            'show': True, 'tone': 'hot',
+            'headline': 'Your platform is just getting started',
+            'body': (f"You're reaching about {reach_str} people right now. Publishers typically "
+                     "look for 10,000+. That gap is exactly what our done-for-you social media "
+                     "service closes — we build and run your author platform so you can focus on writing."),
+            'cta': 'Book a free strategy call',
+        }
+    if fit == 'warm':
+        return {
+            'show': True, 'tone': 'warm',
+            'headline': "You've got real momentum",
+            'body': (f"A platform of ~{reach_str} is a genuine asset. On a quick call we'll show you "
+                     "how a managed strategy turns that audience into pre-orders and a stronger pitch to publishers."),
+            'cta': 'Book a strategy call',
+        }
+    if fit == 'cold':
+        return {
+            'show': True, 'tone': 'cold',
+            'headline': 'You have a strong platform — let’s amplify it',
+            'body': (f"With ~{reach_str} in reach you're ahead of most authors. We help established "
+                     "platforms convert better and launch louder. Curious what that looks like?"),
+            'cta': 'Talk to our team',
+        }
+    return {
+        'show': False,
+        'headline': '', 'body': '', 'cta': 'Book a strategy call', 'tone': 'none',
+    }
+
+
+def _refresh_services_lead(md, author):
+    """Recompute lead score/fit on a MarketingModuleData row, alert the team once
+    when it first qualifies, and return the upsell payload for the frontend.
+
+    Caller is responsible for the surrounding db.session.commit().
+    """
+    score, fit = _compute_platform_score(md)
+    md.platform_score = score
+    md.services_fit = fit
+    total_reach = _marketing_reach(md)
+
+    if fit in ('hot', 'warm') and not md.services_alert_sent and author is not None:
+        md.services_alert_sent = True
+        try:
+            threading.Thread(
+                target=_send_services_alert_async,
+                args=(author.id, md.id, 'qualified'),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            print(f"Services lead dispatch error: {e}")
+
+    return _services_upsell_payload(fit, total_reach)
+
+
+def _send_services_alert_async(author_id, md_id, reason):
+    """Background worker for a services lead: email the team and (once) enrol the
+    prospect into the Woodpecker re-marketing campaign with their score/plan."""
+    with app.app_context():
+        author = Author.query.get(author_id)
+        md = MarketingModuleData.query.get(md_id)
+        if not (author and md):
+            return
+        try:
+            send_services_lead_alert(author, md, reason)
+        except Exception as e:
+            print(f"Services lead alert error: {e}")
+        if not md.woodpecker_added:
+            try:
+                if woodpecker_add_prospect(author, md):
+                    md.woodpecker_added = True
+                    db.session.commit()
+            except Exception as e:
+                print(f"Woodpecker enrol error: {e}")
 
 
 SOCIAL_FOLLOW_UP_STATUSES = [
@@ -1894,6 +2051,100 @@ def mailchimp_add_lead(email: str, name: str, tag: str = 'social-strategy-lead')
         print(f"Mailchimp error: {e}")
 
 
+# ── Woodpecker (cold-email re-marketing) ────────────────────────────────────
+_woodpecker_campaign_cache = {}  # name(lower) → id
+
+
+def _woodpecker_get_campaign_id(name):
+    """Resolve a Woodpecker campaign ID by its name (cached). None if not found."""
+    if not WOODPECKER_API_KEY or not name:
+        return None
+    key = name.strip().lower()
+    if key in _woodpecker_campaign_cache:
+        return _woodpecker_campaign_cache[key]
+    try:
+        resp = http_requests.get(
+            f"{WOODPECKER_BASE}/campaign_list",
+            headers={'x-api-key': WOODPECKER_API_KEY},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"Woodpecker campaign_list failed: {resp.status_code} {resp.text[:200]}")
+            return None
+        campaigns = resp.json()
+        for c in (campaigns if isinstance(campaigns, list) else []):
+            if (c.get('name') or '').strip().lower() == key:
+                _woodpecker_campaign_cache[key] = c.get('id')
+                return c.get('id')
+        print(f"Woodpecker: campaign {name!r} not found among {len(campaigns) if isinstance(campaigns, list) else 0} campaigns")
+    except Exception as e:
+        print(f"Woodpecker campaign lookup error: {e}")
+    return None
+
+
+def woodpecker_add_prospect(author, md):
+    """Enrol a qualified marketing-platform lead into the Woodpecker campaign,
+    carrying their score / platform / pitch as snippets. Returns True on success.
+    Silent no-op if Woodpecker isn't configured."""
+    if not WOODPECKER_API_KEY:
+        print("Woodpecker not configured - skipping")
+        return False
+    campaign_id = _woodpecker_get_campaign_id(WOODPECKER_CAMPAIGN_NAME)
+    if not campaign_id:
+        return False
+    try:
+        platforms = json.loads(md.platforms_json or '[]')
+    except Exception:
+        platforms = []
+    try:
+        comps = json.loads(md.comp_titles_json or '[]')
+    except Exception:
+        comps = []
+
+    reach = _marketing_reach(md)
+    channels = ', '.join(
+        f"{p.get('name', p.get('id', ''))} ({int(p.get('audience') or 0):,})"
+        for p in platforms if int(p.get('audience') or 0) > 0
+    )
+    comp_str = ', '.join(c.get('title', '') for c in comps if c.get('title'))
+    pitch = (md.pitch_text or '').strip()
+    name_parts = (author.name or '').split()
+    first_name = name_parts[0] if name_parts else ''
+    last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+    prospect = {
+        'email': author.email,
+        'first_name': first_name,
+        'last_name': last_name,
+        # Snippets carry everything they built so campaign copy can reference it.
+        'snippet1': str(md.platform_score if md.platform_score is not None else ''),
+        'snippet2': (md.services_fit or ''),
+        'snippet3': f"{reach:,}",
+        'snippet4': channels,
+        'snippet5': comp_str,
+        'snippet6': pitch[:600],
+        'snippet7': f"{APP_BASE_URL}/admin/marketing-leads",
+    }
+    body = {
+        'update': True,  # update snippets if the prospect already exists
+        'campaign': {'campaign_id': campaign_id},
+        'prospects': [prospect],
+    }
+    try:
+        resp = http_requests.post(
+            f"{WOODPECKER_BASE}/add_prospects_campaign",
+            json=body,
+            headers={'x-api-key': WOODPECKER_API_KEY, 'Content-Type': 'application/json'},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        print(f"Woodpecker add_prospects failed: {resp.status_code} {resp.text[:300]}")
+    except Exception as e:
+        print(f"Woodpecker add prospect error: {e}")
+    return False
+
+
 def send_social_strategy_email(to_email: str, name: str,
                                 strategy_obj: SocialStrategy, pdf_bytes: bytes):
     """Email the strategy PDF to the author/lead."""
@@ -2111,6 +2362,63 @@ def send_team_notification(proposal):
         return success
     except Exception as e:
         print(f"Team notification error: {e}")
+        traceback.print_exc()
+        return False
+
+
+def send_services_lead_alert(author, md, reason='qualified'):
+    """Alert the team that a marketing-platform user is a social-media-services lead."""
+    try:
+        fit = (md.services_fit or 'warm').upper()
+        total_reach = _marketing_reach(md)
+        try:
+            platforms = json.loads(md.platforms_json or '[]')
+        except Exception:
+            platforms = []
+        channel_rows = ''.join(
+            f"<tr><td style='padding:4px 8px;border-bottom:1px solid #eee;'>{p.get('name', p.get('id',''))}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right;'>{int(p.get('audience') or 0):,}</td></tr>"
+            for p in platforms if int(p.get('audience') or 0) > 0
+        )
+
+        if reason == 'booked_call':
+            subject = f"🔥 [Book-a-call] {author.name} wants a strategy call ({fit} fit)"
+            banner = "This lead just clicked <strong>Book a call</strong> on the Marketing Platform Builder."
+            banner_colour = '#b91c1c'
+        else:
+            subject = f"🎯 [{fit} lead] {author.name} qualified on the Marketing Platform Builder"
+            banner = "A marketing-platform user just qualified as a social-media-services prospect."
+            banner_colour = '#7c3aed'
+
+        html_content = f"""
+        <html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+            <div style="max-width:600px;margin:0 auto;padding:20px;">
+                <div style="background:{banner_colour};color:white;padding:16px 20px;border-radius:8px;">
+                    <div style="font-size:18px;font-weight:bold;">{banner}</div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;margin-top:16px;">
+                    <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;width:150px;">Author</td><td style="padding:8px;border-bottom:1px solid #eee;">{author.name}</td></tr>
+                    <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Email</td><td style="padding:8px;border-bottom:1px solid #eee;"><a href="mailto:{author.email}">{author.email}</a></td></tr>
+                    <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Services fit</td><td style="padding:8px;border-bottom:1px solid #eee;">{fit}</td></tr>
+                    <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Platform score</td><td style="padding:8px;border-bottom:1px solid #eee;">{md.platform_score if md.platform_score is not None else '—'}/100</td></tr>
+                    <tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:bold;">Total reach</td><td style="padding:8px;border-bottom:1px solid #eee;">{total_reach:,}</td></tr>
+                </table>
+                {f'<h3 style="color:#2D1B69;margin-top:18px;">Channels</h3><table style="width:100%;border-collapse:collapse;">{channel_rows}</table>' if channel_rows else ''}
+                <div style="margin-top:20px;">
+                    <a href="{APP_BASE_URL}/admin/marketing-leads" style="display:inline-block;padding:12px 24px;background:#B8F2B8;color:#1a3a1a;text-decoration:none;border-radius:5px;font-weight:bold;">View Services Leads</a>
+                </div>
+            </div>
+        </body></html>
+        """
+
+        success = True
+        for email in TEAM_EMAILS:
+            if email.strip():
+                if not send_email(email.strip(), subject, html_content):
+                    success = False
+        return success
+    except Exception as e:
+        print(f"Services lead alert error: {e}")
         traceback.print_exc()
         return False
 
@@ -3590,6 +3898,73 @@ def author_quickstart_pdf():
 
 
 # ============================================================================
+# MARKETING PLATFORM — SERVICES LEADS (ADMIN)
+# ============================================================================
+
+@app.route('/admin/marketing-leads')
+@team_required
+def admin_marketing_leads():
+    """Authors who qualified as social-media-services leads via the Marketing Platform Builder."""
+    rows = (MarketingModuleData.query
+            .filter(MarketingModuleData.services_fit.isnot(None))
+            .all())
+    leads = []
+    for md in rows:
+        author = Author.query.get(md.author_id) if md.author_id else None
+        if not author and md.enrollment and md.enrollment.author_id:
+            author = Author.query.get(md.enrollment.author_id)
+        if not author:
+            continue
+        try:
+            platforms = json.loads(md.platforms_json or '[]')
+        except Exception:
+            platforms = []
+        try:
+            comps = json.loads(md.comp_titles_json or '[]')
+        except Exception:
+            comps = []
+        try:
+            pitch_feedback = json.loads(md.pitch_feedback_json) if md.pitch_feedback_json else None
+        except Exception:
+            pitch_feedback = None
+        leads.append({
+            'md': md,
+            'author': author,
+            'reach': _marketing_reach(md),
+            'platforms': [p for p in platforms if int(p.get('audience') or 0) > 0],
+            'comps': comps,
+            'pitch': md.pitch_text,
+            'pitch_feedback': pitch_feedback,
+        })
+    # Hot first, then warm, then cold; within a tier, most recently active first.
+    fit_rank = {'hot': 0, 'warm': 1, 'cold': 2}
+    leads.sort(key=lambda l: (fit_rank.get(l['md'].services_fit, 3),
+                              -(l['md'].updated_at or datetime.min).timestamp()))
+    return render_template('admin_marketing_leads.html', leads=leads,
+                           statuses=SOCIAL_FOLLOW_UP_STATUSES)
+
+
+@app.route('/admin/marketing-leads/<int:md_id>/status', methods=['POST'])
+@team_required
+def admin_marketing_lead_status(md_id):
+    md = MarketingModuleData.query.get_or_404(md_id)
+    new_status = request.form.get('services_status', 'not_contacted')
+    if new_status in dict(SOCIAL_FOLLOW_UP_STATUSES):
+        md.services_status = new_status
+        db.session.commit()
+    return redirect(url_for('admin_marketing_leads'))
+
+
+@app.route('/admin/marketing-leads/<int:md_id>/notes', methods=['POST'])
+@team_required
+def admin_marketing_lead_notes(md_id):
+    md = MarketingModuleData.query.get_or_404(md_id)
+    md.services_admin_notes = request.form.get('services_admin_notes', '').strip()
+    db.session.commit()
+    return ('', 204)
+
+
+# ============================================================================
 # SOCIAL MEDIA STRATEGY — PUBLIC ROUTES
 # ============================================================================
 
@@ -4268,6 +4643,7 @@ def api_marketing_save():
     md.xp_total = old_xp + xp_gained
     md.xp_actions_json = json.dumps(actions)
     md.updated_at = datetime.utcnow()
+    upsell = _refresh_services_lead(md, current_user)
     db.session.commit()
 
     return jsonify({
@@ -4275,6 +4651,9 @@ def api_marketing_save():
         'xp_total': md.xp_total,
         'xp_gained': xp_gained,
         'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total),
+        'platform_score': md.platform_score,
+        'services_fit': md.services_fit,
+        'upsell': upsell,
     })
 
 
@@ -4342,6 +4721,7 @@ def api_marketing_pitch_eval():
         md.xp_total = old_xp + xp_gained
         md.xp_actions_json = json.dumps(actions)
     md.updated_at = datetime.utcnow()
+    upsell = _refresh_services_lead(md, current_user)
     db.session.commit()
 
     return jsonify({
@@ -4350,7 +4730,40 @@ def api_marketing_pitch_eval():
         'xp_total': md.xp_total,
         'xp_gained': xp_gained,
         'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total) if xp_gained else None,
+        'platform_score': md.platform_score,
+        'services_fit': md.services_fit,
+        'upsell': upsell,
     })
+
+
+@app.route('/api/marketing/book-call', methods=['POST'])
+def api_marketing_book_call():
+    """Record that an author clicked the social-services 'Book a call' CTA and
+    return the booking URL. Fires a high-priority team alert."""
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    md = _get_or_create_marketing_data_standalone(current_user.id)
+    first_click = md.call_clicked_at is None
+    md.call_clicked_at = datetime.utcnow()
+    if md.services_status in (None, 'not_contacted'):
+        md.services_status = 'call_booked'
+    # Make sure the lead is scored/visible even if they jumped straight to booking.
+    if md.services_fit is None:
+        md.platform_score, md.services_fit = _compute_platform_score(md)
+    db.session.commit()
+
+    if first_click:
+        try:
+            threading.Thread(
+                target=_send_services_alert_async,
+                args=(current_user.id, md.id, 'booked_call'),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            print(f"Book-call alert dispatch error: {e}")
+
+    return jsonify({'success': True, 'url': SERVICES_CALL_URL})
 
 
 @app.route('/api/books/search')
@@ -4859,6 +5272,13 @@ def author_marketing_platform():
                    'unlocked': xp_now >= t}
                   for t, b, n in MARKETING_XP_MILESTONES]
 
+    # Initial services-upsell state (recomputed live by JS as the author edits).
+    if md:
+        _score, _fit = _compute_platform_score(md)
+        upsell = _services_upsell_payload(_fit, _marketing_reach(md))
+    else:
+        upsell = _services_upsell_payload(None, 0)
+
     return render_template(
         'author_marketing_platform.html',
         xp_now=xp_now,
@@ -4869,6 +5289,8 @@ def author_marketing_platform():
         comp_titles=comp_titles,
         pitch_text=pitch_text,
         pitch_feedback=pitch_feedback,
+        upsell=upsell,
+        services_call_url=SERVICES_CALL_URL,
     )
 
 
@@ -7143,6 +7565,13 @@ def run_migrations():
 
     # ── marketing_module_data ──────────────────────────────────────────────────
     _add('marketing_module_data', 'author_id INTEGER')
+    _add('marketing_module_data', 'platform_score INTEGER')
+    _add('marketing_module_data', 'services_fit VARCHAR(10)')
+    _add('marketing_module_data', 'services_alert_sent BOOLEAN DEFAULT FALSE')
+    _add('marketing_module_data', "services_status VARCHAR(30) DEFAULT 'not_contacted'")
+    _add('marketing_module_data', 'services_admin_notes TEXT')
+    _add('marketing_module_data', 'call_clicked_at TIMESTAMP')
+    _add('marketing_module_data', 'woodpecker_added BOOLEAN DEFAULT FALSE')
     # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless)
     if is_pg:
         try:

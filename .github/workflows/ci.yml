@@ -36,7 +36,7 @@ jobs:
       # unset -- so it has to be present for the app to import at all. It is a
       # DUMMY. Nothing in CI calls OpenAI. Never put a real key here; CI logs
       # and forks would both see it.
-      OPENAI_API_KEY: sk-ci-dummy-key-not-a-real-credential
+      OPENAI_API_KEY: ci-dummy-openai-credential
       SECRET_KEY: ci-smoke-test-key
       APP_BASE_URL: http://localhost:5000
 

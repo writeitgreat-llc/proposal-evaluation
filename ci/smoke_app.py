@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO_ROOT))
 SMOKE_DB = REPO_ROOT / "ci-smoke.db"
 
 # app.py reads these at import time. Set them BEFORE importing.
-os.environ.setdefault("OPENAI_API_KEY", "sk-ci-dummy-key-not-a-real-credential")
+os.environ.setdefault("OPENAI_API_KEY", "ci-dummy-openai-credential")
 os.environ["DATABASE_URL"] = "sqlite:///" + str(SMOKE_DB)
 os.environ.setdefault("SECRET_KEY", "ci-smoke-test-key")
 # Keep _is_production False so secure-cookie config does not break the test client.

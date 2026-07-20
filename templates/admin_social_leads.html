@@ -120,7 +120,7 @@
                     </form>
                 </td>
                 <td style="padding:0.875rem 1rem;white-space:nowrap;">
-                    <a href="{{ url_for('social_strategy_result', strategy_id=lead.id) }}"
+                    <a href="{{ url_for('social_strategy_result', strategy_id=lead.share_token or lead.id) }}"
                        style="font-size:0.8rem;color:var(--primary);font-weight:600;text-decoration:none;display:block;margin-bottom:0.4rem;">
                        View →
                     </a>

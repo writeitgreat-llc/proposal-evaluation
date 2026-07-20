@@ -1,0 +1,11 @@
+{
+  "_comment": "Known bandit findings in proposal-evaluation, accepted with a reason. Keys are bandit test ids; 'max' is how many findings of that id are tolerated at or above the gate floor (HIGH severity / MEDIUM confidence). A new id, or one more instance of an existing id, fails the build. Fix the finding and lower the number.",
+  "B324": {
+    "max": 1,
+    "reason": "app.py ~2079: hashlib.md5(email) is the subscriber id format the Mailchimp v3 API requires. Not a security hash. Fix properly by passing usedforsecurity=False, then drop this entry."
+  },
+  "B201": {
+    "max": 1,
+    "reason": "app.py ~8049: app.run(debug=True) inside `if __name__ == '__main__'`. Never executed in production - Heroku runs `gunicorn app:app` via the Procfile. Prefer debug=os.environ.get('FLASK_DEBUG')=='1' so a stray `python app.py` on a server cannot expose the Werkzeug console."
+  }
+}

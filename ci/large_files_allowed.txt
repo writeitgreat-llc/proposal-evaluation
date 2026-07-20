@@ -1,0 +1,6 @@
+# Files allowed to exceed the ci/check_no_junk.py size limit.
+#
+# Format:  <repo-relative path>   # why it has to live in git
+#
+# Empty: nothing in this repo is over 5 MB. The size check only looks at files
+# a PR adds or modifies, so an entry is only ever needed for a new large file.

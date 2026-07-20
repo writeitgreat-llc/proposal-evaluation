@@ -1,0 +1,43 @@
+# proposal-evaluation -- accepted dependency advisories
+#
+# Format:  <ADVISORY-ID>   # why it is accepted ... expires: YYYY-MM-DD
+#
+# Only findings at or above the gate threshold (HIGH) need to be listed.
+# LOW/MODERATE findings are printed every run but do not block.
+#
+# EVERY entry below is fixed by a version bump that is already available.
+# They are baselined so that adding CI does not block this week's deploy --
+# not because the risk is acceptable long-term. Bump the three pins and this
+# whole file can be deleted:
+#
+#     Werkzeug==3.0.1  ->  3.1.8      (clears 3 entries, incl. debugger RCE)
+#     gunicorn==21.2.0 ->  23.0.0     (clears 4 entries, request smuggling)
+#     Pillow==10.2.0   ->  12.3.0     (clears 7 entries, incl. buffer overflow)
+#
+# gunicorn is the urgent one: request smuggling in front of a public admin
+# panel is a real bypass primitive, and the fix is a one-line pin change.
+
+# --- gunicorn 21.2.0: HTTP request smuggling (fixed in 22.0.0) ---
+GHSA-hc5x-x2vx-497g   # gunicorn Transfer-Encoding smuggling; bump to 23.0.0. expires: 2026-09-15
+GHSA-w3h3-4rj7-4ph4   # gunicorn smuggling -> endpoint restriction bypass; bump to 23.0.0. expires: 2026-09-15
+PYSEC-2026-1433       # same as GHSA-hc5x-x2vx-497g. expires: 2026-09-15
+PYSEC-2026-1434       # same as GHSA-w3h3-4rj7-4ph4. expires: 2026-09-15
+
+# --- Werkzeug 3.0.1 (fixed in 3.0.3 / 3.0.6) ---
+GHSA-2g68-c3qc-8985   # Werkzeug debugger RCE. Only reachable with debug=True, which prod never sets. expires: 2026-09-15
+PYSEC-2026-2043       # same as GHSA-2g68-c3qc-8985. expires: 2026-09-15
+PYSEC-2026-3417       # multipart parsing resource exhaustion; the app accepts uploads, so this one matters. expires: 2026-09-15
+GHSA-q34m-jh98-gwm2   # same as PYSEC-2026-3417 (OSV publishes it under both ids). expires: 2026-09-15
+
+# --- Pillow 10.2.0 (fixed in 10.3.0 / 12.3.0) ---
+# Pillow is pulled in by qrcode (2FA QR codes) and reportlab/xhtml2pdf (PDF
+# export). It never decodes user-supplied images, which is what these CVEs
+# require, so exposure is low -- but the fix is still just a pin bump.
+GHSA-44wm-f244-xhp3   # _imagingcms buffer overflow; fixed 10.3.0. expires: 2026-09-15
+PYSEC-2026-1793       # same as GHSA-44wm-f244-xhp3 (OSV publishes it under both ids). expires: 2026-09-15
+PYSEC-2026-2253       # PCF font bitmap overflow; fixed 12.3.0. expires: 2026-09-15
+PYSEC-2026-2254       # FontFile.compile overflow; fixed 12.3.0. expires: 2026-09-15
+PYSEC-2026-2255       # BDF font BBX overflow; fixed 12.3.0. expires: 2026-09-15
+PYSEC-2026-2256       # GD header dimension overflow; fixed 12.3.0. expires: 2026-09-15
+PYSEC-2026-3451       # image coordinate API heap OOB write; fixed 12.3.0. expires: 2026-09-15
+PYSEC-2026-3453       # ImageCms.apply heap corruption; fixed 12.3.0. expires: 2026-09-15

@@ -1,0 +1,249 @@
+# Security CI for writeitgreat-llc/proposal-evaluation (authors.writeitgreat.com).
+#
+# This repo is PUBLIC and runs the production admin panel, the 2FA flow, and
+# every author's proposal text. Anyone can read app.py and go looking for a
+# route that forgot its decorator, so the checks here are tighter than on the
+# marketing site.
+#
+#   hygiene       junk/bloat + committed secrets    (hard gate)
+#   gitleaks      pinned gitleaks binary            (hard gate)
+#   route-guards  auth coverage on <param> routes   (hard gate)  <- the IDOR check
+#   dependencies  pip-audit, HIGH/CRITICAL block    (hard gate)
+#   sast          bandit, HIGH/MEDIUM block         (hard gate)
+#   codeql        GitHub's own analysis             (advisory)
+#   headers       security-header inventory         (report only)
+#
+# Note what is NOT here: nothing imports app.py. app.py builds an OpenAI client
+# at module scope and raises without OPENAI_API_KEY, so every check is static -
+# ast for the route audit, bandit for SAST, pip-audit on the requirements file.
+# No dummy API key, no database, no import-time surprises.
+
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Monday 06:00 UTC - catches CVEs published against pins nobody touched.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11" # matches runtime.txt (python-3.11.7)
+  PIP_AUDIT_VERSION: "2.9.0"
+  BANDIT_VERSION: "1.8.6"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+jobs:
+  # ---------------------------------------------------------------------
+  hygiene:
+    name: repo hygiene (junk + secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # check_no_junk.py needs a merge base
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Size limit applies only to files this change adds or modifies, so an
+      # existing large file can never fail an unrelated PR.
+      - name: Junk and bloat
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          python ci/check_no_junk.py \
+            --root . \
+            --max-mb 5 \
+            --allowlist ci/large_files_allowed.txt
+
+      # Complements gitleaks rather than duplicating it: gitleaks is tuned for
+      # high-entropy key formats, this catches a committed .env and a DSN with
+      # an inline password, which the default gitleaks config lets through.
+      - name: Committed secrets (fast pre-filter)
+        run: python ci/check_no_secrets.py --root . --allowlist ci/secret_allowlist.txt
+
+  # ---------------------------------------------------------------------
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Pinned binary + checksum. The gitleaks CLI is MIT and free to run; only
+      # the Action wrapper needs a paid licence for org-owned repos.
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o gitleaks.tar.gz "$url"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
+          gitleaks version
+
+      - name: Scan the diff (pull requests only)
+        if: github.event_name == 'pull_request'
+        run: |
+          gitleaks git . --no-banner --redact \
+            --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Scan the working tree
+        run: gitleaks dir . --no-banner --redact
+
+      # This repo is public: a key pushed and reverted an hour later is still
+      # public forever. History scan is non-negotiable here.
+      - name: Scan the whole history
+        run: gitleaks git . --no-banner --redact --log-opts="--all"
+
+      - name: Is a gitleaks-action licence configured?
+        id: licence
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        run: |
+          if [ -n "${GITLEAKS_LICENSE:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No GITLEAKS_LICENSE secret - skipping the official action." \
+                 "Scanning already happened above; this only adds PR comments." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Official gitleaks action (PR annotations)
+        if: steps.licence.outputs.present == 'true'
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ---------------------------------------------------------------------
+  route-guards:
+    name: auth coverage on parameterised routes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # This is the check that would have caught the IDOR on
+      # /social-strategy/result/<id>: a route that loaded a row by sequential
+      # integer id and rendered it with no ownership check.
+      #
+      # Current state (2026-07-20): 50 parameterised routes, 44 guarded by a
+      # decorator or an inline check, 6 allowlisted capability URLs. Zero
+      # failures. --strict-capability is deliberately NOT set, so adding a new
+      # token-based public route warns loudly instead of blocking a hotfix.
+      - name: Route guard audit
+        run: |
+          python ci/check_route_guards.py \
+            --app app.py \
+            --allowlist ci/route_guard_allowlist.txt \
+            --show-guarded
+
+  # ---------------------------------------------------------------------
+  dependencies:
+    name: dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: python -m pip install --quiet "pip-audit==${PIP_AUDIT_VERSION}"
+
+      # Fails on any HIGH/CRITICAL not listed in ci/vuln_baseline.txt.
+      # The baseline currently holds 16 entries, all of them fixed by bumping
+      # three pins (gunicorn, Werkzeug, Pillow). Read the header of that file.
+      - name: pip-audit
+        run: |
+          python ci/pip_audit_gate.py \
+            --requirements requirements.txt \
+            --baseline ci/vuln_baseline.txt \
+            --fail-on HIGH \
+            --label proposal-evaluation
+
+  # ---------------------------------------------------------------------
+  sast:
+    name: static analysis (bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bandit
+        run: python -m pip install --quiet "bandit==${BANDIT_VERSION}"
+
+      # A 7,900-line file produces 20 bandit findings, 13 of them
+      # try/except/pass. Gating on the raw count would be noise, so the gate is
+      # HIGH severity + MEDIUM confidence with a per-test-id allowance; the
+      # remaining 18 are printed but do not block.
+      - name: bandit
+        run: |
+          python ci/bandit_gate.py \
+            --paths app.py migrate.py fix_schema.py \
+            --allowance ci/bandit_allowance.json \
+            --min-severity HIGH \
+            --min-confidence MEDIUM \
+            --label proposal-evaluation
+
+  # ---------------------------------------------------------------------
+  codeql:
+    name: codeql (advisory)
+    runs-on: ubuntu-latest
+    # Free on public repos. Advisory only for now: it is a deep scanner on a
+    # 7,900-line file and nobody has triaged its first run yet. Once the
+    # backlog is at zero, delete continue-on-error and it becomes a gate.
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  # ---------------------------------------------------------------------
+  headers:
+    name: security headers (report only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Never a gate. Read the job summary: today this reports no CSP, no HSTS,
+      # no X-Frame-Options and - the one that matters most here - no CSRF token
+      # protection anywhere in the app.
+      - name: Header inventory
+        run: python ci/report_security_headers.py --paths app.py --label proposal-evaluation

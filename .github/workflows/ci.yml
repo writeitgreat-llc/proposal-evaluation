@@ -1,0 +1,73 @@
+name: CI
+
+# Runs on every PR into main, and again on main after a merge.
+#
+# No `paths:` filter, on purpose. Branch protection requires the `proposal-ci`
+# check, and a workflow skipped by a path filter never reports a status at all --
+# the PR would sit at "Expected - Waiting for status to be reported" forever.
+# Cheap to always run; miserable to debug.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ==========================================================================
+  # The job key AND the job name are both `proposal-ci`, and that exact string
+  # is the required status check in ci/setup_branch_protection.sh. Change one
+  # and you must change the other, or every PR in this repo blocks forever.
+  # ==========================================================================
+  proposal-ci:
+    name: proposal-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # app.py constructs an OpenAI client at IMPORT time and raises if this is
+      # unset -- so it has to be present for the app to import at all. It is a
+      # DUMMY. Nothing in CI calls OpenAI. Never put a real key here; CI logs
+      # and forks would both see it.
+      OPENAI_API_KEY: ci-dummy-openai-credential
+      SECRET_KEY: ci-smoke-test-key
+      APP_BASE_URL: http://localhost:5000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Must match runtime.txt (python-3.11.7). ci/check_deploy_config.py
+          # fails the build if these two ever drift apart.
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check Heroku deploy config
+        run: python ci/check_deploy_config.py
+
+      - name: Import app, compile templates, run migrations, render public pages
+        run: python ci/smoke_app.py
+
+      # Non-blocking. app.py does `import requests as http_requests` but
+      # requests is NOT in requirements.txt -- today it only installs because
+      # xhtml2pdf -> pyHanko happens to depend on it. That is luck, not a
+      # contract. This surfaces the problem as a PR annotation without blocking
+      # a 3-person team from shipping.
+      - name: Undeclared dependency check (warning only)
+        continue-on-error: true
+        run: python ci/check_undeclared_imports.py

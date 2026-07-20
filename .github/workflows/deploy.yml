@@ -1,0 +1,121 @@
+name: Deploy to Heroku
+
+# Push to main ONLY. Nothing here runs on a pull request, so an unmerged branch
+# can never reach production. Because main is branch-protected (see
+# ci/setup_branch_protection.sh), the only way to get a push to main is to merge
+# a PR whose CI checks were green -- which is what makes this safe.
+#
+# workflow_dispatch is here for two cases: re-deploying the current main after a
+# Heroku-side problem, and the force-push escape hatch when someone has deployed
+# straight to Heroku and the two histories have diverged.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_push:
+        description: "Overwrite Heroku history even if it has commits GitHub does not (destructive)"
+        type: boolean
+        default: false
+
+# Two merges in quick succession must not race. Same group + cancel-in-progress
+# false means deploy #2 QUEUES behind deploy #1 rather than running beside it.
+#
+# cancel-in-progress MUST stay false. This app runs `release: python migrate.py`;
+# cancelling mid-release could leave the schema half-migrated.
+concurrency:
+  group: deploy-heroku-proposal-evaluation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  HEROKU_APP_NAME: proposal-evaluation
+  # The app we actually deploy to. This is the URL that PROVES this deploy
+  # worked, so it is the primary smoke target.
+  APP_URL: https://proposal-evaluation-20d7e1515843.herokuapp.com/
+  # What authors actually visit.
+  #
+  # !! UNRESOLVED, CONFIRM WITH ANDY BEFORE TRUSTING THIS PIPELINE !!
+  # `heroku domains -a proposal-evaluation` lists NO custom domains, yet
+  # authors.writeitgreat.com resolves to a herokudns.com target. It is not on
+  # any of the four apps Ray can see (proposal-evaluation, writeitgreat-website,
+  # uplevelbooks, wig-dashboard), so a fifth Heroku app -- in an account Ray
+  # cannot list -- may be what authors.writeitgreat.com actually serves.
+  # Both URLs currently return byte-identical pages, which is consistent with
+  # either "same app" or "same code deployed twice".
+  #
+  # If it IS a second app, deploying here will not update what users see, and
+  # the PUBLIC_URL smoke below would stay green while doing nothing. Resolve it
+  # with:  heroku domains:add authors.writeitgreat.com -a proposal-evaluation
+  # (or by pointing this workflow at whichever app owns the domain).
+  PUBLIC_URL: https://authors.writeitgreat.com/
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Optional but recommended: create a "production" environment in repo
+    # Settings -> Environments to get a deployment log and (if you want) a
+    # manual approval gate. Uncomment once the environment exists.
+    # environment:
+    #   name: production
+    #   url: ${{ env.APP_URL }}
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is REQUIRED. `git push heroku` is a real git push and
+          # Heroku's builder rejects a shallow clone. The default depth-1
+          # checkout fails with "shallow update not allowed".
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Cheap pre-flight. If the Procfile or runtime.txt is broken there is no
+      # point pushing -- the build would fail anyway, and this says why in one
+      # line instead of 200 lines of Heroku build log.
+      - name: Check Heroku deploy config
+        run: python ci/check_deploy_config.py
+
+      - name: Push to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_FORCE_PUSH: ${{ inputs.force_push == true }}
+        run: bash ci/deploy_heroku.sh "$HEROKU_APP_NAME"
+
+      # The push above returning 0 only means the slug built and the release
+      # phase (python migrate.py) exited 0. It does not mean the site works.
+      # Give this app a longer runway: the release phase runs migrations before
+      # the web dyno starts at all.
+      #
+      # This one is the real gate -- it hits the app we just deployed to.
+      - name: Post-deploy smoke check (deployed app)
+        run: bash ci/smoke_deploy.sh "$APP_URL" 12 15
+
+      # And this one checks what authors actually see. See the note on
+      # PUBLIC_URL above: until the domain ownership is confirmed, a green
+      # result here does not by itself prove this deploy reached users.
+      - name: Post-deploy smoke check (public domain)
+        run: bash ci/smoke_deploy.sh "$PUBLIC_URL" 5 5
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy: ${HEROKU_APP_NAME}"
+            echo ""
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Deployed app: ${APP_URL}"
+            echo "- Public URL: ${PUBLIC_URL}"
+            echo "- Result: ${{ job.status }}"
+            echo ""
+            echo "If this failed AFTER the push step, the code is already live."
+            echo "Roll back with: \`heroku releases:rollback --app ${HEROKU_APP_NAME}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

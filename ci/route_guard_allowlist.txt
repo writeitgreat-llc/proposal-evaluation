@@ -1,0 +1,31 @@
+# proposal-evaluation -- parameterised routes that are intentionally reachable
+# without a login, because the URL itself is the credential.
+#
+# Format:  <url rule>   # why it is safe
+#
+# Adding a line here is a security decision. Before you add one, answer:
+#   1. Is the parameter unguessable? (>= 128 bits of randomness, not sequential)
+#   2. Is the data behind it disclosable to anyone holding the link?
+#   3. Does the link expire?
+# If the answer to any of those is no, add a guard instead of an entry here.
+
+# --- password reset: uuid4 hex (122 bits), single use, 1 hour expiry ---
+# Author.generate_reset_token / AdminUser / Publisher all use uuid.uuid4().hex
+# and set password_reset_expires = utcnow() + 1h; verify_reset_token() rejects
+# expired tokens and the handler clears the token after a successful reset.
+/author/reset-password/<token>       # uuid4 reset token, 1h expiry, cleared on use
+/publisher/reset-password/<token>    # uuid4 reset token, 1h expiry, cleared on use
+/admin/reset-password/<token>        # uuid4 reset token, 1h expiry, cleared on use
+
+# --- evaluation results: capability URL mailed to the author ---
+# WARNING, read this before adding anything similar:
+# generate_submission_id() returns "WIG-<YYYYMMDD>-<5 uppercase hex chars>".
+# That is ~20 bits of entropy behind a guessable date -- about 1.05 million
+# candidates per day. At the traffic this app is being scaled for that is a
+# cheap enumeration, and it exposes proposal text and evaluation scores.
+# These three are allowlisted so CI reflects today's reality, NOT because the
+# design is sound. Fix: widen submission_id to secrets.token_urlsafe(16), or
+# require author login on /results and keep the short id as a display label.
+/results/<submission_id>             # capability URL emailed to the author -- entropy too low, see note above
+/download/<submission_id>            # PDF of the same report, same caveat
+/api/status/<submission_id>          # polling endpoint for the results page; leaks only a status string

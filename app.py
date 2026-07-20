@@ -956,6 +956,11 @@ class SocialStrategy(db.Model):
     lead_email   = db.Column(db.String(200))
     # Source: 'one_pager' | 'standalone'
     source = db.Column(db.String(20), default='standalone')
+    # Unguessable key for the shareable result/PDF links. The primary key is a
+    # sequential integer, so it must never be the only thing guarding a result
+    # page — these pages carry the lead's name, email and full strategy.
+    share_token = db.Column(db.String(32), unique=True, index=True,
+                            default=lambda: uuid.uuid4().hex)
     # Raw inputs and generated strategy
     inputs_json   = db.Column(db.Text)   # answers used to generate
     strategy_json = db.Column(db.Text)   # structured JSON from AI
@@ -2191,7 +2196,7 @@ def send_social_strategy_email(to_email: str, name: str,
     safe = (name or 'author').replace(' ', '_')
     date_str = strategy_obj.created_at.strftime('%Y-%m-%d')
     filename = f"{safe}_SocialStrategy_{date_str}.pdf"
-    view_url = f"{APP_BASE_URL}/social-strategy/result/{strategy_obj.id}"
+    view_url = f"{APP_BASE_URL}/social-strategy/result/{strategy_obj.share_token}"
     html = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
     <div style="max-width:600px;margin:0 auto;padding:24px;">
         <h2 style="color:#2D1B69;">Your Free 6-Month Social Media Strategy 🎉</h2>
@@ -3882,7 +3887,7 @@ def author_quickstart_submit():
         )
         db.session.add(ss)
         db.session.commit()
-        strategy_id = ss.id
+        strategy_id = ss.share_token
         # Email PDF to author in background
         _email_strategy_async(current_user.name, current_user.email, ss.id)
     except Exception as e:
@@ -4055,15 +4060,39 @@ def social_strategy_standalone():
 
         _email_strategy_async(form_data['lead_name'], form_data['lead_email'], ss.id)
 
-        return redirect(url_for('social_strategy_result', strategy_id=ss.id))
+        return redirect(url_for('social_strategy_result', strategy_id=ss.share_token))
 
     return render_template('social_strategy_standalone.html', form={})
 
 
-@app.route('/social-strategy/result/<int:strategy_id>')
+def _resolve_social_strategy(strategy_id):
+    """Look up a strategy for a viewer, or abort.
+
+    The tool is deliberately anonymous, so the result page cannot require a
+    login — but the row id is sequential, so an id alone must not grant access.
+    Unguessable share tokens are the public key. Bare numeric ids are still
+    accepted so that links mailed out before tokens existed keep working, but
+    only for the owning author or a team member.
+    """
+    key = str(strategy_id)
+    if not key.isdigit():
+        return SocialStrategy.query.filter_by(share_token=key).first_or_404()
+
+    ss = SocialStrategy.query.get_or_404(int(key))
+    if current_user.is_authenticated:
+        if getattr(current_user, 'is_team_member', False):
+            return ss
+        if (getattr(current_user, 'is_author', False)
+                and ss.author_id is not None
+                and ss.author_id == current_user.id):
+            return ss
+    abort(404)
+
+
+@app.route('/social-strategy/result/<strategy_id>')
 def social_strategy_result(strategy_id):
     """Display a generated social media strategy."""
-    ss = SocialStrategy.query.get_or_404(strategy_id)
+    ss = _resolve_social_strategy(strategy_id)
     strategy = json.loads(ss.strategy_json) if ss.strategy_json else {}
     return render_template('social_strategy_result.html',
                            strategy_obj=ss,
@@ -4071,10 +4100,10 @@ def social_strategy_result(strategy_id):
                            booking_link=BOOKING_LINK)
 
 
-@app.route('/social-strategy/pdf/<int:strategy_id>')
+@app.route('/social-strategy/pdf/<strategy_id>')
 def social_strategy_pdf(strategy_id):
     """Download strategy as PDF."""
-    ss = SocialStrategy.query.get_or_404(strategy_id)
+    ss = _resolve_social_strategy(strategy_id)
     try:
         pdf_bytes = generate_social_strategy_pdf(ss)
     except Exception as e:
@@ -7874,6 +7903,25 @@ def run_migrations():
         db.create_all()
     except Exception as e:
         print(f'Migration create_all: {e}')
+
+    # ── social_strategy share tokens ───────────────────────────────────────────
+    # Result pages used to be reachable by sequential id alone. Backfill a token
+    # for every existing row so those rows stop being enumerable.
+    _add('social_strategy', 'share_token VARCHAR(32)')
+    try:
+        with db.engine.begin() as conn:
+            rows = conn.execute(text(
+                'SELECT id FROM social_strategy WHERE share_token IS NULL'
+            )).fetchall()
+            for (row_id,) in rows:
+                conn.execute(
+                    text('UPDATE social_strategy SET share_token = :tok WHERE id = :id'),
+                    {'tok': uuid.uuid4().hex, 'id': row_id},
+                )
+        if rows:
+            print(f'Migration: backfilled {len(rows)} social_strategy share_token(s)')
+    except Exception as e:
+        print(f'Migration (social_strategy share_token backfill): {e}')
 
 
 # ============================================================================

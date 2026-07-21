@@ -8,6 +8,7 @@ import os
 import json
 import uuid
 import hashlib
+import hmac
 import smtplib
 import traceback
 import threading
@@ -5280,7 +5281,10 @@ def api_submit():
         return _json({'success': False, 'error': 'API not configured.'}, 503)
 
     provided_key = request.headers.get('X-API-Key', '')
-    if provided_key != API_KEY:
+    # Constant-time comparison so response timing never leaks how much of the
+    # key matched. Encode both sides: compare_digest needs same-type args.
+    if not provided_key or not hmac.compare_digest(
+            provided_key.encode('utf-8'), API_KEY.encode('utf-8')):
         return _json({'success': False, 'error': 'Invalid or missing API key.'}, 401)
 
     # --- Rate limit ---
@@ -5977,7 +5981,13 @@ def admin_login():
         user = AdminUser.query.filter_by(email=email).first()
 
         if user and not user.is_active_account:
-            flash('This account has been deactivated. Contact an admin.', 'error')
+            if not user.totp_enabled:
+                # Never completed first login/2FA setup — this is a fresh
+                # registration still waiting for an admin to approve it.
+                flash('Your account is awaiting approval by an administrator. '
+                      'You can log in once it has been approved.', 'error')
+            else:
+                flash('This account has been deactivated. Contact an admin.', 'error')
             return render_template('admin_login.html')
 
         if user and user.is_locked():
@@ -6362,9 +6372,63 @@ def is_valid_team_email(email):
     return bool(re.match(pattern, email))
 
 
+def notify_admins_of_pending_registration(new_name, new_email):
+    """Email active admins that a new team registration is awaiting approval.
+
+    Sent in a background thread (plain-value args only) so registration never
+    blocks on SMTP. Recipients are the active admin-role accounts (they are the
+    only ones who can approve on /admin/team); falls back to TEAM_EMAILS if the
+    query somehow returns nothing.
+    """
+    def _send():
+        try:
+            import html as htmllib
+            with app.app_context():
+                admins = AdminUser.query.filter_by(role=ROLE_ADMIN, is_active_account=True).all()
+                recipients = {a.email.strip() for a in admins if a.email and a.email.strip()}
+                if not recipients:
+                    recipients = {e.strip() for e in TEAM_EMAILS if e.strip()}
+
+                safe_name = htmllib.escape(new_name)
+                safe_email = htmllib.escape(new_email)
+                subject = f"Team account awaiting approval - {new_name}"
+                html_content = f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 500px; margin: 0 auto; padding: 20px;">
+                        <div style="text-align: center; margin-bottom: 20px;">
+                            <h1 style="color: #2D1B69; margin-bottom: 5px;">Write It Great</h1>
+                        </div>
+                        <p><strong>{safe_name}</strong> ({safe_email}) just registered for a team
+                        dashboard account and is waiting for approval.</p>
+                        <p>New registrations start deactivated. If you recognise this person,
+                        approve them from the Team Management page; otherwise you can delete
+                        the account there.</p>
+                        <div style="text-align: center; margin: 25px 0;">
+                            <a href="{APP_BASE_URL}/admin/team" style="display: inline-block; padding: 14px 28px; background: #B8F2B8; color: #1a3a1a; text-decoration: none; border-radius: 8px; font-weight: bold;">Review on Team Management</a>
+                        </div>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;">
+                        <p style="font-size: 0.8rem; color: #999;">Write It Great &middot; <a href="https://www.writeitgreat.com" style="color: #2D1B69;">writeitgreat.com</a></p>
+                    </div>
+                </body>
+                </html>
+                """
+                for recipient in sorted(recipients):
+                    send_email(recipient, subject, html_content)
+        except Exception as e:
+            print(f"Pending-registration notification error: {e}")
+    threading.Thread(target=_send, daemon=True).start()
+
+
 @app.route('/admin/register', methods=['GET', 'POST'])
 def admin_register():
-    """Team registration - strictly restricted to @writeitgreat.com emails"""
+    """Team registration - strictly restricted to @writeitgreat.com emails.
+
+    Registration alone does NOT grant access: the account is created
+    deactivated and an existing admin must approve it on /admin/team before
+    the first login (and mandatory 2FA setup) can happen. The email-format
+    check above is only a first filter — anyone can type a matching address.
+    """
     if current_user.is_authenticated:
         return redirect(url_for('admin_dashboard'))
 
@@ -6394,14 +6458,21 @@ def admin_register():
             flash('An account with this email already exists. Try logging in or resetting your password.', 'error')
             return render_template('admin_register.html')
 
-        user = AdminUser(email=email, name=name, password_hash='temp')
+        # Created deactivated: an admin must approve on /admin/team first.
+        user = AdminUser(email=email, name=name, password_hash='temp',
+                         is_active_account=False)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
 
-        # Don't auto-login — redirect to 2FA setup
-        session['setup_2fa_user_id'] = user.id
-        return redirect(url_for('admin_setup_2fa'))
+        notify_admins_of_pending_registration(user.name, user.email)
+
+        # No session, no 2FA setup yet — 2FA setup happens on the first
+        # login after an admin approves the account.
+        flash('Your account has been created and is awaiting approval by an '
+              'administrator. Once approved, log in here to set up '
+              'two-factor authentication.', 'success')
+        return redirect(url_for('admin_login'))
 
     return render_template('admin_register.html')
 
@@ -6494,6 +6565,13 @@ def admin_setup_2fa():
         session.pop('setup_2fa_user_id', None)
         return redirect(url_for('admin_login'))
 
+    if not user.is_active_account:
+        # Deactivated (or approval revoked) mid-flow — don't hand out a QR code.
+        session.pop('setup_2fa_user_id', None)
+        flash('This account is not active. An administrator must approve it '
+              'before you can continue.', 'error')
+        return redirect(url_for('admin_login'))
+
     # Generate TOTP secret if not already set
     if not user.totp_secret:
         user.setup_totp()
@@ -6539,6 +6617,12 @@ def admin_verify_2fa():
     user = AdminUser.query.get(user_id)
     if not user:
         session.pop('pending_2fa_user_id', None)
+        return redirect(url_for('admin_login'))
+
+    if not user.is_active_account:
+        # Deactivated between password check and 2FA — refuse to log in.
+        session.pop('pending_2fa_user_id', None)
+        flash('This account has been deactivated. Contact an admin.', 'error')
         return redirect(url_for('admin_login'))
 
     if request.method == 'POST':

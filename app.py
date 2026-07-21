@@ -148,6 +148,17 @@ MAILCHIMP_API_KEY = os.environ.get('MAILCHIMP_API_KEY', '')
 MAILCHIMP_LIST_ID = os.environ.get('MAILCHIMP_LIST_ID', '')
 MAILCHIMP_SERVER  = os.environ.get('MAILCHIMP_SERVER', 'us1')
 
+# Funnel-event webhooks → wig-dashboard (integration Phase 3, contract v1).
+# Fire-and-forget notifications when funnel state changes (author registration,
+# proposal submission, status changes). Set FUNNEL_EVENTS_TOKEN in Heroku
+# Config Vars; when unset the emitter is a silent no-op so this app keeps
+# working standalone. Payloads stay lean — IDs, statuses, and contact fields
+# only; never proposal text, evaluation content, scores, or estimates.
+FUNNEL_EVENTS_URL = os.environ.get(
+    'FUNNEL_EVENTS_URL',
+    'https://wig-dashboard-5276957fea18.herokuapp.com/api/literary/funnel-events')
+FUNNEL_EVENTS_TOKEN = os.environ.get('FUNNEL_EVENTS_TOKEN', '')
+
 # External API configuration (Wix integration)
 API_KEY = os.environ.get('API_KEY', '')
 
@@ -2189,6 +2200,48 @@ def woodpecker_add_prospect(author, md):
     except Exception as e:
         print(f"Woodpecker add prospect error: {e}")
     return False
+
+
+# ── Funnel events (wig-dashboard integration, contract v1) ──────────────────
+
+def _emit_funnel_event(event_type, external_id, **fields):
+    """Fire-and-forget funnel-event webhook to the wig-dashboard.
+
+    The HTTP POST runs in a daemon thread (same pattern as the email sends) so
+    a slow or downed dashboard never delays a user request. Silent no-op when
+    FUNNEL_EVENTS_TOKEN is unset — this app must work standalone. Every
+    failure is swallowed; a lost event is re-derivable from the admin UI, so
+    there is no retry in v1. Only the contract-v1 fields below are ever sent —
+    never proposal text, evaluation content, scores, or estimates.
+    """
+    if not FUNNEL_EVENTS_TOKEN:
+        return
+    body = {'event': {
+        'external_id': external_id,
+        'type': event_type,
+        'occurred_at': datetime.utcnow().isoformat() + 'Z',
+        'author_name': fields.get('author_name'),
+        'author_email': fields.get('author_email'),
+        'book_title': fields.get('book_title'),
+        'proposal_submission_id': fields.get('proposal_submission_id'),
+        'old_status': fields.get('old_status'),
+        'new_status': fields.get('new_status'),
+        'publisher_name': fields.get('publisher_name'),
+        'payload': {},
+    }}
+
+    def _post():
+        try:
+            http_requests.post(
+                FUNNEL_EVENTS_URL,
+                json=body,
+                headers={'Authorization': f'Bearer {FUNNEL_EVENTS_TOKEN}'},
+                timeout=4,
+            )
+        except Exception as e:
+            print(f"Funnel event error ({event_type}): {e}")
+
+    threading.Thread(target=_post, daemon=True).start()
 
 
 def send_social_strategy_email(to_email: str, name: str,
@@ -5192,6 +5245,12 @@ def api_evaluate():
         db.session.add(proposal)
         db.session.commit()
 
+        _emit_funnel_event('proposal_submitted', f'pe-sub-{proposal.id}',
+                           author_name=proposal.author_name,
+                           author_email=proposal.author_email,
+                           book_title=proposal.book_title,
+                           proposal_submission_id=proposal.submission_id)
+
         # Run evaluation in background thread to avoid Heroku 30s timeout
         thread = threading.Thread(
             target=process_evaluation_background,
@@ -5349,6 +5408,12 @@ def api_submit():
         db.session.add(proposal)
         db.session.commit()
 
+        _emit_funnel_event('proposal_submitted', f'pe-sub-{proposal.id}',
+                           author_name=proposal.author_name,
+                           author_email=proposal.author_email,
+                           book_title=proposal.book_title,
+                           proposal_submission_id=proposal.submission_id)
+
         # --- Kick off background evaluation ---
         thread = threading.Thread(
             target=process_evaluation_background,
@@ -5468,6 +5533,8 @@ def author_register():
         login_user(author)
         # Fire-and-forget welcome email
         threading.Thread(target=send_author_welcome_email, args=(author,), daemon=True).start()
+        _emit_funnel_event('author_registered', f'pe-reg-{author.id}',
+                           author_name=author.name, author_email=author.email)
         flash(f'Welcome, {name}! Your account has been created.', 'success')
         return redirect(url_for('author_dashboard'))
 
@@ -5860,6 +5927,16 @@ def publisher_update_status(submission_id):
     db.session.add(note)
     db.session.commit()
 
+    _emit_funnel_event('publisher_status_changed',
+                       f'pe-pub-{shared.id}-{new_status}',
+                       author_name=proposal.author_name,
+                       author_email=proposal.author_email,
+                       book_title=proposal.book_title,
+                       proposal_submission_id=proposal.submission_id,
+                       old_status=old_status,
+                       new_status=new_status,
+                       publisher_name=current_user.company or current_user.name)
+
     flash(f'Status updated to "{PUBLISHER_STATUS_LABELS.get(new_status, new_status)}".', 'success')
     return redirect(url_for('publisher_proposal_detail', submission_id=submission_id))
 
@@ -6094,6 +6171,8 @@ def admin_proposal_detail(submission_id):
 
         # Track status changes
         new_status = request.form.get('status')
+        status_changed = False
+        old_status = None
         if new_status and new_status in [s[0] for s in STATUS_OPTIONS] and new_status != proposal.status:
             status_labels = dict(STATUS_OPTIONS)
             note = ProposalNote(
@@ -6106,6 +6185,7 @@ def admin_proposal_detail(submission_id):
             db.session.add(note)
             old_status = proposal.status
             proposal.status = new_status
+            status_changed = True
 
             # Send milestone email to author if applicable
             if new_status in AUTHOR_EMAIL_MILESTONES:
@@ -6126,6 +6206,17 @@ def admin_proposal_detail(submission_id):
             db.session.add(note)
 
         db.session.commit()
+
+        if status_changed:
+            _emit_funnel_event('proposal_status_changed',
+                               f'pe-pst-{proposal.id}-{new_status}',
+                               author_name=proposal.author_name,
+                               author_email=proposal.author_email,
+                               book_title=proposal.book_title,
+                               proposal_submission_id=proposal.submission_id,
+                               old_status=old_status,
+                               new_status=new_status)
+
         flash('Proposal updated successfully', 'success')
         return redirect(url_for('admin_proposal_detail', submission_id=submission_id))
     
@@ -6354,6 +6445,11 @@ def admin_add_proposal():
         )
         db.session.add(proposal)
         db.session.commit()
+        _emit_funnel_event('proposal_submitted', f'pe-sub-{proposal.id}',
+                           author_name=proposal.author_name,
+                           author_email=proposal.author_email,
+                           book_title=proposal.book_title,
+                           proposal_submission_id=proposal.submission_id)
         flash(f'Proposal "{book_title}" added successfully.', 'success')
         return redirect(url_for('admin_proposal_detail', submission_id=proposal.submission_id))
 

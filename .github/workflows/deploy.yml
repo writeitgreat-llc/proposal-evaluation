@@ -3,7 +3,9 @@ name: Deploy to Heroku
 # Push to main ONLY. Nothing here runs on a pull request, so an unmerged branch
 # can never reach production. Because main is branch-protected (see
 # ci/setup_branch_protection.sh), the only way to get a push to main is to merge
-# a PR whose CI checks were green -- which is what makes this safe.
+# a PR whose CI checks were green -- and the `gate` job below additionally
+# holds the deploy until this exact merge commit's own post-merge checks pass
+# (PR-green is not merge-commit-green when the branch was behind main).
 #
 # workflow_dispatch is here for two cases: re-deploying the current main after a
 # Heroku-side problem, and the force-push escape hatch when someone has deployed
@@ -15,6 +17,10 @@ on:
     inputs:
       force_push:
         description: "Overwrite Heroku history even if it has commits GitHub does not (destructive)"
+        type: boolean
+        default: false
+      skip_gate:
+        description: "Deploy without waiting for post-merge checks (emergencies only)"
         type: boolean
         default: false
 
@@ -53,8 +59,55 @@ env:
   PUBLIC_URL: https://authors.writeitgreat.com/
 
 jobs:
+  gate:
+    name: wait for post-merge checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # workflow_dispatch emergencies (Heroku-side redeploys, divergence fixes)
+    # can skip the wait with the skip_gate input; normal merges never do.
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_gate }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Exactly the checks branch protection requires on PRs. The push-to-main
+      # run of those same workflows must be green on THIS commit before Heroku
+      # sees it -- a merge-skew tree (strict=false) or a main-only failure must
+      # fail the deploy, not race it.
+      BLOCKING_CHECKS: |-
+        proposal-ci
+        auth coverage on parameterised routes
+        repo hygiene (junk + secrets)
+        gitleaks
+        dependency vulnerabilities
+        static analysis (bandit)
+    steps:
+      - name: Wait for this commit's checks to pass
+        run: |
+          deadline=$(( $(date +%s) + 25*60 ))
+          mapfile -t names < <(printf '%s\n' "$BLOCKING_CHECKS" | sed '/^[[:space:]]*$/d')
+          while :; do
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?filter=latest&per_page=100" \
+              --paginate --jq '.check_runs[] | [.name, (.conclusion // "PENDING")] | @tsv' > /tmp/checks.tsv
+            fail=0; pending=()
+            for n in "${names[@]}"; do
+              c=$(awk -F'\t' -v n="$n" '$1==n {print $2; exit}' /tmp/checks.tsv)
+              case "$c" in
+                success) ;;
+                ""|PENDING) pending+=("$n") ;;
+                *) echo "::error::Check '$n' concluded '$c' -- blocking the deploy."; fail=1 ;;
+              esac
+            done
+            [ "$fail" -eq 1 ] && exit 1
+            if [ "${#pending[@]}" -eq 0 ]; then echo "All ${#names[@]} blocking checks green."; exit 0; fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for: ${pending[*]}"; exit 1
+            fi
+            echo "waiting on: ${pending[*]}"; sleep 20
+          done
+
   deploy:
     name: deploy
+    needs: gate
+    if: ${{ !cancelled() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Optional but recommended: create a "production" environment in repo

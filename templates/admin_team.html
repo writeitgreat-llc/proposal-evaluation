@@ -53,6 +53,9 @@
                         <span class="status-badge declined">Locked</span>
                     {% elif member.is_active_account %}
                         <span class="status-badge offer_received">Active</span>
+                    {% elif not member.totp_enabled %}
+                        {# Inactive and never finished first login/2FA = new self-registration waiting for approval #}
+                        <span class="status-badge submitted">Pending approval</span>
                     {% else %}
                         <span class="status-badge on_hold">Deactivated</span>
                     {% endif %}
@@ -74,7 +77,7 @@
                         </form>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_active', user_id=member.id) }}" style="display: inline;">
-                            <button type="submit" class="btn-action btn-action-success" title="Reactivate account">Activate</button>
+                            <button type="submit" class="btn-action btn-action-success" title="{% if not member.totp_enabled %}Approve this registration and activate the account{% else %}Reactivate account{% endif %}">{% if not member.totp_enabled %}Approve{% else %}Activate{% endif %}</button>
                         </form>
                         {% endif %}
 

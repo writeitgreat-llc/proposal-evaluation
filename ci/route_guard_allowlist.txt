@@ -18,14 +18,19 @@
 /admin/reset-password/<token>        # uuid4 reset token, 1h expiry, cleared on use
 
 # --- evaluation results: capability URL mailed to the author ---
-# WARNING, read this before adding anything similar:
-# generate_submission_id() returns "WIG-<YYYYMMDD>-<5 uppercase hex chars>".
-# That is ~20 bits of entropy behind a guessable date -- about 1.05 million
-# candidates per day. At the traffic this app is being scaled for that is a
-# cheap enumeration, and it exposes proposal text and evaluation scores.
-# These three are allowlisted so CI reflects today's reality, NOT because the
-# design is sound. Fix: widen submission_id to secrets.token_urlsafe(16), or
-# require author login on /results and keep the short id as a display label.
-/results/<submission_id>             # capability URL emailed to the author -- entropy too low, see note above
-/download/<submission_id>            # PDF of the same report, same caveat
-/api/status/<submission_id>          # polling endpoint for the results page; leaks only a status string
+# FIXED 2026-07-21 (security/results-tokens). The old note here warned that
+# generate_submission_id() ("WIG-<YYYYMMDD>-<5 hex>", ~20 bits behind a
+# guessable date) was the only key to these pages. Now every NEW proposal gets
+# results_token = secrets.token_urlsafe(16) (128 bits) and these routes resolve
+# through _resolve_proposal_results_key(): token first, and a token-bearing row
+# addressed by its short submission_id 404s. check_route_guards.py therefore
+# classifies them GUARDED (resolver helper), so these entries are dormant.
+# They stay listed deliberately: LEGACY rows (results_token IS NULL, created
+# before the migration -- there is intentionally no backfill) are still served
+# by their low-entropy submission_id so links already emailed to authors keep
+# working. That residual surface shrinks to zero as old rows age out; if it
+# ever needs to be closed early, backfill tokens and re-send the links --
+# do NOT add new low-entropy keys on this pattern.
+/results/<submission_id>             # token-first; submission_id honoured only for legacy token-less rows
+/download/<submission_id>            # PDF of the same report, same rule
+/api/status/<submission_id>          # same rule; leaks only a status string

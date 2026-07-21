@@ -228,11 +228,11 @@
             <div class="detail-section">
                 <h3>Documents</h3>
                 {% if proposal.evaluation_json %}
-                <a href="{{ url_for('download_pdf', submission_id=proposal.submission_id) }}" class="btn btn-gold" style="width: 100%; text-align: center;">Download PDF Report</a>
+                <a href="{{ url_for('download_pdf', submission_id=proposal.results_key) }}" class="btn btn-gold" style="width: 100%; text-align: center;">Download PDF Report</a>
                 {% else %}
                 <p style="color: var(--gray-500); text-align: center;">PDF available after evaluation completes</p>
                 {% endif %}
-                <a href="{{ url_for('results', submission_id=proposal.submission_id) }}" class="btn btn-outline" style="width: 100%; margin-top: 0.5rem; text-align: center;">View Public Page</a>
+                <a href="{{ url_for('results', submission_id=proposal.results_key) }}" class="btn btn-outline" style="width: 100%; margin-top: 0.5rem; text-align: center;">View Public Page</a>
             </div>
 
             <div class="detail-section">

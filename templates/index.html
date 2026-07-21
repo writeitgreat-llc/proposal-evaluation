@@ -194,7 +194,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 {% if current_user.is_authenticated and current_user.is_team_member %}
                 window.location.href = '/admin/proposal/' + data.proposal_id;
                 {% else %}
-                window.location.href = '/results/' + data.proposal_id;
+                // results_url carries the unguessable results token; the
+                // proposal_id fallback only serves legacy token-less rows.
+                window.location.href = data.results_url || ('/results/' + data.proposal_id);
                 {% endif %}
             } else {
                 loadingOverlay.classList.add('hidden');

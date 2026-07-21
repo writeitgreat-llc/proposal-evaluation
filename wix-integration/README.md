@@ -243,10 +243,14 @@ Expected response:
 {
   "success": true,
   "submission_id": "WIG-20260217-ABC12",
-  "results_url": "https://writeitgreat.com/results/WIG-20260217-ABC12",
-  "status_url": "https://writeitgreat.com/api/status/WIG-20260217-ABC12"
+  "results_url": "https://writeitgreat.com/results/3vY9qkPZbXcN0mW2tR5LgQ",
+  "status_url": "https://writeitgreat.com/api/status/3vY9qkPZbXcN0mW2tR5LgQ"
 }
 ```
+
+Note: `results_url` / `status_url` contain an unguessable results token — use
+them verbatim. Do not build these URLs from `submission_id`; that is a display
+label only, and results pages for new submissions are not served under it.
 
 3. **Publish the Wix site** and test the form end-to-end
 4. **Check the admin dashboard** — the submission should appear in the proposal list
@@ -288,8 +292,8 @@ Expected response:
 {
   "success": true,
   "submission_id": "WIG-20260217-ABC12",
-  "results_url": "https://writeitgreat.com/results/WIG-20260217-ABC12",
-  "status_url": "https://writeitgreat.com/api/status/WIG-20260217-ABC12"
+  "results_url": "https://writeitgreat.com/results/3vY9qkPZbXcN0mW2tR5LgQ",
+  "status_url": "https://writeitgreat.com/api/status/3vY9qkPZbXcN0mW2tR5LgQ"
 }
 ```
 

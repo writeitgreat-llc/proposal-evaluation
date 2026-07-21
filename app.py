@@ -7,6 +7,7 @@ Flask application with database, admin dashboard, status tracking, and email not
 import os
 import json
 import uuid
+import secrets
 import hashlib
 import hmac
 import smtplib
@@ -133,13 +134,40 @@ WOODPECKER_API_KEY = os.environ.get('WOODPECKER_API_KEY', '')
 WOODPECKER_CAMPAIGN_NAME = os.environ.get('WOODPECKER_CAMPAIGN_NAME', 'Anna Platform Re-marketing')
 WOODPECKER_BASE = os.environ.get('WOODPECKER_BASE', 'https://api.woodpecker.co/rest/v1')
 
-# Team member name → email map (for assignment reminders)
-TEAM_MEMBER_EMAILS = {
+# Team member name → email map (for assignment reminders).
+# Overridable via the TEAM_ROSTER env var — a JSON object of name → email,
+# e.g. {"Andy": "andy@writeitgreat.com"}. When TEAM_ROSTER is unset, empty,
+# or not a valid non-empty string→string object, the built-in roster below is
+# used unchanged, so existing deployments keep working with zero config.
+_DEFAULT_TEAM_MEMBER_EMAILS = {
     'Andy':     'andy@writeitgreat.com',
     'Virginia': 'virginia@writeitgreat.com',
     'Ray':      'ray@writeitgreat.com',
     'Anna':     'anna@writeitgreat.com',
 }
+
+
+def _load_team_roster():
+    """Parse TEAM_ROSTER (JSON name→email) or fall back to the default map."""
+    raw = os.environ.get('TEAM_ROSTER', '').strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            cleaned = {
+                str(k).strip(): str(v).strip()
+                for k, v in parsed.items()
+                if isinstance(k, str) and isinstance(v, str)
+                and k.strip() and v.strip()
+            }
+            if cleaned:
+                return cleaned
+    return dict(_DEFAULT_TEAM_MEMBER_EMAILS)
+
+
+TEAM_MEMBER_EMAILS = _load_team_roster()
 TEAM_MEMBER_NAMES = list(TEAM_MEMBER_EMAILS.keys())
 
 # Social media strategy feature
@@ -754,6 +782,24 @@ class Proposal(db.Model):
     # Structured platform data from Update 3 form (JSON string)
     platform_data = db.Column(db.Text)
     marketing_strategy = db.Column(db.Text)
+
+    # Unguessable key for the public results/download/status URLs.
+    # submission_id (WIG-YYYYMMDD-<5 hex>, ~20 bits behind a guessable date) is
+    # a display label, not a credential — see ci/route_guard_allowlist.txt.
+    # Rows that carry a results_token are served ONLY via that token; rows
+    # created before this column existed keep it NULL and stay reachable via
+    # their submission_id so every link already emailed to an author keeps
+    # working. (Same pattern as SocialStrategy.share_token, minus the
+    # backfill — that asymmetry is deliberate.)
+    results_token = db.Column(db.String(32), unique=True, index=True,
+                              default=lambda: secrets.token_urlsafe(16))
+
+    @property
+    def results_key(self):
+        """The key to build /results, /download and /api/status URLs with:
+        the high-entropy token when this row has one, else the legacy
+        submission_id (pre-token rows keep their emailed URLs working)."""
+        return self.results_token or self.submission_id
 
 
 class ProposalNote(db.Model):
@@ -2343,7 +2389,7 @@ def send_author_notification(proposal):
             <p>{summary}</p>
 
             <div style="text-align: center; margin: 25px 0;">
-                <a href="{app_url}/results/{proposal.submission_id}" style="display: inline-block; padding: 14px 28px; background: #B8F2B8; color: #1a3a1a; text-decoration: none; border-radius: 8px; font-weight: bold;">View Your Full Report</a>
+                <a href="{app_url}/results/{proposal.results_key}" style="display: inline-block; padding: 14px 28px; background: #B8F2B8; color: #1a3a1a; text-decoration: none; border-radius: 8px; font-weight: bold;">View Your Full Report</a>
             </div>
 
             <p>Your complete evaluation report is also attached as a PDF for your records.</p>
@@ -4558,7 +4604,9 @@ def author_coaching_evaluate():
     return jsonify({
         'success': True,
         'submission_id': proposal.submission_id,
-        'status_url': url_for('check_status', submission_id=proposal.submission_id),
+        # Status polling uses the high-entropy results_key; the results link
+        # goes to the login-guarded author view, keyed by the real id.
+        'status_url': url_for('check_status', submission_id=proposal.results_key),
         'results_url': url_for('author_proposal_detail', submission_id=proposal.submission_id),
     })
 
@@ -5260,9 +5308,14 @@ def api_evaluate():
         thread.daemon = True
         thread.start()
 
+        # proposal_id stays the submission_id — the team flow in index.html
+        # uses it for the (login-guarded) /admin/proposal/ redirect. The public
+        # results/status URLs use the high-entropy results_key instead.
         return jsonify({
             'success': True,
-            'proposal_id': proposal.submission_id
+            'proposal_id': proposal.submission_id,
+            'results_url': url_for('results', submission_id=proposal.results_key),
+            'status_url': url_for('check_status', submission_id=proposal.results_key),
         })
 
     except Exception as e:
@@ -5271,10 +5324,30 @@ def api_evaluate():
         return jsonify({'success': False, 'error': 'An unexpected error occurred. Please try again.'})
 
 
+def _resolve_proposal_results_key(key):
+    """Resolve the opaque key from a /results-family URL to a Proposal, or 404.
+
+    Token first: a row that HAS a results_token is addressable ONLY by that
+    token — addressing it by its short submission_id 404s, because the
+    WIG-YYYYMMDD-<5 hex> id is guessable (see ci/route_guard_allowlist.txt).
+    Rows without a token (created before the column existed) remain
+    addressable by submission_id so already-emailed links keep working.
+    Same shape as _resolve_social_strategy.
+    """
+    proposal = Proposal.query.filter_by(results_token=key).first()
+    if proposal is None:
+        proposal = Proposal.query.filter_by(submission_id=key).first()
+        if proposal is not None and proposal.results_token is not None:
+            proposal = None  # token-bearing row: submission_id is not a credential
+    if proposal is None:
+        abort(404)
+    return proposal
+
+
 @app.route('/api/status/<submission_id>')
 def check_status(submission_id):
     """Check evaluation status (for polling from results page)"""
-    proposal = Proposal.query.filter_by(submission_id=submission_id).first_or_404()
+    proposal = _resolve_proposal_results_key(submission_id)
     return jsonify({
         'status': proposal.status,
         'ready': proposal.status not in ('processing',)
@@ -5423,11 +5496,13 @@ def api_submit():
         thread.start()
 
         app_url = APP_BASE_URL
+        # URLs use the high-entropy results_key, never the short submission_id
+        # (which stays in the payload as a display/reference label only).
         return _json({
             'success': True,
             'submission_id': proposal.submission_id,
-            'results_url': f"{app_url}/results/{proposal.submission_id}",
-            'status_url': f"{app_url}/api/status/{proposal.submission_id}",
+            'results_url': f"{app_url}/results/{proposal.results_key}",
+            'status_url': f"{app_url}/api/status/{proposal.results_key}",
         })
 
     except Exception as e:
@@ -5438,8 +5513,9 @@ def api_submit():
 
 @app.route('/results/<submission_id>')
 def results(submission_id):
-    """Public results page for authors"""
-    proposal = Proposal.query.filter_by(submission_id=submission_id).first_or_404()
+    """Public results page for authors (submission_id is the results key:
+    the results_token for new rows, the legacy id for token-less rows)"""
+    proposal = _resolve_proposal_results_key(submission_id)
     processing = proposal.status == 'processing'
     evaluation = json.loads(proposal.evaluation_json) if proposal.evaluation_json else {}
     if evaluation:
@@ -5464,8 +5540,8 @@ def results(submission_id):
 
 @app.route('/download/<submission_id>')
 def download_pdf(submission_id):
-    """Download PDF report"""
-    proposal = Proposal.query.filter_by(submission_id=submission_id).first_or_404()
+    """Download PDF report (submission_id is the results key — see results())"""
+    proposal = _resolve_proposal_results_key(submission_id)
 
     try:
         pdf_content = generate_pdf_report(proposal)
@@ -8102,6 +8178,22 @@ def run_migrations():
             print(f'Migration: backfilled {len(rows)} social_strategy share_token(s)')
     except Exception as e:
         print(f'Migration (social_strategy share_token backfill): {e}')
+
+    # ── proposal results tokens ────────────────────────────────────────────────
+    # New proposals get a high-entropy results_token and are served only via
+    # token URLs (/results, /download, /api/status). Deliberately NO backfill —
+    # the opposite of the social_strategy block above: legacy rows keep
+    # results_token NULL so every submission_id link already emailed to an
+    # author keeps working. Backfilling would silently break those links.
+    _add('proposal', 'results_token VARCHAR(32)')
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
+                'ON proposal (results_token)'
+            ))
+    except Exception as e:
+        print(f'Migration (proposal results_token index): {e}')
 
 
 # ============================================================================

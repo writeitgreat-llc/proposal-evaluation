@@ -63,6 +63,12 @@ jobs:
     name: wait for post-merge checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The workflow-level block grants contents:read ONLY, which zeroes every
+    # other scope -- and the check-runs API needs checks:read. Job-level
+    # permissions override the workflow block for this job.
+    permissions:
+      checks: read
+      contents: read
     # workflow_dispatch emergencies (Heroku-side redeploys, divergence fixes)
     # can skip the wait with the skip_gate input; normal merges never do.
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_gate }}

@@ -1331,9 +1331,19 @@ class AuthorEngagementEmail(db.Model):
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user from session — checks user_type to pick the right model"""
+    """Load user from session — checks user_type to pick the right model.
+
+    A session with NO user_type resolves to nobody. Every login path sets
+    the key, so the only sessions lacking it are stale pre-2026 cookies or
+    something another app minted — and the old default of 'admin' meant any
+    such session with a colliding integer id resolved to an AdminUser. That
+    default is the reason shared-domain cookies are permanently off the
+    table (see the 2026-07-22 SSO study); least privilege here is one line.
+    """
     from flask import session as flask_session
-    user_type = flask_session.get('user_type', 'admin')
+    user_type = flask_session.get('user_type')
+    if user_type is None:
+        return None
     if user_type == 'author':
         return Author.query.get(int(user_id))
     elif user_type == 'publisher':

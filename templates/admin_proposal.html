@@ -13,6 +13,9 @@
             <span>{{ proposal.submitted_at.strftime('%B %d, %Y') if proposal.submitted_at else 'N/A' }}</span>
             {% if proposal.tier %}<span class="tier-badge tier-{{ proposal.tier|lower }}">{{ proposal.tier }}-Tier</span>{% else %}<span class="status-badge submitted">{{ proposal.status|replace('_', ' ')|title }}</span>{% endif %}
         </div>
+        <div style="margin-top: 0.5rem; font-size: 0.8125rem; opacity: 0.8;">
+            {% if proposal.confidentiality_acknowledged_at %}Confidentiality acknowledged {{ proposal.confidentiality_acknowledged_at.strftime('%b %d, %Y %I:%M %p') }} UTC{% else %}Confidentiality not acknowledged{% endif %}
+        </div>
     </div>
 </section>
 

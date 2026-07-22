@@ -64,6 +64,20 @@
                     </label>
                 </div>
             </div>
+            {# Author-facing only: a team member submitting on an author's
+               behalf cannot acknowledge for them — no box, NULL stored. #}
+            {% if not (current_user.is_authenticated and current_user.is_team_member) %}
+            <div class="form-group">
+                <div style="background: var(--gray-100); border-left: 3px solid var(--primary); border-radius: var(--radius); padding: 1rem 1.25rem;">
+                    <p style="margin: 0 0 0.5rem; font-weight: 700; color: var(--gray-800);">Your work stays yours</p>
+                    <p style="margin: 0 0 0.875rem; font-size: 0.875rem; color: var(--gray-600); line-height: 1.6;">Everything you share with Write It Great — ideas, proposals, manuscripts — remains your intellectual property. We use what you submit only to evaluate working together, we don't share it outside our team, and submitting creates no exclusivity and no obligation for either of us. <a href="{{ url_for('confidentiality') }}" target="_blank" style="color: var(--primary); font-weight: 600;">Read the full confidentiality statement →</a></p>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="confidentiality_acknowledged" name="confidentiality_acknowledged" required>
+                        <label for="confidentiality_acknowledged" class="checkbox-label">I've read and acknowledged the confidentiality statement.</label>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             <div class="submit-section">
                 <button type="submit" class="btn btn-accent submit-btn">Submit for Evaluation</button>
                 <p style="margin-top:1rem;font-size:0.875rem;color:var(--gray-500);">

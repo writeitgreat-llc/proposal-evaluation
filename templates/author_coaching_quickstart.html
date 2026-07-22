@@ -64,6 +64,18 @@
 .qs-result-body { padding: 1.25rem 1.5rem; font-size: 0.9375rem; line-height: 1.85; color: var(--gray-800); white-space: pre-wrap; }
 .qs-result-body strong { color: var(--primary); }
 
+.qs-confidentiality {
+    padding: 1rem 1.5rem; background: var(--gray-100); border-top: 1px solid var(--gray-200);
+    border-left: 3px solid var(--primary);
+}
+.qs-conf-title { margin: 0 0 0.4rem; font-size: 0.875rem; font-weight: 700; color: var(--gray-800); }
+.qs-conf-body  { margin: 0 0 0.75rem; font-size: 0.8125rem; color: var(--gray-600); line-height: 1.6; }
+.qs-conf-body a { color: var(--primary); font-weight: 600; }
+.qs-conf-check { display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.8125rem;
+    font-weight: 600; color: var(--gray-800); cursor: pointer; }
+.qs-conf-check input[type="checkbox"] { width: 18px; height: 18px; margin-top: 1px;
+    accent-color: var(--primary); flex-shrink: 0; }
+
 .qs-next-steps {
     padding: 1rem 1.5rem; background: #f0fdf4; border-top: 1px solid #bbf7d0;
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
@@ -145,6 +157,16 @@ audio { width: 100%; border-radius: 6px; }
             </div>
         </div>
         <div class="qs-result-body" id="qs-result-text">{{ summary | replace('**', '') }}</div>
+        {% if submission and submission.status != 'submitted' %}
+        <div class="qs-confidentiality">
+            <p class="qs-conf-title">Your work stays yours</p>
+            <p class="qs-conf-body">Everything you share with Write It Great — ideas, proposals, manuscripts — remains your intellectual property. We use what you submit only to evaluate working together, we don't share it outside our team, and submitting creates no exclusivity and no obligation for either of us. <a href="{{ url_for('confidentiality') }}" target="_blank">Read the full confidentiality statement →</a></p>
+            <label class="qs-conf-check">
+                <input type="checkbox" name="confidentiality_acknowledged" form="submit-form" required>
+                <span>I've read and acknowledged the confidentiality statement.</span>
+            </label>
+        </div>
+        {% endif %}
         <div class="qs-next-steps">
             <div class="left">
                 {% if submission and submission.status == 'submitted' %}

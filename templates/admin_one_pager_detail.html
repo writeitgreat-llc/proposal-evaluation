@@ -57,6 +57,11 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
                 {% else %}
                 · Draft (not yet submitted)
                 {% endif %}
+                {% if submission.confidentiality_acknowledged_at %}
+                · Confidentiality acknowledged {{ submission.confidentiality_acknowledged_at.strftime('%b %d, %Y %I:%M %p') }} UTC
+                {% else %}
+                · Confidentiality not acknowledged
+                {% endif %}
             </p>
         </div>
         <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">

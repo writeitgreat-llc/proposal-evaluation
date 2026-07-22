@@ -755,6 +755,11 @@ class Proposal(db.Model):
     proposal_type = db.Column(db.String(50), default='full')
     ownership_confirmed = db.Column(db.Boolean, default=True)
     content_hash = db.Column(db.String(64), index=True)  # SHA-256 of proposal text + type
+    # When the author ticked the confidentiality acknowledge box on the public
+    # upload form (Phase 6). An acknowledgement, never an agreement. NULL for
+    # flows that have no box — Wix /api/submit, admin manual add, coaching
+    # assembly — absence is tolerated by design.
+    confidentiality_acknowledged_at = db.Column(db.DateTime)
     
     # Evaluation results
     tier = db.Column(db.String(10))
@@ -973,6 +978,9 @@ class OnePagerSubmission(db.Model):
     summary_text = db.Column(db.Text)          # AI-generated summary
     status = db.Column(db.String(20), default='draft')   # 'draft' | 'submitted'
     submitted_at = db.Column(db.DateTime)
+    # When the author ticked the confidentiality acknowledge box on submit
+    # (Phase 6). An acknowledgement, never an agreement; NULL when absent.
+    confidentiality_acknowledged_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     admin_notes = db.Column(db.Text)
     # Assignment
@@ -3310,6 +3318,19 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/confidentiality')
+def confidentiality():
+    """Public confidentiality statement (Phase 6).
+
+    Deliberately public and unauthenticated: it is linked from every
+    author-facing submission form ("Read the full confidentiality
+    statement") and must be readable before an author has an account.
+    Static content only — no parameters, no data access. The website
+    ships the same statement at writeitgreat.com/confidentiality.
+    """
+    return render_template('confidentiality.html')
+
+
 @app.route('/coach')
 def coach():
     """Conversational AI coaching agent for authors developing a proposal."""
@@ -3951,6 +3972,11 @@ def author_quickstart_submit():
         return redirect(url_for('author_coaching_quickstart'))
     submission.status = 'submitted'
     submission.submitted_at = datetime.utcnow()
+    # Acknowledgement, never an agreement — stamped only when the box was
+    # actually ticked; NULL otherwise (absence tolerated).
+    submission.confidentiality_acknowledged_at = (
+        datetime.utcnow()
+        if request.form.get('confidentiality_acknowledged') else None)
     db.session.commit()
     try:
         send_one_pager_submitted_notification(current_user, submission)
@@ -5288,6 +5314,12 @@ def api_evaluate():
             status='processing',
             platform_data=platform_data_raw if platform_data_raw else None,
             marketing_strategy=marketing_strategy if marketing_strategy else None,
+            # Acknowledgement, never an agreement. Absence tolerated: other
+            # callers of this pipeline (Wix /api/submit, admin add, coaching
+            # assembly) send no flag and store NULL.
+            confidentiality_acknowledged_at=(
+                datetime.utcnow()
+                if request.form.get('confidentiality_acknowledged') else None),
         )
 
         db.session.add(proposal)
@@ -8025,6 +8057,7 @@ def run_migrations():
     _add('proposal', 'platform_data TEXT')
     _add('proposal', 'marketing_strategy TEXT')
     _add('proposal', 'author_id INTEGER')
+    _add('proposal', 'confidentiality_acknowledged_at TIMESTAMP')
 
     # ── admin_user ─────────────────────────────────────────────────────────────
     _add('admin_user', 'password_reset_token VARCHAR(100)')
@@ -8152,6 +8185,7 @@ def run_migrations():
     _add('one_pager_submission', 'assigned_at TIMESTAMP')
     _add('one_pager_submission', 'reminder_1_sent_at TIMESTAMP')
     _add('one_pager_submission', 'reminder_2_sent_at TIMESTAMP')
+    _add('one_pager_submission', 'confidentiality_acknowledged_at TIMESTAMP')
 
     # ── one_pager_feedback + social_strategy (new tables via create_all) ────────
     # No _add needed for brand-new tables

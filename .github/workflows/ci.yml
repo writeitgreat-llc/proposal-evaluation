@@ -41,10 +41,10 @@ jobs:
       APP_BASE_URL: http://localhost:5000
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # Must match runtime.txt (python-3.11.7). ci/check_deploy_config.py
           # fails the build if these two ever drift apart.

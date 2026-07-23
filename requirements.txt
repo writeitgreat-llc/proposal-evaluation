@@ -7,6 +7,7 @@ xhtml2pdf==0.2.16
 python-docx==1.1.0
 PyPDF2==3.0.1
 Werkzeug==3.0.1
+itsdangerous==2.2.0
 gunicorn==21.2.0
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0

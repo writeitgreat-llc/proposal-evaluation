@@ -82,6 +82,23 @@ app.config['REMEMBER_COOKIE_HTTPONLY']= True
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'author_login'
+
+
+@login_manager.unauthorized_handler
+def _route_aware_unauthorized():
+    """Send a logged-out visitor to the RIGHT login page for where they
+    were headed. A single login_view sent everyone to the author login —
+    so a team member visiting /admin landed on the (near-identical) author
+    page, used ITS forgot-password form, and their reset silently went to
+    a user table they aren't in (field-debugged 2026-07-23)."""
+    path = request.path
+    if path.startswith('/admin'):
+        endpoint = 'admin_login'
+    elif path.startswith('/publisher'):
+        endpoint = 'publisher_login'
+    else:
+        endpoint = 'author_login'
+    return redirect(url_for(endpoint, next=path))
 login_manager.login_message = None  # Disable "Please log in" message
 
 # Custom Jinja filter for parsing JSON strings in templates

@@ -23,6 +23,8 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from sqlalchemy.exc import IntegrityError
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature, BadData
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from xhtml2pdf import pisa
@@ -613,6 +615,14 @@ class AdminUser(UserMixin, db.Model):
     failed_login_attempts = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime)
 
+    # SSO jump from the company dashboard (see /sso/consume).
+    # dashboard_email is an explicit identity override: the dashboard may know
+    # a person by a different address than this app does (e.g. raymond@ there
+    # vs ray@ here). When set, SSO matches ONLY against it; when NULL, SSO
+    # falls back to matching the login email. Editable on /admin/team.
+    dashboard_email = db.Column(db.String(120))
+    last_sso_login_at = db.Column(db.DateTime)
+
     @property
     def is_admin(self):
         return self.role == ROLE_ADMIN
@@ -673,6 +683,24 @@ class AdminUser(UserMixin, db.Model):
             return False
         totp = pyotp.TOTP(self.totp_secret)
         return totp.verify(code, valid_window=2)
+
+
+class ConsumedSsoToken(db.Model):
+    """Single-use ledger for SSO jump tokens (see /sso/consume).
+
+    Each dashboard-minted jump token carries a random jti claim. The consume
+    route INSERTs the jti here before logging anyone in; a duplicate INSERT
+    (IntegrityError on the primary key) means the token was already used and
+    the login is refused. This must live in the database, not process memory:
+    the single web dyno restarts, and an in-memory set would forget every
+    consumed token on restart — inside a 60-second token lifetime that is a
+    real replay window. Rows older than 5 minutes are pruned opportunistically
+    on each consume (tokens expire at 60s, so anything older can never be
+    presented successfully again).
+    """
+    __tablename__ = 'consumed_sso_token'
+    jti = db.Column(db.String(43), primary_key=True)
+    seen_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Author(UserMixin, db.Model):
@@ -6859,6 +6887,131 @@ def admin_verify_2fa():
 
 
 # ============================================================================
+# SSO JUMP CONSUME (dashboard → this app)
+# ============================================================================
+# Contract: INTEGRATION_PLAN.md "STEP 6 — SSO Jump contract v1". The company
+# dashboard (app.writeitgreat.com) mints a short-lived, single-use signed token
+# via POST /api/sso/mint and sends the browser here. This verifier being
+# world-readable is fine — the security is entirely the env-only shared secret
+# SSO_JUMP_SECRET_PROPOSAL (same high-entropy value on both apps; never commit
+# a value, this repo is public). A jump deliberately bypasses this app's TOTP
+# ceremony: it is acceptable exactly because the dashboard chain always
+# contains one strong 2FA (mandatory dashboard team 2FA, prerequisite #26).
+# Anna's native /admin/login + TOTP path is untouched — this is a convenience
+# bridge, not identity consolidation.
+
+SSO_JUMP_SALT = 'admin-jump-v1'
+SSO_JUMP_MAX_AGE = 60           # seconds a minted token stays valid
+SSO_JTI_PRUNE_AFTER = 300       # prune consumed-jti rows older than this
+
+
+def _sso_fail(message):
+    """Flash an SSO failure and bounce to the team login.
+
+    Referrer-Policy: no-referrer on every response from /sso/consume so the
+    token-bearing URL never leaks in a Referer header on the way out.
+    """
+    flash(message, 'error')
+    resp = redirect(url_for('admin_login'))
+    resp.headers['Referrer-Policy'] = 'no-referrer'
+    return resp
+
+
+@app.route('/sso/consume')
+def sso_consume():
+    """Sign a dashboard team member into the admin via a signed jump token.
+
+    Order matters: verify signature+age → burn the jti (single use) → map the
+    identity → enforce the same account gates as the normal login (Phase 0.4
+    approval + completed TOTP enrollment) → log in. Every failure lands on
+    /admin/login with a specific flash. Fixed redirect to /admin on success —
+    NO next parameter, ever (zero open-redirect surface).
+    """
+    secret = os.environ.get('SSO_JUMP_SECRET_PROPOSAL', '').strip()
+    if not secret:
+        # Unset secret = feature not configured on this deploy (503-equivalent,
+        # but friendly: the visitor is a human mid-click, not an API).
+        return _sso_fail('Single sign-on is not configured.')
+
+    token = request.args.get('token', '')
+    serializer = URLSafeTimedSerializer(secret, salt=SSO_JUMP_SALT)
+    try:
+        claims = serializer.loads(token, max_age=SSO_JUMP_MAX_AGE)
+    except SignatureExpired:
+        return _sso_fail('This sign-on link has expired — click Authors admin again.')
+    except (BadSignature, BadData):
+        return _sso_fail('Invalid sign-on link.')
+
+    if not isinstance(claims, dict):
+        return _sso_fail('Invalid sign-on link.')
+
+    # ── Single use: burn the jti BEFORE any login decision ──────────────────
+    # INSERT-first means two racing consumes of the same token cannot both win:
+    # the second INSERT hits the primary key and gets IntegrityError.
+    jti = str(claims.get('jti') or '')[:43]
+    if not jti:
+        return _sso_fail('Invalid sign-on link.')
+
+    db.session.add(ConsumedSsoToken(jti=jti))
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return _sso_fail('This sign-on link has already been used.')
+
+    # Opportunistic prune: consumed jtis older than 5 minutes can never verify
+    # again (60s max age), so the ledger stays a handful of rows. Best-effort.
+    try:
+        cutoff = datetime.utcnow() - timedelta(seconds=SSO_JTI_PRUNE_AFTER)
+        ConsumedSsoToken.query.filter(ConsumedSsoToken.seen_at < cutoff).delete()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    # ── Identity mapping (case-insensitive) ─────────────────────────────────
+    # The explicit dashboard_email override wins; only accounts WITHOUT an
+    # override fall back to matching their login email. So setting an override
+    # also stops the account matching on its login email — intentional.
+    email = str(claims.get('email') or '').strip().lower()
+    user = None
+    if email:
+        user = AdminUser.query.filter(
+            db.func.lower(AdminUser.dashboard_email) == email
+        ).first() or AdminUser.query.filter(
+            AdminUser.dashboard_email.is_(None),
+            db.func.lower(AdminUser.email) == email,
+        ).first()
+
+    if not user:
+        return _sso_fail('No team account matches your dashboard identity — '
+                         'ask an admin to set your dashboard email on Team Management.')
+
+    # ── Same gates as the normal login — a jump is never a shortcut past the
+    # Phase 0.4 approval gate or first-login TOTP enrollment ─────────────────
+    if not user.is_active_account:
+        if not user.totp_enabled:
+            return _sso_fail('Your account is awaiting approval by an administrator.')
+        return _sso_fail('This account has been deactivated. Contact an admin.')
+
+    if not user.totp_enabled:
+        return _sso_fail('Finish first-time setup by logging in directly '
+                         'before using single sign-on.')
+
+    # ── Success ─────────────────────────────────────────────────────────────
+    session['user_type'] = 'admin'
+    login_user(user)
+    user.last_sso_login_at = datetime.utcnow()
+    db.session.commit()
+
+    # Audit line — never log the token itself.
+    print(f'SSO jump: {user.email} signed in via dashboard jump (jti={jti})')
+
+    resp = redirect('/admin')
+    resp.headers['Referrer-Policy'] = 'no-referrer'
+    return resp
+
+
+# ============================================================================
 # TEAM MANAGEMENT (admin only)
 # ============================================================================
 
@@ -6905,6 +7058,30 @@ def admin_toggle_active(user_id):
     db.session.commit()
     status = 'activated' if target.is_active_account else 'deactivated'
     flash(f'{target.name} has been {status}.', 'success')
+    return redirect(url_for('admin_team'))
+
+
+@app.route('/admin/team/<int:user_id>/dashboard-email', methods=['POST'])
+@admin_required
+def admin_set_dashboard_email(user_id):
+    """Set or clear a member's dashboard email (SSO identity override).
+
+    When set, the dashboard SSO jump matches this member ONLY by this address;
+    when cleared, the jump falls back to matching their login email.
+    """
+    target = AdminUser.query.get_or_404(user_id)
+    raw = request.form.get('dashboard_email', '').strip().lower()
+
+    if raw and ('@' not in raw or ' ' in raw or len(raw) > 120):
+        flash('Enter a valid email address (or leave it blank to clear the override).', 'error')
+        return redirect(url_for('admin_team'))
+
+    target.dashboard_email = raw or None
+    db.session.commit()
+    if raw:
+        flash(f'Dashboard email for {target.name} set to {raw}.', 'success')
+    else:
+        flash(f'Dashboard email for {target.name} cleared — SSO will match their login email.', 'success')
     return redirect(url_for('admin_team'))
 
 
@@ -8078,6 +8255,10 @@ def run_migrations():
     _add('admin_user', 'locked_until TIMESTAMP')
     _add('admin_user', f"role VARCHAR(20) DEFAULT '{ROLE_MEMBER}'")
     _add('admin_user', 'is_active_account BOOLEAN DEFAULT TRUE')
+    # SSO jump (dashboard → this app); the consumed_sso_token table itself is
+    # brand-new and arrives via the db.create_all() call below.
+    _add('admin_user', 'dashboard_email VARCHAR(120)')
+    _add('admin_user', 'last_sso_login_at TIMESTAMP')
     try:
         with db.engine.begin() as conn:
             conn.execute(text(

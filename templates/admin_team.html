@@ -23,6 +23,7 @@
                 <th>Role</th>
                 <th>Status</th>
                 <th>2FA</th>
+                <th>Dashboard SSO</th>
                 <th>Joined</th>
                 <th>Actions</th>
             </tr>
@@ -65,6 +66,22 @@
                         <span style="color: var(--success); font-weight: 600; font-size: 0.8125rem;">Enabled</span>
                     {% else %}
                         <span style="color: var(--warning); font-size: 0.8125rem;">Not set up</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {# Dashboard email override: when set, the dashboard SSO jump matches
+                       this member ONLY by this address; blank = match login email. #}
+                    <form method="POST" action="{{ url_for('admin_set_dashboard_email', user_id=member.id) }}"
+                          style="display: flex; gap: 0.25rem; align-items: center;">
+                        <label for="dashboard-email-{{ member.id }}" class="sr-only" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);">Dashboard email for {{ member.name }}</label>
+                        <input type="email" id="dashboard-email-{{ member.id }}" name="dashboard_email"
+                               value="{{ member.dashboard_email or '' }}"
+                               placeholder="{{ member.email }}"
+                               style="width: 12rem; padding: 0.25rem 0.5rem; border: 1px solid var(--gray-300); border-radius: 4px; font-size: 0.8125rem;">
+                        <button type="submit" class="btn-action btn-action-info" title="Save dashboard email">Save</button>
+                    </form>
+                    {% if member.last_sso_login_at %}
+                    <span style="display: block; margin-top: 0.25rem; font-size: 0.7rem; color: var(--gray-400);">Last SSO login: {{ member.last_sso_login_at.strftime('%b %d, %Y %H:%M') }} UTC</span>
                     {% endif %}
                 </td>
                 <td><span class="submitted-date">{{ member.created_at.strftime('%b %d, %Y') if member.created_at else 'N/A' }}</span></td>

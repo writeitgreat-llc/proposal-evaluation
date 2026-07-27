@@ -2340,13 +2340,16 @@ def woodpecker_add_prospect(author, md):
 
 # ── Funnel events (wig-dashboard integration, contract v1) ──────────────────
 
-FUNNEL_OUTBOX_MAX_ATTEMPTS = 50            # ~last stop after days of backoff
+FUNNEL_OUTBOX_MAX_ATTEMPTS = 200           # ~4 days at the 30m cap — must
+# outlive any receiver deploy lag (a new event type 400s until the
+# dashboard deploys; see CONTRACTS.md deploy-order rule)
 FUNNEL_OUTBOX_PRUNE_AFTER_DAYS = 7         # sent rows kept a week for ops eyes
 
 
 def _funnel_outbox_backoff(attempts):
-    """Retry delay: 1m, 2m, 4m … capped at 30m."""
-    return timedelta(seconds=min(60 * (2 ** min(attempts, 10)), 1800))
+    """Retry delay: 1m, 2m, 4m … capped at 30m. `attempts` arrives already
+    incremented, so the first retry (attempts=1) waits 1 minute."""
+    return timedelta(seconds=min(60 * (2 ** min(max(attempts - 1, 0), 10)), 1800))
 
 
 def _post_funnel_body(body):
@@ -2390,7 +2393,7 @@ def _funnel_attempt_send(app_obj, external_id):
             db.session.remove()
 
 
-def _emit_funnel_event(event_type, external_id, **fields):
+def _emit_funnel_event(event_type, external_id, immediate=True, **fields):
     """Queue a funnel-event webhook to the wig-dashboard (at-least-once).
 
     The event lands in the funnel_outbox table inside the caller's request
@@ -2435,11 +2438,12 @@ def _emit_funnel_event(event_type, external_id, **fields):
         print(f"Funnel outbox enqueue error ({event_type}): {e}")
         return
 
-    threading.Thread(
-        target=_funnel_attempt_send,
-        args=(app, external_id),
-        daemon=True,
-    ).start()
+    if immediate:
+        threading.Thread(
+            target=_funnel_attempt_send,
+            args=(app, external_id),
+            daemon=True,
+        ).start()
 
 
 def drain_funnel_outbox():
@@ -3483,15 +3487,16 @@ def _start_reengagement_thread():
     import time
     def _loop():
         time.sleep(300)  # wait 5 min after startup before first run
-        ticks = 0
+        next_email_check = 0.0  # first pass runs immediately (as before)
         while True:
-            # Outbox drain every 2 minutes (retries lost funnel webhooks);
-            # the two email checks keep their hourly cadence (every 30 ticks).
+            # Outbox drain every ~2 minutes (retries lost funnel webhooks);
+            # the email checks keep their HOURLY cadence by wall clock — a
+            # slow drain must never stretch them (tick-counting would).
             drain_funnel_outbox()
-            if ticks % 30 == 0:
+            if time.time() >= next_email_check:
+                next_email_check = time.time() + 3600
                 check_reengagement_emails()
                 check_one_pager_reminders()
-            ticks += 1
             time.sleep(120)
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
@@ -6731,8 +6736,12 @@ def admin_bulk_action():
         # dashboard). Same external_id builder as admin_proposal_detail, so
         # a bulk move and a single edit to the same status dedup upstream.
         for p, old_status in changed:
+            # immediate=False: a 50-row bulk would otherwise spawn 50
+            # connection-holding threads on the single worker — the drain
+            # delivers these within ~2 minutes instead.
             _emit_funnel_event(
                 'proposal_status_changed', f'pe-pst-{p.id}-{action}',
+                immediate=False,
                 author_name=p.author_name,
                 author_email=p.author_email,
                 book_title=p.book_title,

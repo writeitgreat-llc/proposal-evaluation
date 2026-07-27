@@ -11,7 +11,8 @@ emails — never evaluation text or scores).
 Every event lands in the `funnel_outbox` table first (inside the request),
 a daemon thread attempts immediate delivery (4s timeout), and a 2-minute
 drain loop retries anything unsent with exponential backoff (1m→30m cap,
-50 attempts; sent rows pruned after 7 days). Duplicate delivery is safe by
+200 attempts ≈ 4 days — sized to outlive receiver deploy lag; sent and
+long-abandoned rows pruned after 7 days). Duplicate delivery is safe by
 contract — the receiver is idempotent on `external_id` and answers 200 for
 duplicates. v1 was fire-and-forget; a dashboard blip lost events forever.
 

@@ -1006,7 +1006,9 @@
     if (pitchStartBtn) {
         pitchStartBtn.addEventListener('click', function() {
             pitchStartBtn.closest('.pitch-start-zone').style.display = 'none';
-            if (pitchActive) pitchActive.style.display = '';
+            // 'block' — an empty string falls back to the class's display:none,
+            // which kept this panel (and the whole challenge) unopenable.
+            if (pitchActive) pitchActive.style.display = 'block';
             if (pitchDoneBtn) pitchDoneBtn.style.display = '';
             if (pitchCancelBtn) pitchCancelBtn.style.display = '';
             if (pitchTextarea) {

@@ -3083,7 +3083,7 @@ def send_coaching_homework_reviewed_email(author, module_info, submission):
         <p>Your homework for <strong>Module {module_num}: {module_info['title']}</strong> has been reviewed.</p>
         {status_block}
         <p><strong>Feedback:</strong></p>
-        <p style="background:#f8f6f9;padding:16px;border-radius:8px;">{submission.ai_feedback or 'See your coaching dashboard for detailed feedback.'}</p>
+        <p style="background:#f8f6f9;padding:16px;border-radius:8px;">{submission.ai_feedback or 'See your Proposal Builder dashboard for detailed feedback.'}</p>
         <div style="text-align:center;margin:25px 0;">
             <a href="{app_url}/author/coaching/module/{module_num}" style="display:inline-block;padding:14px 28px;background:#2D1B69;color:white;text-decoration:none;border-radius:8px;font-weight:bold;">{'Continue to Module ' + str(module_num + 1) + ' →' if approved and module_num < len(COACHING_MODULES) else 'View Feedback & Revise →'}</a>
         </div>
@@ -4031,7 +4031,7 @@ def author_coaching_enroll():
         except Exception:
             pass
 
-        flash('Welcome to the coaching program! Module 1 is ready for you.', 'success')
+        flash('Welcome to the Proposal Builder! Module 1 is ready for you.', 'success')
         return redirect(url_for('author_coaching_onboarding'))
 
     return render_template('author_coaching_enroll.html')

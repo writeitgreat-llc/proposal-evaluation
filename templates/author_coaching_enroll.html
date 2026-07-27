@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Enroll in Coaching — Write It Great{% endblock %}
+{% block title %}Enroll in the Full Proposal Program — Write It Great{% endblock %}
 
 {% block content %}
 <div class="container" style="max-width:640px;padding-top:3rem;padding-bottom:3rem;">
     <a href="{{ url_for('author_coaching_dashboard') }}" style="color:var(--gray-500);font-size:0.875rem;text-decoration:none;">← Back</a>
     <div class="card" style="margin-top:1.25rem;">
-        <h2 style="color:var(--primary);margin-bottom:0.25rem;">Start the Coaching Program</h2>
+        <h2 style="color:var(--primary);margin-bottom:0.25rem;">Start the Full Proposal Program</h2>
         <p style="color:var(--gray-500);margin-bottom:1.5rem;font-size:0.9375rem;">You'll work through 7 modules, each focused on a key section of your book proposal. The AI coach will guide you, and you'll submit homework that gets reviewed before you advance.</p>
 
         <form method="POST" action="{{ url_for('author_coaching_enroll') }}">

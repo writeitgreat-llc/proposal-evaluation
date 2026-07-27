@@ -6,13 +6,22 @@ shapes and env-var NAMES only — secret values live exclusively in Heroku
 config vars, and webhook payloads stay lean by contract (IDs, statuses,
 emails — never evaluation text or scores).
 
-## 1. Funnel events v1 — SENDER
+## 1. Funnel events v1.1 — SENDER (at-least-once since 2026-07-27)
 
-Fired fire-and-forget from a daemon thread (4s timeout, swallow everything,
-no retry in v1 — a lost event is re-derivable from the admin UI) at four
-points: author registration, proposal creation (`/api/evaluate`,
-`/api/submit`, admin-created), the admin proposal-status route, and the
-publisher-portal status route.
+Every event lands in the `funnel_outbox` table first (inside the request),
+a daemon thread attempts immediate delivery (4s timeout), and a 2-minute
+drain loop retries anything unsent with exponential backoff (1m→30m cap,
+50 attempts; sent rows pruned after 7 days). Duplicate delivery is safe by
+contract — the receiver is idempotent on `external_id` and answers 200 for
+duplicates. v1 was fire-and-forget; a dashboard blip lost events forever.
+
+Fire points: author registration; proposal creation (`/api/evaluate`,
+`/api/submit`, admin-created, AND the coaching-built path — gap closed
+2026-07-27); the admin proposal-status route; **bulk status changes**
+(`/admin/proposals/bulk-action`, per-proposal events, no-ops skipped —
+previously invisible to the dashboard); the publisher-portal status route;
+and **one-pager submission** (`one_pager_submitted`, the top of Andy's
+funnel).
 
 `POST {FUNNEL_EVENTS_URL}` (default: the wig-dashboard app URL +
 `/api/literary/funnel-events`) · `Authorization: Bearer $FUNNEL_EVENTS_TOKEN`
@@ -21,9 +30,11 @@ publisher-portal status route.
 Body `{"event": {…}}`:
 - `external_id` (≤64, required — the dedup key): `pe-reg-<author.id>` ·
   `pe-sub-<proposal.id>` · `pe-pst-<proposal.id>-<new_status>` ·
-  `pe-pub-<publisher_proposal.id>-<new_status>`
-- `type`: author_registered | proposal_submitted | proposal_status_changed |
-  publisher_status_changed
+  `pe-pub-<publisher_proposal.id>-<new_status>` ·
+  `pe-1pg-<one_pager_submission.id>` (a bulk move and a single edit to the
+  same status share an external_id on purpose — they dedup upstream)
+- `type`: author_registered | proposal_submitted | one_pager_submitted |
+  proposal_status_changed | publisher_status_changed
 - `occurred_at` (ISO-8601|null), `author_name`, `author_email`, `book_title`,
   `proposal_submission_id`, `old_status`, `new_status`, `publisher_name`,
   `payload` (small object, optional)
@@ -42,7 +53,7 @@ The dashboard's "Authors admin" quick link mints a short-lived signed token
 - Token: itsdangerous `URLSafeTimedSerializer($SSO_JUMP_SECRET_PROPOSAL,
   salt='admin-jump-v1')` over `{jti, email, name, dash_uid, dash_role}`;
   verified with `max_age=60`. Same secret value on both apps, env-only.
-- Single-use: `jti` recorded in the `consumed_jti` table (insert-FIRST;
+- Single-use: `jti` recorded in the `consumed_sso_token` table (insert-FIRST;
   pruned >5 min) — replays bounce even within the 60s window.
 - Identity mapping: token email (lowercased) against
   `AdminUser.dashboard_email` (per-admin override, editable on /admin/team),

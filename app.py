@@ -702,6 +702,33 @@ class AdminUser(UserMixin, db.Model):
         return totp.verify(code, valid_window=2)
 
 
+class FunnelOutboxEvent(db.Model):
+    """Persistent outbox for funnel-event webhooks (at-least-once delivery).
+
+    v1 fired each event from a fire-and-forget daemon thread: a dashboard
+    blip, a deploy restart, or a 4-second timeout silently LOST the event
+    forever. Rows now land here first (inside the request), a thread attempts
+    immediate delivery, and the outbox drain retries anything unsent with
+    backoff. DB-backed for the same reason as ConsumedSsoToken below: the
+    single web dyno restarts, and memory forgets.
+
+    Duplicate delivery is harmless BY CONTRACT — the dashboard receiver is
+    idempotent on external_id (CONTRACTS.md) — so overlapping senders during
+    a deploy need no locking. Payload policy applies to this table too:
+    only lean contract fields, never proposal text/scores.
+    """
+    __tablename__ = 'funnel_outbox'
+    id = db.Column(db.Integer, primary_key=True)
+    external_id = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    event_type = db.Column(db.String(40), nullable=False)
+    body_json = db.Column(db.Text, nullable=False)   # the exact POST body
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = db.Column(db.DateTime, nullable=True, index=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    next_attempt_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.String(300), nullable=True)
+
+
 class ConsumedSsoToken(db.Model):
     """Single-use ledger for SSO jump tokens (see /sso/consume).
 
@@ -2313,15 +2340,67 @@ def woodpecker_add_prospect(author, md):
 
 # ── Funnel events (wig-dashboard integration, contract v1) ──────────────────
 
-def _emit_funnel_event(event_type, external_id, **fields):
-    """Fire-and-forget funnel-event webhook to the wig-dashboard.
+FUNNEL_OUTBOX_MAX_ATTEMPTS = 50            # ~last stop after days of backoff
+FUNNEL_OUTBOX_PRUNE_AFTER_DAYS = 7         # sent rows kept a week for ops eyes
 
-    The HTTP POST runs in a daemon thread (same pattern as the email sends) so
-    a slow or downed dashboard never delays a user request. Silent no-op when
-    FUNNEL_EVENTS_TOKEN is unset — this app must work standalone. Every
-    failure is swallowed; a lost event is re-derivable from the admin UI, so
-    there is no retry in v1. Only the contract-v1 fields below are ever sent —
-    never proposal text, evaluation content, scores, or estimates.
+
+def _funnel_outbox_backoff(attempts):
+    """Retry delay: 1m, 2m, 4m … capped at 30m."""
+    return timedelta(seconds=min(60 * (2 ** min(attempts, 10)), 1800))
+
+
+def _post_funnel_body(body):
+    """One delivery attempt. Returns None on success, error string on failure.
+    Success = HTTP 200 (the receiver answers 200 for fresh AND duplicate
+    external_ids, which is what makes at-least-once delivery safe)."""
+    try:
+        resp = http_requests.post(
+            FUNNEL_EVENTS_URL,
+            json=body,
+            headers={'Authorization': f'Bearer {FUNNEL_EVENTS_TOKEN}'},
+            timeout=4,
+        )
+    except Exception as e:
+        return f'{e.__class__.__name__}: {e}'[:300]
+    if resp.status_code == 200:
+        return None
+    return f'HTTP {resp.status_code}'
+
+
+def _funnel_attempt_send(app_obj, external_id):
+    """Deliver one outbox row (own app context — runs in a thread)."""
+    with app_obj.app_context():
+        try:
+            row = FunnelOutboxEvent.query.filter_by(external_id=external_id).first()
+            if not row or row.sent_at:
+                return
+            err = _post_funnel_body(json.loads(row.body_json))
+            if err is None:
+                row.sent_at = datetime.utcnow()
+                row.last_error = None
+            else:
+                row.attempts += 1
+                row.last_error = err
+                row.next_attempt_at = datetime.utcnow() + _funnel_outbox_backoff(row.attempts)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"Funnel outbox send error ({external_id}): {e}")
+        finally:
+            db.session.remove()
+
+
+def _emit_funnel_event(event_type, external_id, **fields):
+    """Queue a funnel-event webhook to the wig-dashboard (at-least-once).
+
+    The event lands in the funnel_outbox table inside the caller's request
+    context, then a daemon thread attempts immediate delivery so the happy
+    path stays near-instant; the outbox drain retries anything unsent with
+    backoff (v1 was fire-and-forget — a dashboard blip lost the event
+    forever). Silent no-op when FUNNEL_EVENTS_TOKEN is unset — this app must
+    work standalone. Only the lean contract fields below are ever stored or
+    sent — never proposal text, evaluation content, scores, or estimates.
+    Duplicate sends are harmless: the receiver is idempotent on external_id.
     """
     if not FUNNEL_EVENTS_TOKEN:
         return
@@ -2339,18 +2418,69 @@ def _emit_funnel_event(event_type, external_id, **fields):
         'payload': {},
     }}
 
-    def _post():
-        try:
-            http_requests.post(
-                FUNNEL_EVENTS_URL,
-                json=body,
-                headers={'Authorization': f'Bearer {FUNNEL_EVENTS_TOKEN}'},
-                timeout=4,
-            )
-        except Exception as e:
-            print(f"Funnel event error ({event_type}): {e}")
+    # INSERT-first (the ConsumedSsoToken pattern): a duplicate external_id
+    # means this exact event is already queued/sent — nothing to do.
+    try:
+        db.session.add(FunnelOutboxEvent(
+            external_id=external_id,
+            event_type=event_type,
+            body_json=json.dumps(body),
+        ))
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return
+    except Exception as e:
+        db.session.rollback()
+        print(f"Funnel outbox enqueue error ({event_type}): {e}")
+        return
 
-    threading.Thread(target=_post, daemon=True).start()
+    threading.Thread(
+        target=_funnel_attempt_send,
+        args=(app, external_id),
+        daemon=True,
+    ).start()
+
+
+def drain_funnel_outbox():
+    """Retry unsent funnel events (runs inside the hourly-loop thread).
+
+    Wraps its OWN app context (Flask-SQLAlchemy 3.x requires one in a
+    non-request thread) and its own try/except — an uncaught exception here
+    would kill the shared daemon loop. Oldest first, small batch, opportunistic
+    prune of sent rows older than a week."""
+    if not FUNNEL_EVENTS_TOKEN:
+        return
+    with app.app_context():
+        try:
+            now = datetime.utcnow()
+            rows = (FunnelOutboxEvent.query
+                    .filter(FunnelOutboxEvent.sent_at.is_(None),
+                            FunnelOutboxEvent.attempts < FUNNEL_OUTBOX_MAX_ATTEMPTS)
+                    .filter(db.or_(FunnelOutboxEvent.next_attempt_at.is_(None),
+                                   FunnelOutboxEvent.next_attempt_at <= now))
+                    .order_by(FunnelOutboxEvent.created_at.asc())
+                    .limit(25).all())
+            for row in rows:
+                err = _post_funnel_body(json.loads(row.body_json))
+                if err is None:
+                    row.sent_at = datetime.utcnow()
+                    row.last_error = None
+                else:
+                    row.attempts += 1
+                    row.last_error = err
+                    row.next_attempt_at = datetime.utcnow() + _funnel_outbox_backoff(row.attempts)
+                db.session.commit()
+            FunnelOutboxEvent.query.filter(
+                FunnelOutboxEvent.sent_at.isnot(None),
+                FunnelOutboxEvent.sent_at < now - timedelta(days=FUNNEL_OUTBOX_PRUNE_AFTER_DAYS),
+            ).delete(synchronize_session=False)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"Funnel outbox drain error: {e}")
+        finally:
+            db.session.remove()
 
 
 def send_social_strategy_email(to_email: str, name: str,
@@ -3353,10 +3483,16 @@ def _start_reengagement_thread():
     import time
     def _loop():
         time.sleep(300)  # wait 5 min after startup before first run
+        ticks = 0
         while True:
-            check_reengagement_emails()
-            check_one_pager_reminders()
-            time.sleep(3600)  # run every hour
+            # Outbox drain every 2 minutes (retries lost funnel webhooks);
+            # the two email checks keep their hourly cadence (every 30 ticks).
+            drain_funnel_outbox()
+            if ticks % 30 == 0:
+                check_reengagement_emails()
+                check_one_pager_reminders()
+            ticks += 1
+            time.sleep(120)
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
 
@@ -4033,6 +4169,14 @@ def author_quickstart_submit():
         datetime.utcnow()
         if request.form.get('confidentiality_acknowledged') else None)
     db.session.commit()
+    # Funnel visibility (2026-07-27): Andy's "everyone goes through the
+    # one-pager" step now shows up on the dashboard's Funnel tab.
+    _emit_funnel_event(
+        'one_pager_submitted', f'pe-1pg-{submission.id}',
+        author_name=current_user.name,
+        author_email=current_user.email,
+        book_title=submission.book_title,
+    )
     try:
         send_one_pager_submitted_notification(current_user, submission)
     except Exception:
@@ -4673,6 +4817,14 @@ def author_coaching_evaluate():
     )
     db.session.add(proposal)
     db.session.commit()
+    # This was the one proposal-creation path with no funnel event
+    # (audit gap closed 2026-07-27) — coaching-built proposals now reach
+    # the dashboard like every other submission.
+    _emit_funnel_event('proposal_submitted', f'pe-sub-{proposal.id}',
+                       author_name=proposal.author_name,
+                       author_email=proposal.author_email,
+                       book_title=proposal.book_title,
+                       proposal_submission_id=proposal.submission_id)
 
     thread = threading.Thread(
         target=process_evaluation_background,
@@ -6568,9 +6720,26 @@ def admin_bulk_action():
         flash(f'{count} proposal(s) restored from archive.', 'success')
     elif action in [s[0] for s in STATUS_OPTIONS]:
         count = len(proposals)
+        changed = []
         for p in proposals:
+            if p.status != action:
+                changed.append((p, p.status))
             p.status = action
         db.session.commit()
+        # Bulk transitions now emit the same per-proposal funnel events as a
+        # single edit (2026-07-27 — bulk changes were invisible to the
+        # dashboard). Same external_id builder as admin_proposal_detail, so
+        # a bulk move and a single edit to the same status dedup upstream.
+        for p, old_status in changed:
+            _emit_funnel_event(
+                'proposal_status_changed', f'pe-pst-{p.id}-{action}',
+                author_name=p.author_name,
+                author_email=p.author_email,
+                book_title=p.book_title,
+                proposal_submission_id=p.submission_id,
+                old_status=old_status,
+                new_status=action,
+            )
         flash(f'{count} proposal(s) set to "{action.replace("_", " ").title()}".', 'success')
     else:
         flash('Invalid action.', 'error')

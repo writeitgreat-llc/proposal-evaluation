@@ -20,6 +20,7 @@ Blocking rules
   GOOGLE_KEY      AIza...
   GITHUB_TOKEN    ghp_/gho_/ghu_/ghs_/ghr_
   SENDGRID_KEY    SG.xxxx.xxxx
+  RESEND_KEY      re_xxxxxxxx_xxxxxxxxxxxxxxxx
   PRIVATE_KEY_PEM id_rsa / id_ed25519 style key files
 
 Warning rules (reported, do not fail the build)
@@ -85,6 +86,9 @@ BLOCKING_RULES = [
     ("SENDGRID_KEY",
      re.compile(r"(?<![A-Za-z0-9_])SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"),
      "SendGrid API key"),
+    ("RESEND_KEY",
+     re.compile(r"(?<![A-Za-z0-9_])re_[A-Za-z0-9]{7,}_[A-Za-z0-9]{16,}(?![A-Za-z0-9_])"),
+     "Resend API key"),
     ("CLOUDINARY_URL",
      re.compile(r"cloudinary://\d{6,}:[A-Za-z0-9_-]{10,}@"),
      "Cloudinary URL with API secret"),
@@ -94,7 +98,8 @@ BLOCKING_RULES = [
 # looks like a real key, so a hit here is a genuine leak.
 RULES_ENFORCED_IN_EXAMPLES = {
     "OPENAI_KEY", "AWS_KEY", "PRIVATE_KEY", "STRIPE_KEY",
-    "SLACK_TOKEN", "GOOGLE_KEY", "GITHUB_TOKEN", "SENDGRID_KEY", "CLOUDINARY_URL",
+    "SLACK_TOKEN", "GOOGLE_KEY", "GITHUB_TOKEN", "SENDGRID_KEY", "RESEND_KEY",
+    "CLOUDINARY_URL",
 }
 
 WARNING_RULES = [

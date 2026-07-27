@@ -291,6 +291,18 @@
 .mode-option .mo-icon { font-size: 2.75rem; line-height: 1; }
 .mode-option h3 { margin: 0; font-size: 0.9375rem; color: var(--primary); }
 .mode-option p { margin: 0; font-size: 0.8125rem; color: var(--gray-500); line-height: 1.5; }
+.mode-option p.mo-for { font-size: 0.75rem; font-weight: 700; color: #7c3aed; }
+.mode-select-back { margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.625rem; }
+.mode-select-back a { font-size: 0.8125rem; color: var(--gray-400); text-decoration: none; }
+.mode-select-back a:hover { color: var(--primary); }
+
+/* ── Back controls ── */
+.mp-back-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.mp-back-btn { padding: 0.4rem 0.875rem; background: white; border: 1.5px solid var(--gray-200);
+    color: var(--gray-600); border-radius: var(--radius); font-size: 0.8125rem; cursor: pointer;
+    font-family: inherit; transition: all 0.15s; }
+.mp-back-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+.mp-back-note { font-size: 0.75rem; color: var(--gray-400); }
 
 /* ── Mode show/hide ── */
 [data-mode="author"] .creator-only { display: none !important; }
@@ -353,7 +365,7 @@
     <div class="mp-header-inner">
         <div class="mp-breadcrumb">
             <a href="{{ url_for('author_dashboard') }}">← Dashboard</a>
-            <button id="mode-switch-link" onclick="resetMode()" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:0.8125rem;cursor:pointer;padding:0;margin-left:0.75rem;{% if not platform_mode %}display:none;{% endif %}">· Change mode</button>
+            <button id="mode-switch-link" onclick="resetMode()" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:0.8125rem;cursor:pointer;padding:0;margin-left:0.75rem;{% if not platform_mode %}display:none;{% endif %}">· Change path</button>
         </div>
         <h1>📊 Marketing Platform Builder</h1>
         <p id="mp-header-sub">{% if platform_mode == 'creator' %}Map your platform, build your 90-day plan, and grow your audience.{% else %}Map your platform, craft your pitch, and find comparable titles — then see your Marketing Platform Strength score.{% endif %}</p>
@@ -369,13 +381,19 @@
             <button class="mode-option" onclick="selectMode('author')">
                 <span class="mo-icon">✍️</span>
                 <h3>I'm an Aspiring Author</h3>
+                <p class="mo-for">For you if you have a book or book idea and want to win over a publisher.</p>
                 <p>Build your platform to attract a publisher, craft your pitch, and find comparable titles</p>
             </button>
             <button class="mode-option" onclick="selectMode('creator')">
                 <span class="mo-icon">🚀</span>
                 <h3>I'm Building My Platform</h3>
+                <p class="mo-for">For you if you're growing an audience first — no book required.</p>
                 <p>Grow your audience and create a 90-day marketing activity plan — no book needed</p>
             </button>
+        </div>
+        <div class="mode-select-back">
+            <button type="button" id="mode-cancel-btn" class="mp-back-btn" onclick="cancelModeReset()" style="display:none;">← Never mind — keep my current path</button>
+            <a href="{{ url_for('author_dashboard') }}">← Back to your dashboard</a>
         </div>
     </div>
 </div>
@@ -386,6 +404,12 @@
 
     <!-- LEFT: main tools -->
     <div class="mp-main">
+
+        <!-- Back to path choice -->
+        <div class="mp-back-row">
+            <button type="button" class="mp-back-btn" onclick="resetMode()">← Back to path choice</button>
+            <span class="mp-back-note">Everything you enter here is saved automatically — switching paths won't lose it.</span>
+        </div>
 
         <!-- XP Bar -->
         <div class="xp-bar-wrap" id="xp-bar-wrap">
@@ -463,7 +487,8 @@
                     <div class="pitch-active" id="pitch-active">
                         <div class="pitch-timer-row">
                             <div><div class="pitch-timer-num" id="pitch-timer">60</div><div class="pitch-timer-label">seconds</div></div>
-                            <button class="pitch-done-btn" id="pitch-done-btn">I'm done →</button>
+                            <button class="pitch-done-btn" id="pitch-cancel-btn" style="margin-left:auto;">← Cancel</button>
+                            <button class="pitch-done-btn" id="pitch-done-btn" style="margin-left:0;">I'm done →</button>
                         </div>
                         <textarea id="pitch-textarea" placeholder="Start writing — say it like you'd say it at a dinner party…"></textarea>
                     </div>
@@ -964,8 +989,10 @@
     const pitchFreshState = document.getElementById('pitch-fresh-state');
     const pitchDoneState  = document.getElementById('pitch-done-state');
     const pitchRetakeBtn  = document.getElementById('pitch-retake-btn');
+    const pitchCancelBtn  = document.getElementById('pitch-cancel-btn');
     let pitchInterval = null;
     let pitchSeconds = 60;
+    let pitchDraft = '';   // preserved when the author backs out mid-challenge
 
     function renderPitchFeedback(fb, container) {
         if (!fb || !container) return;
@@ -979,10 +1006,14 @@
     if (pitchStartBtn) {
         pitchStartBtn.addEventListener('click', function() {
             pitchStartBtn.closest('.pitch-start-zone').style.display = 'none';
-            if (pitchActive) pitchActive.style.display = '';
+            // 'block' — an empty string falls back to the class's display:none,
+            // which kept this panel (and the whole challenge) unopenable.
+            if (pitchActive) pitchActive.style.display = 'block';
+            if (pitchDoneBtn) pitchDoneBtn.style.display = '';
+            if (pitchCancelBtn) pitchCancelBtn.style.display = '';
             if (pitchTextarea) {
                 pitchTextarea.disabled = false;
-                pitchTextarea.value = '';
+                pitchTextarea.value = pitchDraft;   // restore anything typed before a Cancel
                 pitchTextarea.classList.add('running');
                 pitchTextarea.focus();
             }
@@ -1004,6 +1035,7 @@
         if (pitchTimer) { pitchTimer.textContent = '0'; pitchTimer.classList.remove('urgent'); }
         if (pitchTextarea) { pitchTextarea.disabled = true; pitchTextarea.classList.remove('running'); }
         if (pitchDoneBtn) pitchDoneBtn.style.display = 'none';
+        if (pitchCancelBtn) pitchCancelBtn.style.display = 'none';
         if (pitchLoading) pitchLoading.style.display = '';
         const text = pitchTextarea ? pitchTextarea.value.trim() : '';
         if (!text) { if (pitchLoading) pitchLoading.style.display = 'none'; return; }
@@ -1017,6 +1049,8 @@
         .then(function(d) {
             if (pitchLoading) pitchLoading.style.display = 'none';
             if (d.success) {
+                pitchDraft = '';
+                if (pitchStartBtn) pitchStartBtn.textContent = '▶ Start Challenge';
                 setXP(d.xp_total);
                 if (d.xp_gained > 0) showXPToast(d.xp_gained, d.unlocked_badge);
                 if (pitchFreshState) pitchFreshState.style.display = 'none';
@@ -1035,6 +1069,21 @@
     }
 
     if (pitchDoneBtn) pitchDoneBtn.addEventListener('click', submitPitch);
+
+    // Back out of the challenge without submitting — the draft is kept for next time.
+    if (pitchCancelBtn) {
+        pitchCancelBtn.addEventListener('click', function() {
+            clearInterval(pitchInterval);
+            pitchDraft = pitchTextarea ? pitchTextarea.value : '';
+            if (pitchTextarea) pitchTextarea.classList.remove('running');
+            if (pitchActive) pitchActive.style.display = 'none';
+            if (pitchStartBtn) {
+                pitchStartBtn.closest('.pitch-start-zone').style.display = '';
+                pitchStartBtn.textContent = pitchDraft.trim() ? '▶ Resume Challenge' : '▶ Start Challenge';
+            }
+            if (pitchTimer) { pitchTimer.textContent = '60'; pitchTimer.classList.remove('urgent'); }
+        });
+    }
 
     if (pitchRetakeBtn) {
         pitchRetakeBtn.addEventListener('click', function() {
@@ -1314,11 +1363,23 @@
         var app    = document.getElementById('mp-app');
         if (screen) screen.style.display = '';
         if (app)    app.style.display = 'none';
+        // The author came from a chosen path, so offer a way back without re-choosing.
+        var keepBtn = document.getElementById('mode-cancel-btn');
+        if (keepBtn && currentMode) keepBtn.style.display = '';
+    }
+
+    // Undo "Change path": return to the app exactly as it was, keeping the current mode.
+    function cancelModeReset() {
+        var screen = document.getElementById('mode-select-screen');
+        var app    = document.getElementById('mp-app');
+        if (screen) screen.style.display = 'none';
+        if (app)    app.style.display = '';
     }
 
     // Expose to global scope so inline onclick handlers can reach them
     window.selectMode = selectMode;
     window.resetMode  = resetMode;
+    window.cancelModeReset = cancelModeReset;
 
     // Apply on load if already set
     (function() {

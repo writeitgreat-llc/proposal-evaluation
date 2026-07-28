@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, session, abort
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -3505,6 +3505,21 @@ def _start_reengagement_thread():
 # ============================================================================
 # PUBLIC ROUTES
 # ============================================================================
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve the icon from the domain root as well as /static/images/.
+
+    Every template carries explicit <link rel="icon"> tags, so no browser needs
+    this route. Crawlers, link-preview bots and feed readers still probe
+    /favicon.ico directly and would otherwise take a 404.
+    """
+    return send_from_directory(
+        os.path.join(app.static_folder, 'images'),
+        'favicon.ico',
+        mimetype='image/vnd.microsoft.icon',
+    )
+
 
 @app.route('/')
 def index():

@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Write It Great{% endblock %}</title>
+
+    {# Browser tab / home-screen icon. The .ico carries 16/32/48 for the tab
+       strip and older browsers; the PNGs are what modern browsers pick up. #}
+    <link rel="icon" href="{{ url_for('static', filename='images/favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='images/favicon-16x16.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">

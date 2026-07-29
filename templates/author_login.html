@@ -1,36 +1,379 @@
 {% extends "base.html" %}
-{% block title %}Author Login - Write It Great{% endblock %}
+{% block title %}Submit Your Book Idea or Log In - Write It Great{% endblock %}
+
+{# base.html renders every flashed message in a banner at the top of <main>.
+   This page renders them itself, inside the login card next to the field that
+   caused them, so the parent banner is suppressed. Jinja never evaluates an
+   overridden parent block body, so get_flashed_messages() is called exactly
+   once on this page (from the content block below) and nothing renders twice. #}
+{% block flash_messages %}{% endblock %}
+
+{% block extra_css %}
+/* ==========================================================================
+   Author landing + login. "lp-" = landing page. Page-scoped: every selector is
+   prefixed or nested so nothing here shadows the shared .login-* / .form-group
+   / .btn / .flash rules in static/css/style.css, which are reused as-is.
+
+   Mobile-first: the base rules below target a ~360-430px phone (Andy is on a
+   ~412px Android viewport); min-width queries enhance upward. The desktop
+   breakpoint is 769px so it exactly complements author_register.html's
+   max-width:768px collapse and the two public pages break at one boundary.
+
+   Header geometry (measured, not guessed): header is 73px tall
+   (1rem padding x2 + 40px logo + 1px border) and style.css sets
+   main { padding-top: 80px }. Those two numbers drive scroll-margin-top and
+   the desktop min-height below.
+   ========================================================================== */
+
+.lp-layout { background: var(--gray-50); }
+
+/* ---------- Pitch (purple) ---------- */
+.lp-hero {
+    background: linear-gradient(160deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: #fff;
+    padding: 1.75rem 1.25rem 2rem;
+}
+.lp-inner { width: 100%; max-width: 560px; margin: 0 auto; }
+
+.lp-eyebrow {
+    display: inline-block;
+    font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(184, 242, 184, 0.12);
+    border: 1px solid rgba(184, 242, 184, 0.38);
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    margin-bottom: 0.9rem;
+}
+
+.lp-hero h1 {
+    color: #fff;
+    font-size: 1.75rem;
+    line-height: 1.22;
+    letter-spacing: -0.015em;
+    margin: 0 0 0.75rem;
+}
+.lp-hero h1 .lp-hl { display: block; color: var(--accent); }
+
+.lp-lede {
+    font-size: 1rem; line-height: 1.6;
+    color: rgba(255, 255, 255, 0.9);
+    margin: 0 0 1.25rem;
+}
+.lp-lede strong { color: var(--accent); font-weight: 600; }
+
+/* Primary CTA reuses the shared .btn + .btn-accent colours on purpose; this
+   only resizes them. base.html loads style.css BEFORE this block, so these
+   equal-specificity rules win on source order. */
+.lp-cta {
+    display: block; width: 100%;
+    min-height: 56px;
+    padding: 1rem 1.25rem;
+    text-align: center;
+    font-size: 1.0625rem; line-height: 1.4;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+.lp-cta-note {
+    margin: 0.7rem 0 0;
+    text-align: center;
+    font-size: 0.8125rem; line-height: 1.5;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+/* In-page jump so a returning author never scrolls blind. No JS involved.
+   Sized as a real 44px control, not a text link. */
+.lp-jump {
+    display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+    min-height: 44px; margin-top: 0.9rem; padding: 0.5rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.45); /* ~3:1 on --primary */
+    border-radius: var(--radius);
+    color: #fff; text-decoration: none;
+    font-size: 0.9375rem; font-weight: 600;
+}
+.lp-jump:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--accent); }
+
+/* ---------- How it works ---------- */
+.lp-steps-wrap {
+    margin-top: 1.5rem; padding-top: 1.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+.lp-steps-wrap h2 {
+    color: var(--accent);
+    font-size: 0.8125rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    margin: 0 0 0.85rem;
+}
+.lp-steps { list-style: none; margin: 0; padding: 0; }
+.lp-steps li {
+    display: flex; align-items: flex-start; gap: 0.75rem;
+    padding: 0.4rem 0;
+    font-size: 0.9375rem; line-height: 1.5;
+    color: rgba(255, 255, 255, 0.88);
+}
+.lp-step-n {
+    flex: 0 0 24px; width: 24px; height: 24px; margin-top: 2px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--accent); color: var(--accent-text);
+    font-size: 0.75rem; font-weight: 800;
+}
+.lp-steps strong { color: var(--accent); font-weight: 600; }
+
+.lp-covers {
+    margin: 0.95rem 0 0;
+    font-size: 0.8125rem; line-height: 1.6;
+    color: rgba(255, 255, 255, 0.78);
+}
+.lp-covers strong { color: rgba(255, 255, 255, 0.95); font-weight: 700; }
+
+.lp-assure {
+    margin: 0.85rem 0 0;
+    padding-top: 0.85rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+    font-size: 0.8125rem; line-height: 1.6;
+    color: rgba(255, 255, 255, 0.72);
+}
+.lp-assure a { color: var(--accent); }
+
+/* ---------- Login (light) ---------- */
+.lp-access {
+    background: var(--gray-50);
+    padding: 2rem 1.25rem 2.5rem;
+    scroll-margin-top: 88px; /* clears the fixed 73px header on #login jumps */
+}
+.lp-access-inner { width: 100%; max-width: 420px; margin: 0 auto; }
+
+.lp-card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 1.5rem 1.25rem;
+}
+.lp-card h2 { font-size: 1.25rem; color: var(--primary); margin: 0 0 0.25rem; }
+.lp-card-sub { font-size: 0.875rem; color: var(--gray-600); margin: 0 0 1.25rem; }
+
+/* One .login-error box can hold more than one message (rare, but flashes queue). */
+.lp-card .login-error span { display: block; }
+.lp-card .login-error span + span { margin-top: 0.4rem; }
+
+.lp-card .form-group { margin-bottom: 1.1rem; }
+.lp-card .form-group label { color: var(--gray-800); font-size: 0.875rem; }
+.lp-card .form-group input { min-height: 48px; }
+/* style.css:143-146 sets outline:none on .form-group input:focus with no
+   replacement, so every login form in this app currently has no visible focus
+   indicator. Put one back at higher specificity. */
+.lp-card .form-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(45, 27, 105, 0.15); }
+.lp-card .form-group input:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+.lp-forgot { display: flex; justify-content: flex-end; margin: -0.5rem 0 0.75rem; }
+.lp-forgot a {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 0.25rem;
+    font-size: 0.875rem; font-weight: 600; color: var(--primary); text-decoration: none;
+}
+.lp-forgot a:hover { text-decoration: underline; }
+
+.lp-submit { min-height: 52px; }
+
+.lp-card-foot {
+    margin: 1.25rem 0 0; text-align: center;
+    font-size: 0.875rem; line-height: 1.5; color: var(--gray-600);
+}
+/* Sized as a real 44px control like every other link on the page, not a bare
+   inline link -- it is the escape hatch for a "returning" author who turns out
+   never to have registered. */
+.lp-card-foot a {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 0.25rem;
+    color: var(--primary); font-weight: 600;
+}
+
+.lp-alt { margin: 1.1rem 0 0; text-align: center; font-size: 0.8125rem; color: var(--gray-600); }
+.lp-alt a {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 0.35rem;
+    color: var(--gray-600); text-decoration: underline;
+}
+.lp-alt a:hover { color: var(--primary); }
+
+/* ---------- Focus visibility ---------- */
+.lp-hero a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+/* The primary CTA is itself --accent, so an --accent ring around it reads as the
+   button swelling rather than as a ring. White is 12.4:1 on --primary and can
+   never match the button underneath it. */
+.lp-cta:focus-visible { outline-color: #fff; }
+.lp-access a:focus-visible, .lp-access button:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+
+/* ==========================================================================
+   Desktop: the same DOM becomes the two-column split from author_register.html.
+   ========================================================================== */
+@media (min-width: 769px) {
+    .lp-layout {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        min-height: calc(100vh - 80px); /* main{padding-top:80px} */
+    }
+    .lp-hero {
+        display: flex; flex-direction: column; justify-content: center;
+        padding: 3rem 2.5rem;
+    }
+    .lp-inner { max-width: 540px; margin: 0 0 0 auto; }
+    .lp-hero h1 { font-size: 2.125rem; margin-bottom: 0.875rem; }
+    .lp-lede { font-size: 1.0625rem; }
+
+    .lp-cta { display: inline-block; width: auto; min-width: 300px; }
+    .lp-cta-note { text-align: left; }
+
+    /* Demoted, not removed: the form is already visible beside it, but keyboard
+       and screen-reader users keep the shortcut past four list items. */
+    .lp-jump {
+        display: inline-flex; justify-content: flex-start;
+        min-height: 0; margin-top: 1rem; padding: 0.15rem 0;
+        border: 0; border-radius: 0;
+        color: var(--accent); text-decoration: underline;
+        font-size: 0.875rem;
+    }
+    .lp-jump:hover { background: none; }
+
+    .lp-steps-wrap { margin-top: 1.75rem; padding-top: 1.5rem; }
+
+    .lp-access {
+        display: flex; flex-direction: column; justify-content: center;
+        padding: 3rem 2.5rem;
+    }
+    .lp-access-inner { margin: 0 auto 0 0; }
+    .lp-card { padding: 2rem; }
+    .lp-card h2 { font-size: 1.375rem; }
+}
+
+@media (min-width: 1200px) {
+    .lp-hero, .lp-access { padding-left: 4rem; padding-right: 4rem; }
+    .lp-hero h1 { font-size: 2.375rem; }
+}
+{% endblock %}
+
 {% block content %}
-<div class="login-container">
-    <div class="login-card">
-        <h1>Author Login</h1>
-        <p style="text-align: center; color: var(--gray-500); margin-bottom: 1.5rem;">Sign in to view your proposals and track their progress.</p>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="{% if category == 'success' %}flash success{% else %}login-error{% endif %}">{{ message }}</div>
+{# This is the ONLY get_flashed_messages() call that runs on this page --
+   base.html's banner is overridden away above -- so messages render once, in
+   the card, next to the field that caused them. We use the list for three
+   things: the in-card error, the aria wiring on the inputs, and autofocus.
+
+   The pitch comes first for a COLD visitor. A returning author must not have to
+   read a pitch, so two signals mean "this person came here to log in", and both
+   move focus — and therefore the browser's scroll — to the form with no JS:
+     - a flash message -> a failed login, or a redirect from register/reset
+     - a ?next= param  -> they were bounced here from a page they wanted
+   A cold visit matches neither, gets no autofocus, and opens on the pitch.
+   Autofocus is belt-and-braces only: the form's action="#login" already scrolls
+   the card into view after a failed POST in browsers that ignore autofocus
+   (notably iOS Safari), and the "Log in" jump control is above the fold. #}
+{% set lp_flashes = get_flashed_messages(with_categories=true) %}
+{% set lp_errors = [] %}
+{% for category, message in lp_flashes if category != 'success' %}{% set _ = lp_errors.append(message) %}{% endfor %}
+<div class="lp-layout">
+
+    <!-- ================= Pitch ================= -->
+    <section class="lp-hero">
+        <div class="lp-inner">
+            <span class="lp-eyebrow">For authors with a book idea</span>
+
+            <h1>Submit your book idea. <span class="lp-hl">We read every one personally.</span></h1>
+
+            <p class="lp-lede">
+                <strong>Andy &mdash; a publishing professional on our team &mdash; reads your
+                one-pager</strong> and writes back with real, specific feedback.
+                A person&rsquo;s read, not just an automated score.
+            </p>
+
+            <a class="btn btn-accent lp-cta" href="{{ url_for('author_register') }}">Submit your book idea <span aria-hidden="true">&rarr;</span></a>
+            <p class="lp-cta-note">Free to start. No credit card. Create your free account to begin.</p>
+
+            <a class="lp-jump" href="#login">Already have an account? Log in <span aria-hidden="true">&darr;</span></a>
+
+            <div class="lp-steps-wrap">
+                <h2>How it works</h2>
+                <ol class="lp-steps" role="list">
+                    <li><span class="lp-step-n">1</span><span>Create your free account.</span></li>
+                    <li><span class="lp-step-n">2</span><span>Answer the five questions in your One-Pager &mdash; <strong>about 20&nbsp;minutes</strong> &mdash; and send it in.</span></li>
+                    <li><span class="lp-step-n">3</span><span><strong>Andy reviews it personally</strong> and sends you his feedback &mdash; a written note or a voice message.</span></li>
+                    <li><span class="lp-step-n">4</span><span>Build your full proposal section by section with AI coaching.</span></li>
+                </ol>
+                <p class="lp-covers">
+                    <strong>The five questions:</strong> what problem your book solves, who it&rsquo;s for,
+                    what makes it different, why you&rsquo;re the one to write it, and how you plan to
+                    reach readers. Rough answers count.
+                </p>
+                <p class="lp-assure">
+                    Your work stays yours. Submitting it to us transfers no rights, no ownership and no
+                    exclusivity &mdash;
+                    <a href="{{ url_for('confidentiality') }}">read our confidentiality statement</a>.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Login ================= -->
+    <section class="lp-access" id="login">
+        <div class="lp-access-inner">
+            <div class="lp-card">
+                <h2>Log in</h2>
+                {# An expired session redirects here with ?next= and NO flash
+                   (login_manager.login_message is None), so without this the
+                   bounced author lands on an acquisition pitch with no
+                   explanation of why they were logged out. #}
+                <p class="lp-card-sub">
+                    {%- if request.args.get('next') and not lp_flashes -%}
+                        Your session ended &mdash; log in to pick up where you left off.
+                    {%- else -%}
+                        Sign in to pick up where you left off.
+                    {%- endif -%}
+                </p>
+
+                {% for category, message in lp_flashes if category == 'success' %}
+                    <div class="flash success">{{ message }}</div>
                 {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <form method="POST">
-            <div class="form-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" required placeholder="your@email.com">
+                {# role="alert" so the message is announced even though autofocus
+                   moves focus past it; the id is referenced by both inputs so the
+                   focused field states the reason too. #}
+                {% if lp_errors %}
+                    <div class="login-error" id="login-error" role="alert">
+                        {% for message in lp_errors %}<span>{{ message }}</span>{% endfor %}
+                    </div>
+                {% endif %}
+
+                {# Fragment-only action: resolves against the current URL per
+                   RFC 3986 §5.3, so method/path/?next= are all preserved and the
+                   browser scrolls to the card after a failed POST instead of
+                   re-rendering at the top of the pitch. #}
+                <form method="POST" action="#login">
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" required
+                               value="{{ request.form.get('email', '') }}"
+                               autocomplete="email" autocapitalize="none" spellcheck="false"
+                               placeholder="your@email.com"
+                               {% if lp_errors %}aria-invalid="true" aria-describedby="login-error"{% endif %}
+                               {% if (lp_flashes or request.args.get('next')) and not request.form.get('email') %}autofocus{% endif %}>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required
+                               autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                               {% if lp_errors %}aria-invalid="true" aria-describedby="login-error"{% endif %}
+                               {% if request.form.get('email') %}autofocus{% endif %}>
+                    </div>
+                    <div class="lp-forgot">
+                        <a href="{{ url_for('author_forgot_password') }}">Forgot password?</a>
+                    </div>
+                    <button type="submit" class="btn btn-primary login-btn lp-submit">Log In</button>
+                </form>
+
+                <p class="lp-card-foot">
+                    New here? <a href="{{ url_for('author_register') }}">Submit your book idea <span aria-hidden="true">&rarr;</span></a>
+                </p>
             </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required placeholder="••••••••">
-            </div>
-            <div style="text-align: right; margin-bottom: 1rem;">
-                <a href="{{ url_for('author_forgot_password') }}" style="font-size: 0.875rem; color: var(--primary); text-decoration: none;">Forgot password?</a>
-                <span style="font-size: 0.875rem; color: var(--gray-500);"> · </span>
-                <a href="{{ url_for('admin_login') }}" style="font-size: 0.875rem; color: var(--gray-500); text-decoration: none;">Team member? Admin login</a>
-            </div>
-            <button type="submit" class="btn btn-primary login-btn">Log In</button>
-        </form>
-        <p style="text-align: center; margin-top: 1.5rem; font-size: 0.875rem; color: var(--gray-500);">
-            Don't have an account? <a href="{{ url_for('author_register') }}" style="color: var(--primary); font-weight: 600;">Create one here</a>
-        </p>
-    </div>
+
+            <p class="lp-alt"><a href="{{ url_for('admin_login') }}">Team member? Admin login</a></p>
+        </div>
+    </section>
+
 </div>
 {% endblock %}

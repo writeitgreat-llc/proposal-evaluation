@@ -56,6 +56,12 @@
     </header>
 
     <main>
+        {# Default flash banner for every page. A template that renders its own
+           flash messages (e.g. author_login.html, which shows them inside the
+           login card next to the field that caused them) must override this
+           block with an empty one -- get_flashed_messages() is cached per
+           request, so without the override the same message renders twice. #}
+        {% block flash_messages %}
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 <div class="container" style="padding-bottom: 0;">
@@ -65,6 +71,7 @@
                 </div>
             {% endif %}
         {% endwith %}
+        {% endblock %}
 
         {% block content %}{% endblock %}
     </main>

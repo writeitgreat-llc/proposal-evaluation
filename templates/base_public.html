@@ -1,0 +1,56 @@
+{# ── base_public.html — the layout for PUBLIC FUNNEL PAGES ─────────────────
+
+   Identical to base.html in every visible way. The only thing it adds is the
+   first-party analytics tracker and the cookie-consent banner.
+
+   THIS IS THE SCOPE BOUNDARY, AND IT IS THE WHOLE BOUNDARY.
+
+   A page is measured if and only if it extends THIS template instead of
+   base.html. There is no list of paths anywhere, nothing to keep in sync, and
+   no way to instrument a page by accident: the two includes below appear in
+   exactly one file in this repo, and ci/check_analytics.py asserts that.
+
+   What belongs here: the pages a prospective author sees BEFORE they have an
+   account. Today that is
+       /author/register            author_register.html
+       /author/login               author_login.html
+       /author/forgot-password     author_forgot_password.html
+       /author/reset-password/…    author_reset_password.html
+       /confidentiality            confidentiality.html
+       /social-strategy            social_strategy_standalone.html
+
+   What must NEVER be moved onto this template: the signed-in application
+   interior — the author dashboard, the coaching modules, the proposal editor,
+   the publisher portal, the admin pages. Measuring the behaviour of signed-in,
+   identified users inside a product is a materially different thing from
+   anonymous marketing measurement. Different privacy footing, different notice
+   requirements, and the notice this app currently gives says nothing about it.
+   The staff and publisher login pages are out too: they are not the author
+   funnel, and neither is a person we are trying to acquire.
+
+   Belt and braces, the includes are ALSO gated on
+   `not current_user.is_authenticated`, so if someone ever does point an
+   interior template here, a signed-in visitor is still not measured. The gate
+   is structural on both halves — a template choice and a session fact — never
+   a URL match.
+
+   `analytics_configured` is false when ANALYTICS_SALT_KEY is unset, which is
+   every local checkout and any deployment that has not opted in. There is no
+   point beaconing to a collector that will discard the event. #}
+{% extends "base.html" %}
+
+{% block footer_extra %}
+{% if analytics_configured and not current_user.is_authenticated %}
+{# The withdrawal path the banner promises. It lives here rather than in
+   base.html's footer because the banner it reopens only exists on these pages —
+   a "Cookie settings" link on a page with no banner is a dead control. #}
+<a href="#" data-consent-open>Cookie settings</a>
+{% endif %}
+{% endblock %}
+
+{% block analytics %}
+{% if analytics_configured and not current_user.is_authenticated %}
+{% include "_analytics.html" %}
+{% include "_consent.html" %}
+{% endif %}
+{% endblock %}

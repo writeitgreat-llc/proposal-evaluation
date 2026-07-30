@@ -1,0 +1,157 @@
+{# ── Cookie consent ────────────────────────────────────────────────────────
+   Asks one question, once, and takes no for an answer. Included only from
+   base_public.html, i.e. only on the public funnel pages and only when nobody
+   is signed in.
+
+   What this banner is and is not asking for. These pages count visits
+   anonymously for everyone, with no cookie and nothing stored on the device
+   (see _analytics.html). That measurement needs no permission and does not stop
+   if you decline. The ONLY thing on the table here is a single cookie that lets
+   us recognise a returning visitor. The copy says exactly that, because a
+   banner that implies "decline and we stop watching" when the baseline
+   measurement continues regardless would be a lie, and an obvious one to anyone
+   who opens devtools.
+
+   Compliance rules this markup deliberately satisfies:
+     * Decline is exactly as easy as Accept — same size, same weight, same
+       position, no colour trickery. A "Reject" hidden behind a second click is
+       the specific dark pattern regulators have been fining people for.
+     * Nothing is pre-ticked and nothing is set before an answer. The cookie is
+       written by the server, in response to the click, and never before.
+     * The choice is withdrawable at any time — any control carrying
+       data-consent-open reopens this banner.
+     * A Global Privacy Control signal is treated as an answer already given.
+       Someone who has set GPC has said no at the browser level; asking again is
+       precisely what that signal exists to prevent, so the banner never renders
+       for them (see analytics_collect.gpc_opt_out).
+
+   The "how we handle data" link is rendered only when PRIVACY_URL is set. This
+   app has no privacy policy of its own: /confidentiality is about the ownership
+   of submitted work and explicitly says it is not a contract, so it cannot
+   carry a cookie notice. Publishing one is an open item owned by a human
+   (CONTRACT_ANALYTICS.md §7); when it exists, set PRIVACY_URL and the link
+   appears with no deploy. Linking at a page that does not answer the question
+   would be worse than not linking.
+
+   Styles are inline here rather than in static/css/style.css so the banner is
+   self-contained and identical to the marketing site's. #}
+<style>
+  .wig-consent {
+    position: fixed; inset-inline: 0; bottom: 0; z-index: 9999;
+    background: #FFFFFF; color: #2D1B69;
+    border-top: 3px solid #2D1B69;
+    box-shadow: 0 -6px 28px rgba(45, 27, 105, .18);
+    padding: 1.15rem 1.25rem calc(1.15rem + env(safe-area-inset-bottom, 0px));
+    font: 400 15px/1.55 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wig-consent[hidden] { display: none; }
+  .wig-consent__inner {
+    max-width: 68rem; margin: 0 auto;
+    display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: center;
+    justify-content: space-between;
+  }
+  .wig-consent__text { flex: 1 1 22rem; min-width: 0; margin: 0; }
+  .wig-consent__title {
+    font-weight: 700; display: block; margin-bottom: .2rem; font-size: 15px;
+  }
+  .wig-consent__text a { color: #2D1B69; }
+  .wig-consent__actions {
+    display: flex; flex-wrap: wrap; gap: .6rem; flex: 0 0 auto;
+  }
+  /* Both buttons are the same object with different colours. Equal padding,
+     equal font-weight, equal min-width — the visual weight of "No" must not be
+     lighter than "Yes". */
+  .wig-consent__btn {
+    font: inherit; font-weight: 600; cursor: pointer;
+    min-height: 44px; min-width: 8.5rem; padding: .6rem 1.15rem;
+    border-radius: 8px; border: 2px solid #2D1B69;
+  }
+  .wig-consent__btn--yes { background: #2D1B69; color: #FFFFFF; }
+  .wig-consent__btn--no  { background: #FFFFFF; color: #2D1B69; }
+  .wig-consent__btn:hover { opacity: .88; }
+  .wig-consent__btn:focus-visible { outline: 3px solid #B8F2B8; outline-offset: 2px; }
+  @media (max-width: 560px) {
+    .wig-consent__actions { width: 100%; }
+    .wig-consent__btn { flex: 1 1 0; min-width: 0; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .wig-consent { animation: wig-consent-in .28s ease-out both; }
+    @keyframes wig-consent-in { from { transform: translateY(100%); } }
+  }
+</style>
+
+<div class="wig-consent" id="wig-consent" role="dialog" aria-modal="false"
+     aria-labelledby="wig-consent-title" {% if not show_consent_banner %}hidden{% endif %}>
+  <div class="wig-consent__inner">
+    <p class="wig-consent__text">
+      <strong class="wig-consent__title" id="wig-consent-title">Remember me on my next visit?</strong>
+      We count visits and page views anonymously either way — no cookie, nothing
+      stored on your device. This asks about one extra cookie, which only lets us
+      recognise you as a returning visitor rather than a new one. Declining
+      changes nothing about how this site works, and it is never used inside your
+      account.
+      {% if analytics_privacy_url %}
+      <a href="{{ analytics_privacy_url }}">How we handle data</a>.
+      {% endif %}
+    </p>
+    <div class="wig-consent__actions">
+      {# Accept first only because it is the affirmative answer to the question
+         as asked; both controls are identical in size and prominence. #}
+      <button type="button" class="wig-consent__btn wig-consent__btn--yes"
+              data-consent="grant">Allow</button>
+      <button type="button" class="wig-consent__btn wig-consent__btn--no"
+              data-consent="deny">No thanks</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var banner = document.getElementById('wig-consent');
+  if (!banner) return;
+  var ENDPOINT = {{ url_for('analytics.set_consent') | tojson }};
+  var opener = null;
+
+  function answer(granted) {
+    /* The cookie is set by the server's Set-Cookie, not here. Safari caps any
+       cookie written by document.cookie at 7 days, which would silently turn
+       "remember me for 180 days" into "remember me for a week". */
+    fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analytics: granted === true }),
+      credentials: 'same-origin'
+    }).catch(function () {});
+    banner.hidden = true;
+    /* Focus went into the banner when it was opened from a settings control;
+       put it back where it came from rather than dropping it to <body>. */
+    if (opener && opener.focus) { opener.focus(); opener = null; }
+  }
+
+  banner.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-consent]') : null;
+    if (btn) answer(btn.getAttribute('data-consent') === 'grant');
+  });
+
+  /* Escape dismisses without answering — the banner comes back next visit,
+     which is the honest behaviour for "I didn't choose". */
+  banner.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      banner.hidden = true;
+      if (opener && opener.focus) { opener.focus(); opener = null; }
+    }
+  });
+
+  /* Withdrawal path: any control with data-consent-open reopens this. Focus
+     moves in, because this time the visitor asked for it. */
+  document.addEventListener('click', function (e) {
+    var trigger = e.target.closest ? e.target.closest('[data-consent-open]') : null;
+    if (!trigger) return;
+    e.preventDefault();
+    opener = trigger;
+    banner.hidden = false;
+    var first = banner.querySelector('[data-consent]');
+    if (first) first.focus();
+  });
+})();
+</script>

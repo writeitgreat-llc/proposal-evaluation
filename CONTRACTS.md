@@ -66,10 +66,82 @@ The dashboard's "Authors admin" quick link mints a short-lived signed token
 - The jump bypasses THIS app's TOTP prompt by design; that is acceptable
   only because every dashboard team login carries mandatory 2FA.
 
+## 3. Analytics ingest v1 — SENDER (`POST /api/analytics/ingest` on the dashboard)
+
+Full specification: `_integration/CONTRACT_ANALYTICS.md` in the team workspace.
+This is the second of the two collecting properties; `website` is the first and
+its side is documented in `writeitgreat-llc/website` → `CONTRACTS.md` §3.
+Summary of this app's side.
+
+This app **collects**; the dashboard **stores and reports**. Visitors' browsers
+beacon to `POST /e` on authors.writeitgreat.com (same-origin on purpose — a
+cross-origin beacon needs a CORS preflight that `sendBeacon` cannot send, and a
+collector on another host is what tracker-blockers match). `/e` writes one row
+to `analytics_outbox`; the existing ~2-minute background drain in
+`_start_reengagement_thread()` ships batches server-to-server under
+`Authorization: Bearer $ANALYTICS_INGEST_TOKEN` — **the same env-var name on
+both sides**, deliberately not a sender/receiver name pair (that asymmetry is
+why the leads link sat dead in production for days).
+
+Why a queue rather than a direct call: a pageview must not put an HTTP request
+to another host on the render path of this single-worker app, and a dashboard
+outage must cost zero pageviews. There is deliberately **no** per-event
+immediate-send thread here, unlike `_emit_funnel_event` above: funnel events are
+rare and feed a human review queue, pageviews are frequent and the contract says
+ship them in batches.
+
+Idempotent on `event_uid` (uuid4, minted here, unique). A batch that times out
+after the dashboard committed it is recognised on retry, not double-counted — so
+the drain is always safe to re-run. Rows are deleted only on `{"ok": true}`;
+anything else increments `attempts`, records the error and sets
+`next_attempt_at` on the same 1m→30m backoff as the funnel outbox. After 100
+failed attempts (~2 days) a row is parked rather than blocking the queue, and
+parked rows are dropped after 7 days — a pageview outbox is high volume and an
+unbounded poison queue is the worse failure.
+
+Wire shape per event (batch: `{"site": "<Host header>", "events": [...]}`,
+≤200 per POST): `event_uid`, `kind` (pageview|engagement|outbound|conversion),
+`occurred_at`, `visitor_hash`, `session_id`, `consented`, `path`,
+`referrer_host`, `channel`, `utm_source`/`utm_medium`/`utm_campaign`,
+`country`, `device_type`, `browser`, `os`, `is_bot`, `engaged_ms`,
+`scroll_pct`, `target`, `is_entry`, `is_exit`. `channel` uses the same
+vocabulary and the same rules as the marketing site's
+`app/source_capture.py` — separate repos, so the classifier is a verbatim port
+in `analytics_collect.py`; change one, change both or the two "which channel"
+tables stop being comparable.
+
+**Scope — public funnel pages only.** Instrumented: `/author/register`,
+`/author/login`, `/author/forgot-password`, `/author/reset-password/<token>`,
+`/confidentiality`, `/social-strategy`. NOT instrumented: the signed-in
+application interior, the publisher portal, and the admin pages. The boundary is
+structural, not a path list — `templates/base_public.html` is the only template
+that includes the tracker, and it renders it only when
+`current_user.is_authenticated` is false. Registration conversion is **not**
+re-measured here: `author_registered` in §1 already answers it.
+
+**Privacy invariants (asserted by `ci/check_analytics.py`, not just
+documented):** no raw IP address and no raw User-Agent is written to storage;
+`path` never carries a query string, and it is reduced to the matched Flask
+route so `/author/reset-password/<token>` can never store a live reset token;
+the visitor hash is keyed by `ANALYTICS_SALT_KEY` and its salt input rotates
+daily, so it cannot follow a person across days unless they opted into the
+`wig_vid` cookie; that cookie is set server-side, HttpOnly, Secure, SameSite=Lax;
+`Sec-GPC: 1` (and `DNT: 1`) is a standing refusal — no cookie, no banner.
+
+Env vars, all optional, all `os.environ` only (this repo is public):
+`ANALYTICS_SALT_KEY` (unset ⇒ the tracker is not rendered and `/e` stores
+nothing), `ANALYTICS_INGEST_TOKEN` (unset ⇒ the drain is a silent no-op),
+`ANALYTICS_INGEST_URL` (defaults to the wig-dashboard app URL +
+`/api/analytics/ingest`), `TRUST_CLOUDFLARE_IP` (set only in the same change
+that puts Cloudflare in front, never before), `PRIVACY_URL` (when a privacy
+policy exists, the consent banner links to it).
+
 ## Change protocol
 
 Contract changes update BOTH sides' CONTRACTS.md in the same change set
 (dashboard: `wig-dashboard/CONTRACTS.md`). Never add retry/queue behavior to
 the funnel sender without re-reading the single-dyno constraint — the web
 dyno hosts the rate limiter and the hourly email daemon; a worker dyno is a
-deliberate non-goal.
+deliberate non-goal. §3 has a third side: the analytics contract is written
+against three repos at once, so a change to it is a change in
+`_integration/CONTRACT_ANALYTICS.md`, `website`, this app, and the dashboard.

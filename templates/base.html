@@ -83,9 +83,23 @@
             <a href="{{ url_for('author_login') }}">Author Login</a>
             <a href="{{ url_for('publisher_login') }}">Publisher Login</a>
             <a href="{{ url_for('admin_login') }}">Team Login</a>
+            {# Empty here on purpose. base_public.html fills it with the cookie
+               settings control, which only makes sense on a page that carries
+               the consent banner. #}
+            {% block footer_extra %}{% endblock %}
         </div>
     </footer>
 
     {% block extra_js %}{% endblock %}
+
+    {# ── Analytics ─────────────────────────────────────────────────────────
+       Empty in this template and it must stay empty. The first-party tracker
+       and the consent banner are filled in by base_public.html, which the
+       public funnel pages extend instead of this one; every other page in the
+       app — the whole signed-in interior, plus the staff and publisher logins —
+       is deliberately not instrumented. Read the header of base_public.html
+       before changing that, and note that ci/check_analytics.py fails if the
+       tracker is ever included from anywhere else. #}
+    {% block analytics %}{% endblock %}
 </body>
 </html>

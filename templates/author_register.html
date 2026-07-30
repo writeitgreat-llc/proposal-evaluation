@@ -1,4 +1,7 @@
-{% extends "base.html" %}
+{# Public funnel page: extends base_public.html, so it carries the
+   first-party analytics tracker and the consent banner. See
+   templates/base_public.html for the scope boundary. #}
+{% extends "base_public.html" %}
 {% block title %}Create Account - Write It Great{% endblock %}
 
 {% block extra_css %}

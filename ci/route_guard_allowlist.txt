@@ -34,3 +34,27 @@
 /results/<submission_id>             # token-first; submission_id honoured only for legacy token-less rows
 /download/<submission_id>            # PDF of the same report, same rule
 /api/status/<submission_id>          # same rule; leaks only a status string
+
+# --- analytics collector: deliberately public, no parameter at all ---
+# Added 2026-07-29 with the first-party analytics collector
+# (analytics_collect.py). Both routes are unauthenticated ON PURPOSE: they are
+# called by anonymous visitors on the public funnel pages, before an account
+# exists, which is the entire point of them.
+#
+# Against the three questions at the top of this file: neither route takes a
+# URL parameter, so there is nothing to guess or enumerate, and neither one
+# READS anything. /e appends to a write-only outbox; /consent sets a cookie
+# recording the caller's own preference. The worst a hostile client achieves is
+# inflating its own visit counts or flipping its own analytics choice, and
+# every identity field on a stored event (visitor_hash, session_id, country,
+# browser, os, is_bot, the timestamp) is derived server-side and ignores
+# anything the client claims. Hardened like /api/submit: a size cap checked
+# before the body is parsed, a per-IP sliding window, no IP or User-Agent
+# written anywhere, and 204 for every outcome a visitor can cause.
+#
+# NOTE these two lines are documentation, not enforcement. check_route_guards.py
+# is invoked with --app app.py and only inspects rules containing <...>, so it
+# never sees either of these; they are listed here because this file is where
+# somebody auditing "what in this app is reachable without a login" will look.
+/e                                   # analytics beacon: no parameter, write-only outbox, no client-controlled identity
+/consent                             # records the caller's own cookie choice; sets only their own cookie

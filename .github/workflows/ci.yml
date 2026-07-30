@@ -63,6 +63,17 @@ jobs:
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 
+      # Blocking, on purpose. This one asserts the privacy promises the consent
+      # banner makes to visitors -- that no raw IP and no raw User-Agent is ever
+      # written to storage, that the query string and any URL token are stripped
+      # from a stored path, that the visitor hash rotates daily, that GPC is
+      # honoured, that the analytics cookie is HttpOnly -- and it asserts the
+      # scope boundary: the public funnel pages are instrumented and the
+      # signed-in interior is not. A promise nothing checks is a promise that
+      # quietly stops being true.
+      - name: Analytics collector, consent, and privacy invariants
+        run: python ci/check_analytics.py
+
       # Non-blocking. app.py does `import requests as http_requests` but
       # requests is NOT in requirements.txt -- today it only installs because
       # xhtml2pdf -> pyHanko happens to depend on it. That is luck, not a

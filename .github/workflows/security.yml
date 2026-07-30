@@ -202,7 +202,7 @@ jobs:
       - name: bandit
         run: |
           python ci/bandit_gate.py \
-            --paths app.py migrate.py fix_schema.py \
+            --paths app.py migrate.py fix_schema.py analytics_collect.py \
             --allowance ci/bandit_allowance.json \
             --min-severity HIGH \
             --min-confidence MEDIUM \

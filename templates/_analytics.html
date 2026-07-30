@@ -1,0 +1,238 @@
+{# ── Analytics tracker ─────────────────────────────────────────────────────
+   Goes at the foot of <body>, and ONLY on the public funnel pages — it is
+   included from base_public.html and from nowhere else. See that file for the
+   scope boundary and why it is drawn where it is.
+
+   Measures pages, engaged time, scroll depth, clicks off this site, and posts
+   them to our own /e endpoint on this same domain.
+
+   Stores NOTHING on the device. No cookie is read or written here; the only
+   cookie in this feature is set by the server, only after an explicit opt-in,
+   and this file never touches it. That is what lets the baseline measurement
+   run for everyone without a consent gate — see _consent.html for the tier that
+   does need one, and _integration/CONTRACT_ANALYTICS.md for the reasoning.
+
+   Design notes worth knowing before editing:
+
+   * The page identity comes from the SERVER (`analytics_path`), not from
+     location.pathname. This app serves tokenised URLs — /author/reset-password/
+     <token> is one of the instrumented pages — and sending the literal path
+     would put a live reset token into a request body. The server sends the
+     matched Flask route instead, so the token never leaves the page at all.
+     (analytics_collect.normalise_route re-derives the same thing server-side,
+     so a forged beacon cannot smuggle one in either.)
+   * Engaged time is an idle-gated accumulator, not heartbeat pings. A heartbeat
+     every 5s would be ~10 extra requests per pageview to answer a question one
+     number can answer. Time only accrues while the tab is visible AND the
+     visitor has done something in the last 30 seconds, so a tab left open over
+     lunch does not report as forty minutes of reading.
+   * Delivery is on `visibilitychange`→hidden and `pagehide`. There is
+     deliberately no `unload` handler: `unload` disables the back/forward cache,
+     is unreliable on iOS, and is on a standards path to removal.
+   * Nothing the visitor typed is ever an event. No field values, no search
+     terms. The only string this file ever sends about the page is a route the
+     server chose.
+   * Everything is wrapped. An analytics bug must never be the reason a page
+     breaks — least of all a login page — so every entry point is inside a
+     try/catch and failure is silent. #}
+<script>
+(function () {
+  'use strict';
+
+  var ENDPOINT = {{ url_for('analytics.collect') | tojson }};
+  /* The Flask route for this page, e.g. "/author/reset-password/<token>". */
+  var PAGE = {{ analytics_path | tojson }};
+
+  var IDLE_MS = 30000;        /* no interaction for this long → not engaged */
+  var TICK_MS = 1000;
+  var MAX_QUEUE = 20;
+
+  var queue = [];
+  var engagedMs = 0;
+  var maxScroll = 0;
+  var lastInteraction = Date.now();
+  var sent = false;
+
+  /* One id per PAGE LOAD. engagedMs below restarts at zero on every load and
+     is re-sent on each flush of that page, so it is a running total *within a
+     load*. The dashboard's rule is
+
+       session engaged_ms = SUM over distinct page_load_id of MAX(engaged_ms)
+
+     and without this field every event from this app falls into the receiver's
+     legacy per-path fallback. That is not a cosmetic difference: bouncing
+     between login → register → login is the dominant navigation on these six
+     pages, and the two properties would report different engaged time into the
+     SAME chart. Matches website/app/templates/_analytics.html exactly.
+
+     Random, per load, never stored — not an identifier for a person. */
+  var PID = (function () {
+    try {
+      if (window.crypto && crypto.getRandomValues) {
+        var a = new Uint8Array(8);
+        crypto.getRandomValues(a);
+        return Array.prototype.map.call(a, function (b) {
+          return ('0' + b.toString(16)).slice(-2);
+        }).join('');
+      }
+    } catch (e) {}
+    return String(Date.now()) + String(Math.random()).slice(2, 10);
+  })();
+
+  function visible() {
+    return document.visibilityState !== 'hidden';
+  }
+  function engaged() {
+    return visible() && (Date.now() - lastInteraction) < IDLE_MS;
+  }
+
+  function path() {
+    return PAGE || '/';
+  }
+
+  /* Only an EXTERNAL referrer is a traffic source; a same-origin one is just
+     the previous page of this visit, and the server discards it anyway
+     (analytics_collect.is_internal).
+
+     Dropping it HERE rather than there is what makes the claim at the top of
+     this file true. /author/reset-password/<token> is an instrumented page, so
+     when someone follows a link from it to /author/login, document.referrer on
+     that next page is the full reset URL — token included. Sending it and
+     discarding it server-side would still have put a live credential in a
+     request body, a log buffer, and any proxy in between. Nothing is lost:
+     the server would have thrown it away regardless. */
+  function externalReferrer() {
+    var r = document.referrer;
+    if (!r) return null;
+    try {
+      return new URL(r, location.href).origin === location.origin ? null : r;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function campaign() {
+    try {
+      var p = new URLSearchParams(location.search);
+      var out = {};
+      ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function (k) {
+        var v = p.get(k);
+        if (v) out[k] = v.slice(0, 120);
+      });
+      return out;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function push(event) {
+    if (queue.length >= MAX_QUEUE) return;
+    event.ts = Date.now();
+    event.pid = PID;
+    queue.push(event);
+  }
+
+  /* ── Delivery ───────────────────────────────────────────────────────────
+     sendBeacon is the right tool: the browser owns the request and will finish
+     it after the page is gone. It cannot set headers, which is exactly why this
+     endpoint is same-origin — a cross-origin JSON beacon would need a CORS
+     preflight it has no way to send. */
+  function flush(force) {
+    try {
+      if (engagedMs > 0 || maxScroll > 0) {
+        push({ t: 'engagement', u: path(), ms: Math.round(engagedMs), sd: maxScroll });
+      }
+      if (!queue.length) return;
+      var body = JSON.stringify({ v: 1, events: queue.splice(0, MAX_QUEUE) });
+
+      if (navigator.sendBeacon) {
+        var blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon(ENDPOINT, blob)) return;
+      }
+      /* keepalive lets the request outlive the document, same as a beacon.
+         Only reached when sendBeacon is missing or refuses (quota). */
+      fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+        keepalive: true,
+        credentials: 'same-origin'
+      }).catch(function () {});
+    } catch (e) { /* never break the page */ }
+  }
+
+  /* ── Engagement accounting ──────────────────────────────────────────── */
+  function interaction() { lastInteraction = Date.now(); }
+
+  ['keydown', 'click', 'scroll', 'touchstart', 'pointerdown'].forEach(function (name) {
+    addEventListener(name, interaction, { passive: true, capture: true });
+  });
+  /* mousemove fires continuously; sampling it is enough to know somebody is
+     there, and avoids running a handler hundreds of times a second. */
+  var moveThrottle = 0;
+  addEventListener('mousemove', function () {
+    var now = Date.now();
+    if (now - moveThrottle > 2000) { moveThrottle = now; interaction(); }
+  }, { passive: true });
+
+  setInterval(function () {
+    if (engaged()) engagedMs += TICK_MS;
+  }, TICK_MS);
+
+  addEventListener('scroll', function () {
+    try {
+      var doc = document.documentElement;
+      var reach = (scrollY || doc.scrollTop) + innerHeight;
+      var height = Math.max(doc.scrollHeight, document.body ? document.body.scrollHeight : 0);
+      if (height > 0) {
+        var pct = Math.round((reach / height) * 100);
+        if (pct > maxScroll) maxScroll = Math.min(100, pct);
+      }
+    } catch (e) {}
+  }, { passive: true });
+
+  /* ── Outbound clicks ────────────────────────────────────────────────────
+     Captured, so a handler that stops propagation cannot hide the click, and
+     flushed immediately rather than queued: the page is about to be replaced.
+     Only the destination is recorded, never the link text. */
+  addEventListener('click', function (e) {
+    try {
+      var el = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!el) return;
+      var url = new URL(el.href, location.href);
+      if (url.host === location.host) return;
+      push({ t: 'outbound', u: path(), x: url.href.slice(0, 300) });
+      flush(true);
+    } catch (err) {}
+  }, true);
+
+  /* ── Public hook ────────────────────────────────────────────────────────
+     Named conversions. Deliberately NOT wired to author registration: app.py
+     already emits the `author_registered` funnel event to the dashboard
+     (CONTRACTS.md §1), and a second, differently-counted conversion for the
+     same act would give the same funnel two answers. What this collector adds
+     is the step BEFORE that one — how many people reach the register page and
+     how many leave without finishing it — which page-level events already
+     answer. The hook stays available for a future public page that has no
+     server-side event of its own; it takes a name, never form contents. */
+  window.wigTrack = function (name) {
+    try {
+      if (typeof name !== 'string' || !name) return;
+      push({ t: 'conversion', u: path(), n: name.slice(0, 60) });
+      flush(true);
+    } catch (e) {}
+  };
+
+  /* ── Lifecycle ──────────────────────────────────────────────────────── */
+  push({ t: 'pageview', u: path(), r: externalReferrer(), q: campaign() });
+
+  addEventListener('visibilitychange', function () {
+    if (!visible()) flush(true);
+  });
+  /* pagehide also covers the bfcache case, where visibilitychange may not fire
+     on every browser. Both firing just means an extra empty flush. */
+  addEventListener('pagehide', function () {
+    if (!sent) { sent = true; flush(true); }
+  });
+})();
+</script>

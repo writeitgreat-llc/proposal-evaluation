@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -100,6 +100,62 @@ def _route_aware_unauthorized():
         endpoint = 'author_login'
     return redirect(url_for(endpoint, next=path))
 login_manager.login_message = None  # Disable "Please log in" message
+
+# ── First-party web analytics (cross-app contract v1) ──────────────────────
+# The collector, the two tables and the outbox drain live in
+# analytics_collect.py — app.py is already ~8,800 lines and this is a
+# self-contained feature. Registered HERE, before the db.create_all() at the
+# foot of this file, so the release phase (migrate.py) creates both tables. This
+# repo has no Alembic: new TABLES arrive via create_all(), and only new COLUMNS
+# on existing tables need an entry in run_migrations(), so these need nothing
+# there.
+#
+# analytics_collect never imports app.py. That would be circular, and worse:
+# `python app.py` runs this file as __main__, so `from app import db` over there
+# would import and execute this entire module a SECOND time.
+import analytics_collect
+
+analytics_collect.init_app(app, db)
+
+# Only http(s). PRIVACY_URL comes from the environment, and a mistyped one
+# rendered straight into an href is how a javascript: URL gets onto a login
+# page. Unset (the state today — there is no privacy policy yet) simply means
+# the consent banner shows no link.
+_PRIVACY_URL = os.environ.get('PRIVACY_URL', '').strip()
+if not _PRIVACY_URL.lower().startswith(('http://', 'https://')):
+    _PRIVACY_URL = ''
+
+
+@app.context_processor
+def _analytics_context():
+    """Everything templates/base_public.html needs to decide what to render.
+
+    Deliberately NOT a decision about which page this is — that belongs to the
+    template inheritance chain (see templates/base_public.html), so there is no
+    path list here that could drift out of step with the routes.
+
+    `analytics_path` is the matched Flask RULE, not request.path. This app
+    serves tokenised URLs and one of the instrumented pages is
+    /author/reset-password/<token>; sending the literal path would put a live
+    reset token into a beacon body. Sending the rule means the token never
+    leaves the page.
+
+    Guarded on has_request_context() because this app renders templates OUTSIDE
+    a request too — the PDF builders run from background email threads, which
+    have an app context and no request. Without the guard every one of those
+    would raise the moment this feature landed.
+    """
+    if not has_request_context():
+        return {'analytics_configured': False, 'analytics_path': '/',
+                'show_consent_banner': False, 'analytics_privacy_url': ''}
+    return {
+        'analytics_configured': analytics_collect.is_configured(),
+        'analytics_path': (str(request.url_rule.rule)
+                           if request.url_rule is not None else '/'),
+        'show_consent_banner': analytics_collect.show_consent_banner(),
+        'analytics_privacy_url': _PRIVACY_URL,
+    }
+
 
 # Custom Jinja filter for parsing JSON strings in templates
 @app.template_filter('fromjson')
@@ -3493,6 +3549,15 @@ def _start_reengagement_thread():
             # the email checks keep their HOURLY cadence by wall clock — a
             # slow drain must never stretch them (tick-counting would).
             drain_funnel_outbox()
+            # The analytics outbox shares this tick, and deliberately has no
+            # per-event immediate-send thread the way _emit_funnel_event does:
+            # funnel events are rare and feed a human review queue, so latency
+            # matters; pageviews are frequent and the contract says ship them in
+            # BATCHES. One thread per pageview would put an HTTP call to another
+            # host next to every page render, which is exactly what the outbox
+            # exists to prevent. Wrapped in its own try/except internally, like
+            # the funnel drain, so it cannot kill this loop.
+            analytics_collect.drain_analytics_outbox(app)
             if time.time() >= next_email_check:
                 next_email_check = time.time() + 3600
                 check_reengagement_emails()

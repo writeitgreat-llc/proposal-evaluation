@@ -6,6 +6,7 @@ Flask application with database, admin dashboard, status tracking, and email not
 
 import os
 import json
+import time
 import uuid
 import secrets
 import hashlib
@@ -33,7 +34,7 @@ import qrcode
 import base64
 import openai
 from docx import Document
-import PyPDF2
+import pypdf
 
 # ============================================================================
 # FLASK APP CONFIGURATION
@@ -1559,17 +1560,147 @@ def generate_submission_id():
     return f"WIG-{date_str}-{random_str}"
 
 
+# Bounds for parsing untrusted PDFs. /api/evaluate accepts uploads from anyone
+# with no account, and the Procfile runs `--workers 1 --threads 4`, so PDF
+# parsing happens inline on one of exactly four request slots for the whole
+# site. An unbounded parse is therefore not a slow page, it is a site-wide
+# outage: four hostile files and nothing else gets served, including
+# /author/register and the admin panel.
+#
+# These are a DoS ceiling, not tuning knobs. Legitimate proposals extract in
+# well under a second and are read only up to the first 50k characters
+# downstream, so every limit here is far above what a real submission uses.
+# Raising them widens the outage window; do not raise them to accommodate a
+# file that fails, work out why it fails instead.
+#
+# The byte cap deliberately equals MAX_CONTENT_LENGTH rather than undercutting
+# it: templates/index.html promises "max 16MB", and a lower cap here would
+# reject a file the form said it would take, with a message about unreadable
+# text rather than about size.
+PDF_MAX_BYTES = 16 * 1024 * 1024
+PDF_MAX_PAGES = 100
+PDF_MAX_CHARS = 250_000
+PDF_TIME_BUDGET_SECONDS = 15.0
+
+# Refuses page-count bombs, and it has to be checked before reader.pages is
+# touched even once. pypdf's reader.pages is a lazy list whose __iter__ calls
+# len(), and len() flattens the WHOLE page tree, building an object per page
+# before the loop body runs at all -- so PDF_MAX_PAGES bounds how much text we
+# extract but not the allocation that precedes it. Measured on a 2MB file
+# declaring 200,000 pages: 9.2s and 874MB peak RSS, on a 512MB dyno. That is
+# an out-of-memory kill of the whole process, not a slow request.
+#
+# The trailer's object count is already parsed by then and costs nothing to
+# read. A real five-page proposal declares 16; the bombs declare 200,007 and
+# 500,007. It is a declared value rather than a measured one, so a file that
+# lies low still gets through to the flatten -- the semaphore below is what
+# bounds how many of those can run at once.
+PDF_MAX_OBJECTS = 20_000
+
+# How many /api/evaluate uploads may be parsed at the same moment.
+#
+# This is the only guarantee here that does not depend on identifying the
+# caller. Both per-IP throttles key on addresses a determined attacker can
+# spread across (a botnet) or, for the Cloudflare-derived one, partly choose.
+# This does not care who is asking: the Procfile gives the process four
+# request threads, so capping anonymous parses at two leaves two for
+# /author/login, /author/register and the admin panel, and the worst case
+# degrades from "the portal is down" to "uploads are briefly busy".
+#
+# Only api_evaluate acquires it. The other two extract_text_from_pdf callers
+# parse inline without it: /api/submit is behind X-API-Key and admin KB upload
+# is behind an admin session, so neither is anonymously reachable -- but they
+# can still occupy a thread, so the two free slots are a floor only while that
+# stays true. Add any new unauthenticated caller here as well.
+#
+# Keep this at least two below the thread count in the Procfile. If --threads
+# changes, change this in the same commit.
+_UPLOAD_PARSE_SLOTS = threading.BoundedSemaphore(2)
+
+
 def extract_text_from_pdf(file):
-    """Extract text from PDF file"""
+    """Extract text from a PDF, doing a bounded amount of work.
+
+    Returns '' when the document cannot be parsed at all. Stopping at the page
+    or character cap is different: it returns the text read so far, so a
+    300-page manuscript is truncated rather than rejected. Stopping at the
+    byte or object cap, or at the time budget before the first page finishes,
+    also returns '' and is indistinguishable to the caller from a failure.
+
+    A parse *failure* returns '' even if some pages were already read. The
+    two /api callers gate on `len(text) < 500` and would otherwise evaluate a
+    corrupt upload as though the fragment were the whole proposal. (The third
+    caller, admin_knowledge_base_upload, checks nothing and will store an
+    empty document either way -- that is pre-existing and is why it stays
+    admin-only.)
+
+    The time budget is checked between pages rather than enforced by a signal:
+    requests run on non-main threads under gunicorn's thread worker, where
+    signal.alarm does not fire. Three steps are therefore still unbounded, in
+    time AND in memory, and none of them is bounded by PDF_MAX_PAGES:
+
+      1. PdfReader construction, which parses the cross-reference table.
+      2. The page-tree flatten on first access to reader.pages. This is the
+         expensive one -- PDF_MAX_OBJECTS above exists solely to refuse the
+         files that make it expensive, and only works against a file that
+         declares its size honestly.
+      3. Any single page whose extract_text never returns.
+
+    Moving to pypdf shrinks the known-CVE surface that PyPDF2 (abandoned in
+    2022) will never patch, but it does not close any of the three. What
+    actually keeps the site up if one of them is hit is _UPLOAD_PARSE_SLOTS,
+    which caps how many can be in flight at once. Closing them outright needs
+    a subprocess with a hard kill, which is a bigger change than this one.
+    """
     try:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
-    except Exception as e:
-        print(f"PDF extraction error: {e}")
+        file.seek(0, 2)
+        size = file.tell()
+        file.seek(0)
+    except Exception:
+        size = None
+
+    if size is not None and size > PDF_MAX_BYTES:
+        print(f"PDF extraction refused: {size} bytes exceeds {PDF_MAX_BYTES}")
         return ""
+
+    started = time.monotonic()
+    parts = []
+    total = 0
+    try:
+        reader = pypdf.PdfReader(file)
+
+        # Before reader.pages -- see PDF_MAX_OBJECTS. Touching it after would
+        # be too late by the entire allocation this is meant to prevent.
+        try:
+            declared_objects = int(reader.trailer.get('/Size') or 0)
+        except (TypeError, ValueError):
+            declared_objects = 0
+        if declared_objects > PDF_MAX_OBJECTS:
+            print(f"PDF extraction refused: {declared_objects} declared objects "
+                  f"exceeds {PDF_MAX_OBJECTS}")
+            return ""
+
+        for index, page in enumerate(reader.pages):
+            if index >= PDF_MAX_PAGES:
+                print(f"PDF extraction stopped at the {PDF_MAX_PAGES}-page cap")
+                break
+            if time.monotonic() - started > PDF_TIME_BUDGET_SECONDS:
+                print(f"PDF extraction stopped at the time budget after {index} pages")
+                break
+            chunk = page.extract_text() or ""
+            parts.append(chunk)
+            total += len(chunk)
+            if total >= PDF_MAX_CHARS:
+                print(f"PDF extraction stopped at the {PDF_MAX_CHARS}-character cap")
+                break
+    except Exception as e:
+        # Discard the fragment. Half a proposal that clears the 500-character
+        # gate is worse than no proposal: the author gets an evaluation of
+        # whatever happened to parse, with nothing anywhere saying so.
+        print(f"PDF extraction error after {len(parts)} pages: {e}")
+        return ""
+
+    return "".join(parts)[:PDF_MAX_CHARS]
 
 
 def extract_text_from_docx(file):
@@ -5540,6 +5671,48 @@ def api_coaching_save_continue():
 def api_evaluate():
     """Handle proposal submission and evaluation"""
     try:
+        # This route carries no auth decorator, so it accepts anonymous POSTs
+        # even though the form that drives it (templates/index.html, served by
+        # index() at the top of this file) is behind author_login. It parses an
+        # uploaded document inline before returning, and there are four request
+        # slots for the whole site, so it is the cheapest way to take the portal
+        # down.
+        #
+        # Two throttles, in this order for two reasons.
+        #
+        # peer_ip is request.remote_addr. ProxyFix(x_for=1) resolves that to
+        # the LAST X-Forwarded-For entry, and the Heroku router appends that
+        # itself after any client-supplied value, so it is the real TCP peer
+        # no matter what the caller sends. It is checked FIRST because it is
+        # the only one of the two that cannot be forged: a rejected request
+        # must not get as far as inserting a caller key, or an attacker
+        # rotating a header fills that dict while being refused. Behind
+        # Cloudflare the peer is an edge address that is both shared between
+        # visitors and rotated between requests, so this is neither a
+        # per-person control nor a firm ceiling on Cloudflare-fronted volume
+        # -- it exists to bound a direct-to-origin flood. Hence the loose
+        # limit.
+        #
+        # The caller key is (peer, client_ip()). client_ip() alone would be
+        # the per-visitor value, but it reads CF-Connecting-IP, which is only
+        # authoritative for traffic that actually transited Cloudflare -- and
+        # the dyno's own *.herokuapp.com origin still answers directly
+        # (verified 2026-07-30). Keyed on that alone, anyone could POST to the
+        # origin claiming a named author's IP and burn *their* allowance,
+        # turning this throttle into a way to lock one author out. Pairing it
+        # with the unforgeable peer means a direct-to-origin caller can only
+        # ever fill buckets under their own peer address.
+        peer_ip = request.remote_addr or 'unknown'
+        caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
+        if (not _check_rate_limit(peer_ip, max_requests=120, window=3600,
+                                  bucket=_evaluate_peer_rate)
+                or not _check_rate_limit(caller_key, max_requests=10, window=3600,
+                                         bucket=_evaluate_rate)):
+            return jsonify({
+                'success': False,
+                'error': 'Too many submissions from this location. Please try again later.',
+            }), 429
+
         # Use logged-in author's info if available, fall back to form data
         if current_user.is_authenticated and getattr(current_user, 'is_author', False):
             author_name = current_user.name
@@ -5572,21 +5745,33 @@ def api_evaluate():
 
         original_filename = secure_filename(file.filename)
         filename = original_filename.lower()
-        if filename.endswith('.pdf'):
-            # Read file bytes for storage, then reset for text extraction
-            file_bytes = file.read()
-            file.seek(0)
-            proposal_text = extract_text_from_pdf(file)
-        elif filename.endswith('.docx') or filename.endswith('.doc'):
-            file_bytes = file.read()
-            file.seek(0)
-            proposal_text = extract_text_from_docx(file)
-        elif filename.endswith('.txt'):
-            # Plain-text submissions from the guided coaching builder
-            file_bytes = file.read()
-            proposal_text = file_bytes.decode('utf-8', errors='ignore')
-        else:
+        if not filename.endswith(('.pdf', '.docx', '.doc', '.txt')):
             return jsonify({'success': False, 'error': 'Please upload a PDF or Word document.'})
+
+        # Parsing is the expensive, attacker-influenced part, so it is the part
+        # that holds a slot. Refusing here is a "come back in a moment", not a
+        # rejection of the document -- hence 503 rather than the 429 above.
+        if not _UPLOAD_PARSE_SLOTS.acquire(blocking=False):
+            return jsonify({
+                'success': False,
+                'error': 'The evaluator is busy right now. Please try again in a moment.',
+            }), 503
+        try:
+            if filename.endswith('.pdf'):
+                # Read file bytes for storage, then reset for text extraction
+                file_bytes = file.read()
+                file.seek(0)
+                proposal_text = extract_text_from_pdf(file)
+            elif filename.endswith(('.docx', '.doc')):
+                file_bytes = file.read()
+                file.seek(0)
+                proposal_text = extract_text_from_docx(file)
+            else:
+                # Plain-text submissions from the guided coaching builder
+                file_bytes = file.read()
+                proposal_text = file_bytes.decode('utf-8', errors='ignore')
+        finally:
+            _UPLOAD_PARSE_SLOTS.release()
 
         if len(proposal_text.strip()) < 500:
             return jsonify({'success': False, 'error': 'Could not extract sufficient text from document.'})
@@ -5682,19 +5867,60 @@ def check_status(submission_id):
 # External Submission API  (Wix integration)
 # ---------------------------------------------------------------------------
 
-# Simple in-memory rate limiter: max 10 submissions per IP per hour
+# Simple in-memory rate limiter: max 10 submissions per IP per hour.
+#
+# In-memory is correct only because the Procfile pins `--workers 1`: one
+# process means one shared counter. If workers is ever raised, each worker
+# gets its own dict and every limit here silently multiplies by the worker
+# count -- move this to shared storage in the same change, not afterwards.
 _submit_rate = {}
 
-def _check_rate_limit(ip, max_requests=10, window=3600):
+# Separate buckets for /api/evaluate. Sharing one dict would let traffic to the
+# Wix endpoint use up an author's upload allowance and vice versa. See the
+# comment in api_evaluate for why that endpoint needs two of them.
+_evaluate_rate = {}
+_evaluate_peer_rate = {}
+
+# Nothing else ever deletes a key, and the /api/evaluate buckets are keyed by
+# unauthenticated callers, so without a ceiling these dicts grow until the
+# 512MB dyno dies. A sweep alone is not enough: the case that grows the dict
+# is a burst of *fresh* keys, and every fresh key is inside the window, so an
+# expiry-only sweep reclaims nothing while running on every request.
+_RATE_BUCKET_MAX_KEYS = 10000
+
+
+def _last_hit(hits):
+    return hits[-1] if hits else 0.0
+
+
+def _check_rate_limit(ip, max_requests=10, window=3600, bucket=None):
     """Return True if the request is within rate limits."""
-    import time
     now = time.time()
-    hits = _submit_rate.get(ip, [])
+    store = _submit_rate if bucket is None else bucket
+
+    # Only when the dict is full AND this request would add to it, so the
+    # steady state costs one lookup and a flood pays the scan once per ~1000
+    # new keys rather than on every request.
+    if len(store) >= _RATE_BUCKET_MAX_KEYS and ip not in store:
+        for stale in [k for k, v in store.items()
+                      if now - _last_hit(v) >= window]:
+            del store[stale]
+
+        # Still full means the keys really are fresh -- a flood of them. Drop
+        # the oldest tenth in one pass. Evicting the least recently seen fails
+        # in the forgiving direction: an old offender gets to start over,
+        # rather than a new visitor being turned away.
+        if len(store) >= _RATE_BUCKET_MAX_KEYS:
+            victims = sorted(store, key=lambda k: _last_hit(store[k]))
+            for stale in victims[:max(1, _RATE_BUCKET_MAX_KEYS // 10)]:
+                del store[stale]
+
+    hits = store.get(ip, [])
     hits = [t for t in hits if now - t < window]
     if len(hits) >= max_requests:
         return False
     hits.append(now)
-    _submit_rate[ip] = hits
+    store[ip] = hits
     return True
 
 
@@ -5751,8 +5977,16 @@ def api_submit():
     # hour limit never fires. analytics_collect.client_ip() reads whichever
     # source is actually trustworthy on this deployment: CF-Connecting-IP when
     # TRUST_CLOUDFLARE_IP says Cloudflare is in front (it overwrites that
-    # header on every request), otherwise the socket peer. Neither is
-    # client-writable.
+    # header on every request), otherwise the socket peer.
+    #
+    # That is only authoritative for traffic which actually transited
+    # Cloudflare, and the dyno's own *.herokuapp.com origin still answers
+    # directly (verified 2026-07-30) -- a request sent there can set
+    # CF-Connecting-IP to anything, so this key is forgeable on that path. It
+    # is not the control that matters here: the X-API-Key check above already
+    # gates this endpoint, and only the Wix caller holds the key. /api/evaluate
+    # is anonymous and cannot lean on that, which is why it pairs this value
+    # with the unforgeable peer address instead -- see the comment there.
     caller_ip = analytics_collect.client_ip() or 'unknown'
     if not _check_rate_limit(caller_ip):
         return _json({'success': False, 'error': 'Too many submissions. Please try again later.'}, 429)

@@ -5744,8 +5744,17 @@ def api_submit():
         return _json({'success': False, 'error': 'Invalid or missing API key.'}, 401)
 
     # --- Rate limit ---
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
-    if not _check_rate_limit(client_ip):
+    # NOT the first X-Forwarded-For entry, which is what this used to key on.
+    # Cloudflare and the Heroku router both APPEND to that header rather than
+    # replacing it, so a client-supplied value survives at the front and the
+    # caller picks its own throttle bucket — rotate the header, and the 10-per-
+    # hour limit never fires. analytics_collect.client_ip() reads whichever
+    # source is actually trustworthy on this deployment: CF-Connecting-IP when
+    # TRUST_CLOUDFLARE_IP says Cloudflare is in front (it overwrites that
+    # header on every request), otherwise the socket peer. Neither is
+    # client-writable.
+    caller_ip = analytics_collect.client_ip() or 'unknown'
+    if not _check_rate_limit(caller_ip):
         return _json({'success': False, 'error': 'Too many submissions. Please try again later.'}, 429)
 
     # --- Validate fields ---

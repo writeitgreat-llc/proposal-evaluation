@@ -283,9 +283,19 @@ def client_ip():
 
     app.py already wraps the WSGI app in ProxyFix(x_for=1), so on Heroku
     `request.remote_addr` is the real client rather than the router. Behind
-    Cloudflare that stops being true — every visitor in the world would collapse
-    into one visitor_hash and one throttle bucket, with no error anywhere to
-    notice — which is what the gate above exists for.
+    Cloudflare that stops being true, and the failure is the opposite of the
+    obvious one. Measured against the sibling marketing site on 2026-07-30, one
+    visitor's requests arrived through three different edges in seconds::
+
+        fwd="72.145.83.114, 162.158.49.78"
+        fwd="72.145.83.114, 162.158.38.66"
+        fwd="72.145.83.114, 162.158.230.161"
+
+    So remote_addr does not collapse everyone into one bucket — it SCATTERS one
+    person across many. Every request looks like a brand-new client, so the
+    throttle never fires and every pageview counts as a new visitor. Both
+    failures are silent and both flatter the numbers, which is why this is
+    gated rather than watched for.
     """
     if trusts_cloudflare():
         cf = request.headers.get('CF-Connecting-IP')
@@ -764,14 +774,23 @@ def init_app(flask_app, database):
 # ===========================================================================
 
 def site_name() -> str:
-    """Which property this event belongs to.
+    """Which property this event belongs to. CONFIGURED, never from the request.
 
-    Read from the Host header rather than configured, so the same code serves
-    authors.writeitgreat.com, the Heroku holding domain, and localhost without a
-    config var per environment — and so a DNS change needs no deploy.
+    This used to read the Host header, on the reasoning that one deployment
+    might answer on several hostnames and a DNS change should need no deploy.
+    The cutover has happened, so that benefit is spent — and the cost was
+    always there: `site` is the key the dashboard files traffic under, and Host
+    is chosen by the client. Anyone could invent a property by sending
+    `Host: whatever.example`, and every request to the herokuapp domain landed
+    under a second label for a site that already had one, splitting its numbers
+    in two.
+
+    Heroku routes any Host to this app, so there is no network-level defence
+    for that; the fix is not to use the value. One deployment measures one
+    property, which is the actual shape of this system.
     """
-    host = (request.host or '').lower().split(':', 1)[0]
-    return (host[4:] if host.startswith('www.') else host)[:120] or 'unknown'
+    return (os.environ.get('ANALYTICS_SITE') or DEFAULT_SITE).strip().lower()[:120] \
+        or DEFAULT_SITE
 
 
 def gpc_opt_out() -> bool:

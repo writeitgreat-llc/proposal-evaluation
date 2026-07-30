@@ -178,8 +178,23 @@ def main() -> int:
               events[0]["session_id"] == events[1]["session_id"])
         check("consented is false without the cookie", pv["consented"] is False)
         check("country is None without Cloudflare", pv["country"] is None)
-        check("outbox row is labelled with the collecting host",
-              rows[0].site == "localhost", rows[0].site)
+        check("outbox row carries the configured property name",
+              rows[0].site == ac.DEFAULT_SITE, rows[0].site)
+
+    print("\nThe site label is not caller-chosen")
+    with flask_app.app_context():
+        Outbox.query.delete()
+        db.session.commit()
+    for forged in ("evil.example.com", "authors.writeitgreat.com", "localhost"):
+        beacon([{"t": "pageview", "u": "/author/register"}], headers={"Host": forged})
+    with flask_app.app_context():
+        sites = {r.site for r in Outbox.query.all()}
+        check("the site label ignores the Host header entirely",
+              sites == {ac.DEFAULT_SITE}, str(sites))
+        check("an invented property cannot be created by a visitor",
+              "evil.example.com" not in sites, str(sites))
+        Outbox.query.delete()
+        db.session.commit()
 
     # ----------------------------------------------------------------------
     print("\nTokenised URLs (this repo has them; the marketing site does not)")
@@ -460,8 +475,8 @@ def main() -> int:
         with flask_app.app_context():
             sent, failed_count, _msg = ac.flush_analytics_outbox()
             check("a successful send frees the row", sent == 1 and Outbox.query.count() == 0)
-        check("the batch is labelled with the collecting host",
-              seen.get("site") == "localhost", str(seen.get("site")))
+        check("the batch carries the configured property name",
+              seen.get("site") == ac.DEFAULT_SITE, str(seen.get("site")))
         event = (seen.get("events") or [{}])[0]
         for field in ("event_uid", "kind", "occurred_at", "visitor_hash", "session_id",
                       "consented", "path", "channel", "country", "device_type",
@@ -471,16 +486,16 @@ def main() -> int:
         check("no IP or User-Agent on the wire either",
               PROBE_IP not in json.dumps(event) and "CIPROBEUA" not in json.dumps(event))
 
-        # Every ready site ships in one pass. Selecting only the oldest row's
-        # site let a client starve real traffic: `site` comes from the Host
-        # header, so rows injected under many hosts outran the drain and
-        # genuine pageviews never left the queue.
+        # `site` no longer comes from the Host header, so a live deployment
+        # produces one site. The grouping still matters: rows queued BEFORE
+        # that change carry their old per-host label, and mixing them into one
+        # batch would file that traffic under whichever label the batch picked.
         with flask_app.app_context():
             Outbox.query.delete()
+            for legacy in (ac.DEFAULT_SITE, "localhost"):
+                db.session.add(Outbox(event_uid=f"grouping-{legacy}", site=legacy,
+                                      body_json=json.dumps({"kind": "pageview"})))
             db.session.commit()
-        beacon([{"t": "pageview", "u": "/author/register"}], headers={"Host": "localhost"})
-        beacon([{"t": "pageview", "u": "/author/login"}],
-               headers={"Host": "authors.writeitgreat.com"})
         batches = []
         ac._post_batch = lambda site, events: (batches.append(site), (None, False))[1]
         with flask_app.app_context():

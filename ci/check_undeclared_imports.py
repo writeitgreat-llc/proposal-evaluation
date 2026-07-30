@@ -35,7 +35,7 @@ DIST_TO_MODULE = {
     "flask-migrate": "flask_migrate",
     "flask-wtf": "flask_wtf",
     "python-docx": "docx",
-    "pypdf2": "PyPDF2",
+    "pypdf": "pypdf",
     "python-dotenv": "dotenv",
     "psycopg2-binary": "psycopg2",
     "pillow": "PIL",

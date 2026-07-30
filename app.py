@@ -1573,14 +1573,34 @@ def generate_submission_id():
 # Raising them widens the outage window; do not raise them to accommodate a
 # file that fails, work out why it fails instead.
 #
-# The byte cap deliberately equals MAX_CONTENT_LENGTH rather than undercutting
-# it: templates/index.html promises "max 16MB", and a lower cap here would
-# reject a file the form said it would take, with a message about unreadable
-# text rather than about size.
+# The byte cap is a backstop, NOT the limit an author experiences -- that is
+# EVALUATE_MAX_UPLOAD_BYTES below, enforced at the route with a message about
+# size. This one equals MAX_CONTENT_LENGTH so it can never become the thing
+# that rejects a file some caller legitimately accepted: /api/submit permits
+# 10 MB of its own, and the admin knowledge-base uploader has no limit beyond
+# MAX_CONTENT_LENGTH. Undercutting either here would turn a valid upload into
+# "could not extract sufficient text", which misdescribes what went wrong.
 PDF_MAX_BYTES = 16 * 1024 * 1024
 PDF_MAX_PAGES = 100
 PDF_MAX_CHARS = 250_000
 PDF_TIME_BUDGET_SECONDS = 15.0
+
+# What an author is allowed to upload, enforced at the route so an oversized
+# file gets an accurate message about its size rather than the extractor's
+# generic "could not read this document".
+#
+# Sized from what authors actually send rather than from what the parser can
+# survive. Across every proposal received up to 2026-07-30 the largest file was
+# 653 kB and the average 299 kB, and the portal asks for a proposal plus 1-3
+# sample chapters -- "3,000-10,000 words of your strongest writing" -- never a
+# full manuscript. 5 MB is roughly 8x the largest real upload.
+#
+# The reason this is not simply "whatever the parser can handle": uploads are
+# stored as rows in a 1 GB database, and when Heroku Postgres reaches that
+# ceiling it revokes INSERT across the board -- no signups, no proposals, no
+# tracking, until someone reclaims space. At 16 MB per file that is ~60 uploads
+# away; at 5 MB it is ~200. Storage is the binding constraint here, not CPU.
+EVALUATE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 # Refuses page-count bombs, and it has to be checked before reader.pages is
 # touched even once. pypdf's reader.pages is a lazy list whose __iter__ calls
@@ -5742,6 +5762,28 @@ def api_evaluate():
         file = request.files.get('proposal_file')
         if not file or file.filename == '':
             return jsonify({'success': False, 'error': 'Please upload your proposal document.'})
+
+        # Size before type, and measured from the stream rather than after
+        # read(), so an oversized upload is refused without first being
+        # materialised as bytes. Applies to every accepted format, since the
+        # constraint being protected is database storage, not the parser.
+        try:
+            file.seek(0, 2)
+            upload_size = file.tell()
+            file.seek(0)
+        except Exception:
+            upload_size = None
+        if upload_size is not None and upload_size > EVALUATE_MAX_UPLOAD_BYTES:
+            return jsonify({
+                'success': False,
+                'error': (
+                    f'That file is {upload_size / 1024 / 1024:.1f} MB, and the limit is '
+                    f'{EVALUATE_MAX_UPLOAD_BYTES // (1024 * 1024)} MB. A proposal with '
+                    'one to three sample chapters is usually well under 1 MB — if yours '
+                    'is much larger it probably contains high-resolution images, or the '
+                    'full manuscript rather than sample chapters.'
+                ),
+            }), 413
 
         original_filename = secure_filename(file.filename)
         filename = original_filename.lower()

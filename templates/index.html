@@ -47,7 +47,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
                         <p>Drag and drop your file here, or <span class="browse-link">browse</span></p>
-                        <p class="form-hint">PDF, DOC, or DOCX (max 16MB)</p>
+                        <p class="form-hint">PDF, DOC, or DOCX (max 5MB)</p>
                     </div>
                     <div id="selected-file" class="selected-file hidden">
                         <svg width="24" height="24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -167,11 +167,29 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     fileInput.addEventListener('change', updateFileDisplay);
 
+    // Must match EVALUATE_MAX_UPLOAD_BYTES in app.py. The server is the one
+    // that enforces it; this only saves the author from uploading megabytes
+    // before being told no.
+    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
     function updateFileDisplay() {
         if (fileInput.files.length > 0) {
+            const chosen = fileInput.files[0];
+            if (chosen.size > MAX_UPLOAD_BYTES) {
+                alert(
+                    `That file is ${(chosen.size / 1024 / 1024).toFixed(1)} MB, and the limit is 5 MB.\n\n` +
+                    'A proposal with one to three sample chapters is usually well under 1 MB. ' +
+                    'If yours is much larger it probably contains high-resolution images, or the ' +
+                    'full manuscript rather than sample chapters.'
+                );
+                fileInput.value = '';
+                uploadText.classList.remove('hidden');
+                selectedFile.classList.add('hidden');
+                return;
+            }
             uploadText.classList.add('hidden');
             selectedFile.classList.remove('hidden');
-            selectedFilename.textContent = fileInput.files[0].name;
+            selectedFilename.textContent = chosen.name;
         }
     }
 

@@ -97,6 +97,27 @@ from urllib.parse import urlparse, urlsplit
 import requests as http_requests
 from flask import Blueprint, current_app, jsonify, make_response, request
 
+# The acquisition-channel rules. VENDORED — analytics_channel_rules.py is
+# byte-identical in this repo and in writeitgreat-llc/website, because both
+# sites' answers land in the same wig-dashboard tables and "which channel
+# brings traffic" is only comparable to "which channel brings leads" if the two
+# apps agree. See that file's header for how to change it, and
+# ci/check_channel_parity.py for what enforces it.
+#
+# This used to be a hand-transcribed copy of the website's classifier, sitting
+# in this file. The transcription matched referrer hosts as bare SUBSTRINGS, so
+# 't.co' matched 'wri|t.co|m' and every visitor arriving from our own marketing
+# site was reported as social traffic. Do not re-open that door: import the
+# rules, never restate them.
+from analytics_channel_rules import (  # noqa: F401  (re-exported)
+    CAMPAIGN_KEYS,
+    CHANNELS,
+    RULES_VERSION,
+    classify,
+    classify_stored_host,
+    host_of,
+)
+
 analytics_bp = Blueprint('analytics', __name__)
 
 # Filled in by init_app(); see the note there for why the models cannot be
@@ -521,7 +542,19 @@ def _redact_token_segments(path):
 
 
 def referrer_host(raw):
-    """The host of an external referrer, or None."""
+    """The host of an external referrer, or None.
+
+    Delegates the parsing to the shared rules module rather than repeating it,
+    so the host we STORE is the same host the classifier decided on. When the
+    two drifted, a referrer carrying userinfo stored one host and was bucketed
+    by another, and no backfill could ever reproduce the label.
+
+    The scheme gate is this function's own: an `android-app://` referrer has a
+    host classify() will happily use, but it is not something to store in a
+    column the dashboard renders as a link. That asymmetry is why a backfill
+    must never touch a row whose referrer_host is NULL — see
+    backfill_analytics_channel.py.
+    """
     if not raw or not isinstance(raw, str):
         return None
     try:
@@ -530,10 +563,8 @@ def referrer_host(raw):
         return None
     if parsed.scheme.lower() not in ('http', 'https'):
         return None
-    host = parsed.netloc.lower().split(':', 1)[0]
-    if host.startswith('www.'):
-        host = host[4:]
-    return host[:120] or None
+    host = host_of(raw.strip())
+    return host[:120] if host else None
 
 
 def campaign_fields(raw):
@@ -563,92 +594,23 @@ def is_internal(referrer, host) -> bool:
 # CHANNEL CLASSIFIER
 # ===========================================================================
 #
-# DIVERGENCE, forced: the contract says `channel` must use "the same vocabulary
-# and the same classifier as lead attribution — website/app/source_capture.py".
-# These are separate repos with no shared package, so the classifier is ported
-# here verbatim rather than imported. That is a real duplication and it has to
-# be kept in step: a new social network added on one side and not the other
-# makes "which channel produces traffic" and "which channel produces leads"
-# stop being comparable, which is the whole reason the contract names one
-# classifier. Change one, change both.
-
-SEARCH_HOSTS = (
-    'google.', 'bing.', 'duckduckgo.', 'yahoo.', 'ecosia.', 'brave.',
-    'startpage.', 'qwant.', 'baidu.', 'yandex.', 'search.marginalia.',
-)
-SOCIAL_HOSTS = (
-    'linkedin.', 'lnkd.in', 'facebook.', 'fb.com', 'instagram.', 'threads.',
-    'twitter.', 'x.com', 't.co', 'reddit.', 'youtube.', 'youtu.be',
-    'tiktok.', 'pinterest.', 'substack.', 'medium.', 'bsky.', 'mastodon.',
-    'news.ycombinator.',
-)
-EMAIL_HOSTS = ('mail.google.', 'outlook.', 'mail.yahoo.', 'superhuman.', 'hey.com')
-
-PAID_MEDIUMS = {
-    'cpc', 'ppc', 'paid', 'paidsearch', 'paid_search', 'paid-search',
-    'paidsocial', 'paid_social', 'paid-social', 'display', 'banner',
-    'cpm', 'retargeting', 'remarketing',
-}
-EMAIL_MEDIUMS = {'email', 'e-mail', 'newsletter', 'mail'}
-SOCIAL_MEDIUMS = {'social', 'social-organic', 'social_organic', 'organic-social'}
-
-CAMPAIGN_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term')
-
-# One label per bucket, used by both the lead views and the analytics rollups.
-CHANNELS = ('paid', 'email', 'social', 'organic search', 'referral', 'campaign', 'direct')
-
-
-def _channel_host(referrer):
-    if not referrer:
-        return None
-    try:
-        host = urlparse(referrer).netloc.lower()
-    except ValueError:
-        return None
-    if not host:
-        return None
-    if host.startswith('www.'):
-        host = host[4:]
-    return host.split(':', 1)[0] or None
-
-
-def _matches(host, needles) -> bool:
-    if not host:
-        return False
-    return any(n in host for n in needles)
-
-
-def classify(source) -> str:
-    """Which acquisition channel this visit arrived through.
-
-    Order matters and encodes precedence: an explicit paid signal beats a
-    referrer, because a paid Google click and an organic Google click carry the
-    same referrer and only the click id or utm_medium tells them apart.
-    """
-    medium = (source.get('utm_medium') or '').lower()
-    host = _channel_host(source.get('referrer'))
-
-    if source.get('click_id') or medium in PAID_MEDIUMS:
-        return 'paid'
-    if medium in EMAIL_MEDIUMS or _matches(host, EMAIL_HOSTS):
-        return 'email'
-    if medium in SOCIAL_MEDIUMS or _matches(host, SOCIAL_HOSTS):
-        return 'social'
-    if _matches(host, SEARCH_HOSTS):
-        return 'organic search'
-    if host:
-        return 'referral'
-    # A campaign tag with no referrer at all: the QR code, the printed card,
-    # the link pasted into a DM. Worth separating from true direct traffic —
-    # somebody tagged that link on purpose.
-    if any(source.get(key) for key in CAMPAIGN_KEYS):
-        return 'campaign'
-    # No referrer, no tags. Mostly NOT people typing the URL: app browsers,
-    # link previews, and every https->http hop send no referrer at all.
-    return 'direct'
+# The rules are imported at the top of this file from analytics_channel_rules,
+# the vendored copy shared with writeitgreat-llc/website. Only the thin adapter
+# lives here.
 
 
 def channel_for(referrer, campaign) -> str:
+    """The acquisition channel for a visit, from its referrer and utm tags.
+
+    KNOWN INPUT DIVERGENCE, recorded here rather than left to be rediscovered:
+    campaign_fields() above extracts only utm_source/utm_medium/utm_campaign,
+    and clean_path() strips gclid/fbclid off the stored path, so this app never
+    hands classify() a click_id or utm_content/utm_term. The website's
+    normalise_source() does pass click_id. The RULES agree; the two collectors'
+    INPUTS do not, which means a paid click identified only by a gclid reads as
+    'organic search' here and 'paid' there. Closing that is a collector change
+    (the beacon has to send the click id), not a rules change.
+    """
     return classify({'referrer': referrer, **campaign})
 
 
@@ -1227,7 +1189,16 @@ def _post_batch(site, events):
     try:
         resp = http_requests.post(
             _ingest_url(),
-            json={'site': site, 'events': events},
+            # rules_version says WHICH build of the shared channel rules
+            # produced these labels. It is the only divergence detector that
+            # crosses the repo boundary: ci/check_channel_parity.py can prove
+            # this app matches its own rules file, but nothing in this repo's
+            # CI can see writeitgreat-llc/website. The dashboard receives both
+            # sites' versions and can say "these two disagree" within minutes
+            # of a one-sided deploy. Unknown envelope keys are ignored by the
+            # receiver, so this is safe to ship in either order.
+            json={'site': site, 'events': events,
+                  'rules_version': RULES_VERSION},
             headers={'Authorization': f'Bearer {ingest_token()}'},
             timeout=10,
         )

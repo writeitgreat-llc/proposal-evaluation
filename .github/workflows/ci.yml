@@ -60,6 +60,17 @@ jobs:
       - name: Check Heroku deploy config
         run: python ci/check_deploy_config.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own: `proposal-ci`
+      # is the required status check (see the comment above), and a new job would
+      # be a new status context that gates nothing. Placed before smoke_app.py so
+      # it fails in seconds rather than after a full app boot.
+      #
+      # analytics_channel_rules.py is shared with writeitgreat-llc/website, which
+      # this job cannot see -- so this cannot tell you the OTHER repo changed. It
+      # tells you THIS repo's rules moved, which is the moment to port them.
+      - name: Channel classifier matches the shared rules
+        run: python ci/check_channel_parity.py
+
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 

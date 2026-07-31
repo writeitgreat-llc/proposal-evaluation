@@ -99,16 +99,42 @@ failed attempts (~2 days) a row is parked rather than blocking the queue, and
 parked rows are dropped after 7 days — a pageview outbox is high volume and an
 unbounded poison queue is the worse failure.
 
-Wire shape per event (batch: `{"site": "<Host header>", "events": [...]}`,
+Wire shape per event (batch:
+`{"site": "<Host header>", "rules_version": "<see below>", "events": [...]}`,
 ≤200 per POST): `event_uid`, `kind` (pageview|engagement|outbound|conversion),
 `occurred_at`, `visitor_hash`, `session_id`, `consented`, `path`,
 `referrer_host`, `channel`, `utm_source`/`utm_medium`/`utm_campaign`,
 `country`, `device_type`, `browser`, `os`, `is_bot`, `engaged_ms`,
-`scroll_pct`, `target`, `is_entry`, `is_exit`. `channel` uses the same
-vocabulary and the same rules as the marketing site's
-`app/source_capture.py` — separate repos, so the classifier is a verbatim port
-in `analytics_collect.py`; change one, change both or the two "which channel"
-tables stop being comparable.
+`scroll_pct`, `target`, `is_entry`, `is_exit`.
+
+**`channel` — one shared rules file, not a prose promise.** This used to read
+"the classifier is a verbatim port; change one, change both." That rule was
+followed in good faith and still produced a matcher that filed every referral
+from writeitgreat.com under social, because the port was done by hand. It is
+now mechanical:
+
+| file | here | in `writeitgreat-llc/website` |
+| --- | --- | --- |
+| rules | `analytics_channel_rules.py` | `app/analytics_channel_rules.py` |
+| golden vectors | `ci/analytics_channel_fixture.json` | same path |
+| the check | `ci/check_channel_parity.py` | same path |
+
+All three are **byte-identical** across the repos (wig-dashboard carries the
+rules and the fixture too, for `backfill_wa_channel.py`). To change the rules:
+edit the module, bump its `RULES_VERSION`, copy the whole module and the whole
+fixture across, paste the new digest into every fixture, and add a vector
+proving what changed. `ci/check_channel_parity.py` runs as a blocking step in
+`proposal-ci` and prints the digest it computed when they disagree.
+
+Be clear about what that does and does not buy. The two repos cannot see each
+other — one is public, one is private, no shared package, no network in CI — so
+**no check here can go red because the other repo changed.** What it buys is
+that touching the rules in either repo turns *that* repo red until the shared
+files move together, which is the moment to port. The cross-repo detector is
+the runtime one: `rules_version` on the ingest envelope, which wig-dashboard
+compares across sites and surfaces on
+`GET /api/website-analytics/attribution` as `classifier.diverged` — the exact
+report a forgotten port corrupts.
 
 **Scope — public funnel pages only.** Instrumented: `/author/register`,
 `/author/login`, `/author/forgot-password`, `/author/reset-password/<token>`,

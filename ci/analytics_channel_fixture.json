@@ -1,0 +1,729 @@
+{
+  "_": [
+    "SHARED ARTIFACT. This file is byte-identical in writeitgreat-llc/website",
+    "(ci/analytics_channel_fixture.json) and writeitgreat-llc/proposal-evaluation",
+    "(ci/analytics_channel_fixture.json), and it pins the rules module that is",
+    "likewise byte-identical in both: website app/analytics_channel_rules.py,",
+    "proposal-evaluation analytics_channel_rules.py.",
+    "",
+    "TO CHANGE THE RULES: edit the rules module, bump its RULES_VERSION, copy the",
+    "WHOLE module and this WHOLE file to the other repo, paste the new digest into",
+    "rules_sha256 in both, and add a vector proving what you changed. Run",
+    "`python ci/check_channel_parity.py` in each repo; it prints the digest it",
+    "computed when it does not match.",
+    "",
+    "WHAT THIS DOES AND DOES NOT GUARANTEE: the two repos are separate, one public",
+    "and one private, with no shared package and no network access from CI. So NO",
+    "check here can make repo B go red because repo A changed. What it does buy:",
+    "touching the rules in either repo turns THAT repo red until the shared files",
+    "and the digest are updated together, which is the moment to port. The only",
+    "cross-repo detector with real teeth is the runtime one: both collectors report",
+    "rules_version on the analytics ingest envelope, so the dashboard sees the two",
+    "sites disagreeing within minutes of a one-sided deploy.",
+    "",
+    "channels[] is the vocabulary both classifiers emit. wig-dashboard's",
+    "WA_CHANNELS is this set PLUS 'unknown', which is the receiver's bucket for an",
+    "event that arrived with no channel — so the right relationship there is",
+    "subset, not equality. Do not 'fix' either side to match the other."
+  ],
+  "rules_version": "2026-07-31a",
+  "rules_sha256": "d9e10cb3ab732484462d4d25201a43b0ad32c2c0db7d6bc00d9c8a3cd59cfaa3",
+  "channels": [
+    "paid",
+    "email",
+    "social",
+    "organic search",
+    "referral",
+    "campaign",
+    "direct"
+  ],
+  "vectors": [
+    {
+      "referrer": "https://writeitgreat.com/services",
+      "expect": "referral",
+      "why": "THE BUG THIS FILE EXISTS FOR. 't.co' is a substring of 'wri|t.co|m'. A substring matcher files our own marketing site under social, which is the single highest-value path in the funnel."
+    },
+    {
+      "referrer": "https://authors.writeitgreat.com/author/register",
+      "expect": "referral",
+      "why": "Same substring, our own author portal."
+    },
+    {
+      "referrer": "https://app.writeitgreat.com/x",
+      "expect": "referral",
+      "why": "Same substring, our own dashboard."
+    },
+    {
+      "referrer": "https://microsoft.com/",
+      "expect": "referral",
+      "why": "'microsof|t.co|m' — a substring matcher says social."
+    },
+    {
+      "referrer": "https://acme.sharepoint.com/x",
+      "expect": "referral",
+      "why": "'sharepoin|t.co|m' — every corporate SharePoint tenant."
+    },
+    {
+      "referrer": "https://manuscriptwishlist.com/",
+      "expect": "referral",
+      "why": "'manuscriptwishlis|t.co|m'. ManuscriptWishList is a core author-facing site, so this false positive lands on real funnel traffic."
+    },
+    {
+      "referrer": "https://constantcontact.com/",
+      "expect": "referral",
+      "why": "'constantcontac|t.co|m' — an email platform reported as social; doubly wrong."
+    },
+    {
+      "referrer": "https://independent.co.uk/x",
+      "expect": "referral",
+      "why": "'independen|t.co|.uk' — press coverage."
+    },
+    {
+      "referrer": "https://dropbox.com/s/x",
+      "expect": "referral",
+      "why": "'dropbo|x.com|' — authors share manuscripts by Dropbox link constantly."
+    },
+    {
+      "referrer": "https://netflix.com/",
+      "expect": "referral",
+      "why": "'netfli|x.com|'."
+    },
+    {
+      "referrer": "https://notx.com/page",
+      "expect": "referral",
+      "why": "Control for the x.com anchor."
+    },
+    {
+      "referrer": "https://climbing.com/",
+      "expect": "referral",
+      "why": "'clim|bing.|com' — a prefix needle still matches a label suffix."
+    },
+    {
+      "referrer": "https://readmedium.com/",
+      "expect": "referral",
+      "why": "'read|medium.|com' — a real Medium mirror site."
+    },
+    {
+      "referrer": "https://mediumrare.example/post",
+      "expect": "referral",
+      "why": "Control for the medium.com anchor."
+    },
+    {
+      "referrer": "https://t.co/abc123",
+      "expect": "social",
+      "why": "The anchor must still match the real thing."
+    },
+    {
+      "referrer": "https://www.t.co/abc",
+      "expect": "social",
+      "why": "www is stripped before matching."
+    },
+    {
+      "referrer": "https://t.co./x",
+      "expect": "social",
+      "why": "Fully-qualified host with the root dot. Legal, really emitted by some proxies, and it defeats a dot-suffix anchor unless the trailing dot is stripped first."
+    },
+    {
+      "referrer": "http://user:pw@t.co/x",
+      "expect": "social",
+      "why": "userinfo in the referrer. Parsing netloc by hand yields a host of 'user'; urlparse().hostname is what makes this right."
+    },
+    {
+      "referrer": "https://www.linkedin.com/feed/",
+      "expect": "social",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://m.facebook.com/x",
+      "expect": "social",
+      "why": "Subdomain via the dot-suffix anchor."
+    },
+    {
+      "referrer": "https://l.instagram.com/x",
+      "expect": "social",
+      "why": "Instagram's outbound redirector."
+    },
+    {
+      "referrer": "https://x.com/someone",
+      "expect": "social",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://sub.x.com/y",
+      "expect": "social",
+      "why": "Subdomain of x.com is still x.com."
+    },
+    {
+      "referrer": "https://youtu.be/abc",
+      "expect": "social",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://news.ycombinator.com/item",
+      "expect": "social",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://mastodon.social/@x",
+      "expect": "social",
+      "why": "Explicit domain, not a brand: the fediverse is thousands of hosts and a suffix list cannot cover it. hachyderm.io and every other instance reads as referral, and that is a known, accepted limit."
+    },
+    {
+      "referrer": "https://threads.com/@x",
+      "expect": "social",
+      "why": "Threads moved to threads.com; threads.net still resolves."
+    },
+    {
+      "referrer": "https://threads.net/@x",
+      "expect": "social",
+      "why": "The older Threads domain."
+    },
+    {
+      "referrer": "https://bsky.social/profile/x",
+      "expect": "social",
+      "why": "Bluesky's other domain, alongside bsky.app."
+    },
+    {
+      "referrer": "https://bsky.app/profile/x",
+      "expect": "social",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://pinterest.co.uk/pin/1",
+      "expect": "social",
+      "why": "Country domain, caught by the registrable-label brand match."
+    },
+    {
+      "referrer": "https://youtube.co.uk/watch",
+      "expect": "social",
+      "why": "Country domain."
+    },
+    {
+      "referrer": "https://linkedin.cn/in/x",
+      "expect": "social",
+      "why": "Country domain."
+    },
+    {
+      "referrer": "https://t.umblr.com/redirect?z=x",
+      "expect": "social",
+      "why": "Tumblr's outbound redirector."
+    },
+    {
+      "referrer": "https://out.reddit.com/x",
+      "expect": "social",
+      "why": "Reddit's outbound redirector."
+    },
+    {
+      "referrer": "https://foo.substack.com/p/x",
+      "expect": "social",
+      "why": "Substack subdomain. A writer's CUSTOM Substack domain is invisible to this and reads as referral — accepted limit."
+    },
+    {
+      "referrer": "https://www.google.co.uk/search?q=x",
+      "expect": "organic search",
+      "why": "Country domain."
+    },
+    {
+      "referrer": "https://google.co.uk./search",
+      "expect": "organic search",
+      "why": "Country domain plus a trailing root dot."
+    },
+    {
+      "referrer": "https://news.google.com/x",
+      "expect": "organic search",
+      "why": "Subdomain."
+    },
+    {
+      "referrer": "https://yahoo.co.jp/",
+      "expect": "organic search",
+      "why": "Country domain."
+    },
+    {
+      "referrer": "https://qwant.com/?q=x",
+      "expect": "organic search",
+      "why": "A substring matcher filed this under social via 't.co' in 'qwan|t.co|m' — one search engine split across two buckets by TLD."
+    },
+    {
+      "referrer": "https://yandex.com/search",
+      "expect": "organic search",
+      "why": "A substring matcher filed this social via 'x.com'."
+    },
+    {
+      "referrer": "https://yandex.ru/search",
+      "expect": "organic search",
+      "why": "The same engine, other TLD."
+    },
+    {
+      "referrer": "https://search.naver.com/x",
+      "expect": "organic search",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://seznam.cz/",
+      "expect": "organic search",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://search.marginalia.nu/x",
+      "expect": "organic search",
+      "why": "A DOMAIN, not a brand — see marginalia.blog below."
+    },
+    {
+      "referrer": "https://duckduckgo.com/?q=x",
+      "expect": "organic search",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://google.mycompany.com/",
+      "expect": "referral",
+      "why": "An honest host that is not Google. The brand must be the registrable label, not any label."
+    },
+    {
+      "referrer": "https://google.com.evil.example/",
+      "expect": "referral",
+      "why": "Same rule, adversarial shape."
+    },
+    {
+      "referrer": "https://bing.example.org/",
+      "expect": "referral",
+      "why": "Same rule."
+    },
+    {
+      "referrer": "https://blog.google/products/x",
+      "expect": "referral",
+      "why": "The .google gTLD. Google's PR blog is not Google search; the registrable label here is 'blog'."
+    },
+    {
+      "referrer": "https://about.google/",
+      "expect": "referral",
+      "why": "Same."
+    },
+    {
+      "referrer": "https://marginalia.blog/post",
+      "expect": "referral",
+      "why": "'marginalia' is ordinary book-trade vocabulary. Treating it as a search BRAND would file an author's blog under organic search, which is why marginalia.nu is a domain entry instead."
+    },
+    {
+      "referrer": "https://marginalia.press/x",
+      "expect": "referral",
+      "why": "Same."
+    },
+    {
+      "referrer": "https://themarginalian.org/x",
+      "expect": "referral",
+      "why": "Control — Maria Popova's site."
+    },
+    {
+      "referrer": "https://notgoogle.com/",
+      "expect": "referral",
+      "why": "Control for the google anchor."
+    },
+    {
+      "referrer": "https://linkedin.attacker.com/",
+      "expect": "referral",
+      "why": "Social brands are anchored the same way."
+    },
+    {
+      "referrer": "https://mail.google.com/mail/u/0",
+      "expect": "email",
+      "why": "Checked BEFORE search on purpose: this host's registrable label is 'google' and would otherwise read as organic search."
+    },
+    {
+      "referrer": "https://mail.yahoo.com/d/folders/1",
+      "expect": "email",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://mail.yahoo.co.jp/",
+      "expect": "email",
+      "why": "Regional Yahoo Mail. A domain list of mail.yahoo.com only lets this fall past the email test into the brand test and report webmail as organic search — the same mistake the ordering exists to prevent, one TLD over. The first-label rule is what catches it."
+    },
+    {
+      "referrer": "https://mail.yandex.ru/",
+      "expect": "email",
+      "why": "Same shape, different provider."
+    },
+    {
+      "referrer": "https://webmail.someuniversity.edu/",
+      "expect": "email",
+      "why": "Somebody's webmail, whoever they are."
+    },
+    {
+      "referrer": "https://mail.evil.example/",
+      "expect": "email",
+      "why": "The first-label rule is a reporting heuristic, not a trust boundary. A Referer header is caller-supplied for EVERY bucket — anyone can claim to be https://t.co/ — so anchoring buys accuracy on honest hosts, not forgery resistance. Recorded so nobody mistakes it for a security control."
+    },
+    {
+      "referrer": "https://outlook.office365.com/mail/",
+      "expect": "email",
+      "why": "The real OWA host for a large share of Microsoft 365 tenants. office.com does not cover it; office365.com does."
+    },
+    {
+      "referrer": "https://outlook.office.com/mail/",
+      "expect": "email",
+      "why": "The other OWA host."
+    },
+    {
+      "referrer": "https://outlook.live.com/mail/",
+      "expect": "email",
+      "why": "Consumer Outlook."
+    },
+    {
+      "referrer": "https://mail.proton.me/u/0",
+      "expect": "email",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://hey.com/",
+      "expect": "email",
+      "why": "Core."
+    },
+    {
+      "referrer": "https://hershey.com/",
+      "expect": "referral",
+      "why": "Control — 'hers|hey.com|' under a substring matcher."
+    },
+    {
+      "referrer": "https://mailchimp.com/",
+      "expect": "referral",
+      "why": "Control for the first-label rule: 'mailchimp' is one label, not 'mail'."
+    },
+    {
+      "referrer": "android-app://com.google.android.gm/",
+      "expect": "referral",
+      "why": "The Gmail Android app. Genuinely email, and NO version of this classifier has ever got it right — the substring rule said organic search, this one says referral. Recorded as a known limit, and it is why a backfill must never touch rows whose stored referrer_host is NULL: referrer_host() rejects non-http schemes and stores NULL, while classify still saw the host, so recomputing from the stored column would destroy a label rather than correct it."
+    }
+  ],
+  "utm_vectors": [
+    {
+      "source": {
+        "utm_medium": "cpc"
+      },
+      "expect": "paid",
+      "why": "An explicit paid signal beats everything."
+    },
+    {
+      "source": {
+        "utm_medium": "cpc",
+        "referrer": "https://www.google.co.uk/search?q=x"
+      },
+      "expect": "paid",
+      "why": "Paid beats the referrer: a paid and an organic Google click carry the same referrer and only utm_medium tells them apart."
+    },
+    {
+      "source": {
+        "click_id": "abc123"
+      },
+      "expect": "paid",
+      "why": "A click id is a paid signal. NOTE A KNOWN DIVERGENCE: the author portal's collector never passes click_id or utm_content/utm_term to classify (its campaign_fields() extracts only utm_source/medium/campaign, and clean_path strips gclid/fbclid), so this branch is unreachable there today. The RULES agree; the two collectors' INPUTS do not. Fixing that is a collector change, not a rules change."
+    },
+    {
+      "source": {
+        "utm_medium": "newsletter"
+      },
+      "expect": "email",
+      "why": "Medium beats the absent referrer."
+    },
+    {
+      "source": {
+        "utm_medium": "social"
+      },
+      "expect": "social",
+      "why": "Medium beats the absent referrer."
+    },
+    {
+      "source": {
+        "utm_campaign": "spring-authors"
+      },
+      "expect": "campaign",
+      "why": "Tagged link, no referrer: the QR code, the printed card, the link pasted into a DM. Somebody tagged that on purpose."
+    },
+    {
+      "source": {},
+      "expect": "direct",
+      "why": "No referrer, no tags. Mostly NOT people typing the URL — app browsers, link previews and every https->http hop send no referrer at all."
+    }
+  ],
+  "host_vectors": [
+    {
+      "referrer_host": "writeitgreat.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "authors.writeitgreat.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "app.writeitgreat.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "microsoft.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "acme.sharepoint.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "manuscriptwishlist.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "constantcontact.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "independent.co.uk",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "dropbox.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "netflix.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "notx.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "climbing.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "readmedium.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "mediumrare.example",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "t.co",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "t.co",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "t.co",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "t.co",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "linkedin.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "m.facebook.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "l.instagram.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "x.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "sub.x.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "youtu.be",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "news.ycombinator.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "mastodon.social",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "threads.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "threads.net",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "bsky.social",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "bsky.app",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "pinterest.co.uk",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "youtube.co.uk",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "linkedin.cn",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "t.umblr.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "out.reddit.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "foo.substack.com",
+      "expect": "social"
+    },
+    {
+      "referrer_host": "google.co.uk",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "google.co.uk",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "news.google.com",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "yahoo.co.jp",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "qwant.com",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "yandex.com",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "yandex.ru",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "search.naver.com",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "seznam.cz",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "search.marginalia.nu",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "duckduckgo.com",
+      "expect": "organic search"
+    },
+    {
+      "referrer_host": "google.mycompany.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "google.com.evil.example",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "bing.example.org",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "blog.google",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "about.google",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "marginalia.blog",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "marginalia.press",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "themarginalian.org",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "notgoogle.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "linkedin.attacker.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "mail.google.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "mail.yahoo.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "mail.yahoo.co.jp",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "mail.yandex.ru",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "webmail.someuniversity.edu",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "mail.evil.example",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "outlook.office365.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "outlook.office.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "outlook.live.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "mail.proton.me",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "hey.com",
+      "expect": "email"
+    },
+    {
+      "referrer_host": "hershey.com",
+      "expect": "referral"
+    },
+    {
+      "referrer_host": "mailchimp.com",
+      "expect": "referral"
+    }
+  ]
+}

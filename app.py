@@ -9882,11 +9882,17 @@ def run_migrations(strict=True):
     # brand-new and arrives via the db.create_all() call below.
     _add('admin_user', 'dashboard_email VARCHAR(120)')
     _add('admin_user', 'last_sso_login_at TIMESTAMP')
-    # Kept as a repair (unchanged behaviour), but worth knowing what it does:
-    # this re-grants admin to a hardcoded address on every release, so demoting
-    # that account through the admin UI does not stick. Ledgering it would fix
-    # that, but silently changing who is an admin is not this change's job —
-    # tracked separately.
+    # DELIBERATE, and confirmed by Ray on 2026-07-31: Anna is an admin and is
+    # meant to stay one. This re-asserts that on every release, which is the
+    # point — it is a floor under her access, not a migration that forgot to
+    # stop running.
+    #
+    # So do NOT "fix" it by recording it in the ledger and skipping it. Doing so
+    # would look like tidying and would quietly remove the guarantee. An earlier
+    # version of this comment described the re-grant as a latent bug because
+    # demoting her through the admin UI does not stick; that framing was wrong.
+    # If she ever genuinely needs to be demoted, delete this block in the same
+    # change — that is the intended way, and it leaves a reviewable diff.
     def _grant_anna_admin():
         with db.engine.begin() as conn:
             conn.execute(text(

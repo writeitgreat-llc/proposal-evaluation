@@ -92,6 +92,19 @@ jobs:
       - name: Channel classifier matches the shared rules
         run: python ci/check_channel_parity.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # reason as the two steps around it. Placed before smoke_app.py because it
+      # is pure AST work and finishes in under a second.
+      #
+      # This is the check that stops an OpenAI call shipping without a time
+      # budget. One process, four threads: a call on the SDK's 600s x 3 default
+      # is not a slow feature, it is a quarter of the site gone for half an hour.
+      # It exists in particular to catch the `openai.chat.completions.create`
+      # module-level form, which reads identically to the budgeted
+      # `client.chat.completions.create` and silently bypasses it.
+      - name: Every OpenAI call has a time budget
+        run: python ci/check_ai_timeouts.py
+
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 

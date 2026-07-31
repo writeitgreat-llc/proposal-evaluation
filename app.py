@@ -240,8 +240,169 @@ def format_prompt_filter(text):
         parts.append(f'<p>{para}</p>')
     return ''.join(parts)
 
-# OpenAI client
-client = openai.OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+# ── OpenAI clients ───────────────────────────────────────────────────────────
+#
+# Every OpenAI call in this file goes through a client built here, and every one
+# of them carries an explicit time budget. Left alone the SDK has none worth the
+# name. Verified against the pinned openai==1.68.2 rather than assumed:
+#
+#     DEFAULT_TIMEOUT     = Timeout(connect=5.0, read=600, write=600, pool=600)
+#     DEFAULT_MAX_RETRIES = 2
+#
+# and _base_client.SyncAPIClient._request RETRIES httpx.TimeoutException. So a
+# bare client's worst case is 600s x 3 attempts = 30 MINUTES on one call.
+#
+# That is the whole reason this block exists. The Procfile runs
+# `--workers 1 --threads 4`: four request threads for the entire site. Four
+# people on the AI coach during an OpenAI slowdown meant four threads held for
+# half an hour each, and the author sign-up page every campaign link points at
+# simply stops answering. A timeout is what makes a slow OpenAI a slow feature
+# instead of a site outage.
+#
+# Two budgets, because the two paths have genuinely different deadlines.
+
+# The request path. Heroku's router hangs up at 30 seconds and sends the browser
+# an H12 — but the dyno does NOT stop; it keeps waiting for an answer nobody
+# will ever read, still holding one of the four threads.
+#
+# 25s, leaving 5s of the router's 30. The sibling implementation in
+# wig-dashboard uses 22 and leaves 8; these routes are thinner than that app's
+# — a JSON body, one or two indexed queries — so the extra 3s buys real headroom
+# where it matters instead of sitting unused. It matters because the largest
+# request-path call here is gpt-4o at max_tokens=1000, which in a bad minute
+# lands in the low twenties: at 22s that author gets an error for a call that
+# would have answered inside the router's window.
+#
+# The number is a config var for the same reason. If the coach starts returning
+# "Could not get a response" under load, `heroku config:set
+# AI_REQUEST_TIMEOUT_SECONDS=28` is a fix without a deploy — the ceiling that
+# must not move is the router's 30, which ci/check_ai_timeouts.py enforces.
+#
+# Retries are OFF here, and that is not a detail. Wall-clock is
+# timeout x (max_retries + 1), so leaving the SDK's default 2 in place would
+# turn a "25 second" budget into 75 — past the router deadline twice over, on a
+# second and third attempt nobody is waiting for.
+#
+# A float, not an httpx.Timeout, so it applies to connect as well as read. Both
+# forms bound the ceiling identically and the ceiling is the point.
+#
+# One honest limit on all of these numbers: httpx's read timeout is the maximum
+# gap BETWEEN reads, not total elapsed time. A server that trickles a byte every
+# few seconds can hold a connection past any of these budgets without ever
+# tripping one. For the calls here that is a technicality rather than a hole —
+# every one is non-streaming, so nothing arrives until the completion is
+# finished and the gap the timeout measures IS the generation. It is written
+# down because "the call cannot last longer than N" is very slightly untrue, and
+# EVAL_STUCK_AFTER is derived as if it were exactly true; EVAL_STUCK_SLACK is
+# the term that absorbs the difference.
+AI_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('AI_REQUEST_TIMEOUT_SECONDS', '25'))
+AI_REQUEST_MAX_RETRIES = int(os.environ.get('AI_REQUEST_MAX_RETRIES', '0'))
+
+# Off the request path there is no router deadline, so this budget is set by
+# what the work actually needs rather than by what a browser will wait for.
+#
+# 300s, sized for the one call that uses it: evaluate_proposal asks gpt-4o for
+# up to max_tokens=6000. At healthy throughput that is 60–120s, but the whole
+# reason this constant exists is the minutes when throughput is NOT healthy, and
+# 6000 tokens at a degraded 20 tok/s is 300. Sizing this to the healthy case
+# would mean a large proposal that scores fine today never scores at all — and
+# failing that way is worse than being slow, because evaluate_proposal returning
+# None writes status='error', and the stuck sweep only ever looks at rows still
+# marked 'processing'. An errored row is out of the sweep permanently.
+#
+# One retry, not the SDK's two and not zero. Not zero because that same
+# terminal-'error' path makes a single transient 429 unrecoverable, and the SDK
+# retry is the only thing standing in front of it. Not two because every extra
+# attempt widens the stuck sweep's window — see the arithmetic at
+# EVAL_STUCK_AFTER, which is COMPUTED from these constants precisely so that
+# changing them here cannot silently invalidate it.
+AI_BACKGROUND_TIMEOUT_SECONDS = float(os.environ.get('AI_BACKGROUND_TIMEOUT_SECONDS', '300'))
+AI_BACKGROUND_MAX_RETRIES = int(os.environ.get('AI_BACKGROUND_MAX_RETRIES', '1'))
+
+# The other background call is not the same size and should not carry the same
+# budget. _detect_ai_content is gpt-4o-mini at max_tokens=300 — twenty times
+# less output than the scoring call it runs beside. Giving it 300s would add
+# four minutes to the stuck sweep's worst case to protect a call that has never
+# needed more than a few seconds.
+AI_DETECT_TIMEOUT_SECONDS = float(os.environ.get('AI_DETECT_TIMEOUT_SECONDS', '60'))
+
+# What one SDK retry can cost in *waiting*, on top of the attempts themselves.
+# openai 1.68.2's _calculate_retry_timeout normally backs off 0.5s then 1s, but
+# it honours a server Retry-After header verbatim up to a 60s cap:
+#
+#     if retry_after is not None and 0 < retry_after <= 60:
+#         return retry_after                     # then time.sleep(timeout)
+#
+# and 429s carrying a large Retry-After are exactly what OpenAI sends during an
+# incident — the scenario every number in this block exists for. It is a real
+# term in the sweep's worst case, not a rounding error, so it is named here and
+# added there rather than absorbed into slack.
+AI_RETRY_AFTER_MAX_SECONDS = 60.0
+
+# One request-path call does not fit in 25 seconds and is not a mistake:
+# /api/marketing/generate-plan asks gpt-4o for up to 4500 tokens, which takes
+# roughly 60–90s. It already outlives the router — the author's fetch() gets an
+# H12 — but the handler persists the plan to md.plan_90day_json before returning
+# and author_marketing_platform.html renders plan_90day on page load, so the
+# author sees their plan when the page is reopened. That ugly path is the ONLY
+# way this feature currently delivers, and a 25s budget would remove it.
+#
+# So: bounded, not shortened. 100s with no retry caps a thread at a minute and
+# a half instead of thirty minutes.
+#
+# 100 and not 120, deliberately: the Procfile passes gunicorn `--timeout 120`,
+# and two different 120s in the same request would read as one mechanism. They
+# are not related — that flag is the arbiter's worker-liveness heartbeat, and
+# gthread's run loop calls notify() from the accept loop every second whatever
+# the request threads are doing (verified in gunicorn 21.2.0), so it never kills
+# a slow request. Keeping the numbers apart keeps that clear.
+#
+# This is an interim bound, not a fix. The real fix is moving this call to the
+# background pattern the evaluation flow already uses — the next step on the
+# risk register — because a bounded 100s still lets four authors hold all four
+# threads for a minute and a half, and because the browser gets an H12 at 30s
+# either way and then invites a retry that starts a second call.
+AI_SLOW_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('AI_SLOW_REQUEST_TIMEOUT_SECONDS', '100'))
+
+
+def build_openai_client(timeout=None, max_retries=None):
+    """Build an OpenAI client with an explicit time budget.
+
+    Defaults to the request-path budget, so a route that never thinks about
+    timeouts still gets a bounded one. Background work opts out explicitly.
+
+    ALWAYS construct clients through here. Two shapes bypass it and both are
+    rejected by ci/check_ai_timeouts.py:
+
+      openai.OpenAI(...)              a second client with the 600s x 3 default
+      openai.chat.completions.create  the module-level form, which quietly
+                                      builds its own _ModuleClient carrying the
+                                      SDK defaults and inheriting NOTHING from
+                                      the client configured here
+
+    The second one is not hypothetical: _detect_ai_content used it, so it was
+    the one call out of twelve that a timeout set here would have missed.
+    """
+    return openai.OpenAI(
+        api_key=os.environ.get('OPENAI_API_KEY'),
+        timeout=AI_REQUEST_TIMEOUT_SECONDS if timeout is None else timeout,
+        max_retries=AI_REQUEST_MAX_RETRIES if max_retries is None else max_retries,
+    )
+
+
+# The request-path client. Named `client` because ten call sites already say so.
+client = build_openai_client()
+
+# For OpenAI calls that run in a background thread, not on a request: the
+# proposal scoring in _run_evaluation (evaluate_proposal + _detect_ai_content).
+# Separate object rather than a per-call timeout= argument so a background call
+# cannot silently inherit the request-path budget — 25s and no retries is right
+# for a caller the router will hang up on, and wrong for work whose whole point
+# is that it may take minutes.
+background_client = build_openai_client(
+    timeout=AI_BACKGROUND_TIMEOUT_SECONDS,
+    max_retries=AI_BACKGROUND_MAX_RETRIES,
+)
 
 # Email configuration
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
@@ -2330,7 +2491,11 @@ ADVANCE ESTIMATE: The advance ranges will be calculated automatically. For the a
 Return ONLY the JSON object, no other text."""
 
     try:
-        response = client.chat.completions.create(
+        # background_client, not client: this only ever runs inside
+        # _run_evaluation's background thread, where there is no router deadline
+        # and 6000 gpt-4o tokens legitimately need longer than the 25s request
+        # budget. See the clients block near the top of this file.
+        response = background_client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -3112,10 +3277,24 @@ def send_services_lead_alert(author, md, reason='qualified'):
 
 def _detect_ai_content(text: str) -> dict:
     """Call GPT-4o-mini to estimate the probability that text was AI-generated.
-    Returns dict with 'likelihood' (0-100), 'signals' (list[str]), 'penalty' (float)."""
+    Returns dict with 'likelihood' (0-100), 'signals' (list[str]), 'penalty' (float).
+
+    This call used to read `openai.chat.completions.create(...)` — the
+    module-level form. It looks identical to the eleven `client....` calls and
+    behaves completely differently: openai 1.x resolves it through its own
+    lazily-built _ModuleClient, which inherits nothing from the client this app
+    configures. It was therefore the one call in twelve that a timeout set on
+    the shared client would silently have missed, still running 600s x 3 while
+    every other call was bounded — and it runs on every submitted proposal.
+    ci/check_ai_timeouts.py now fails the build if that form comes back.
+    """
     try:
         sample = text[:6000]  # keep cost low
-        resp = openai.chat.completions.create(
+        # background_client, but not its full budget: 300 output tokens of
+        # gpt-4o-mini does not need the 300s that 6000 tokens of gpt-4o does,
+        # and every second granted here is a second on the stuck sweep's window.
+        resp = background_client.chat.completions.create(
+            timeout=AI_DETECT_TIMEOUT_SECONDS,
             model='gpt-4o-mini',
             response_format={'type': 'json_object'},
             messages=[
@@ -3150,9 +3329,10 @@ def _detect_ai_content(text: str) -> dict:
 #
 # /api/evaluate spawns one thread per submission and nothing counted them, so
 # ten authors submitting inside two minutes meant ten concurrent scorings. Each
-# is at least two OpenAI calls that this app sets no timeout on (the client at
-# the top of this file passes none, so openai==1.68.2 applies its own 600s x 2
-# retries), so a scoring can legitimately run for tens of minutes.
+# is two OpenAI calls, and those calls used to have no timeout at all — the SDK
+# default of 600s x 3 attempts applied, so one scoring could run for an hour.
+# They are bounded now (see AI_BACKGROUND_TIMEOUT_SECONDS), but a scoring still
+# takes minutes, so counting them still matters.
 #
 # Two, matching _UPLOAD_PARSE_SLOTS. Queueing costs the author nothing they can
 # see: the work is almost entirely waiting on OpenAI, their results page is
@@ -3177,7 +3357,14 @@ _EVAL_SLOTS = threading.BoundedSemaphore(
 # the sweep, which is the component that knows how to retry it and how to tell
 # somebody. Writing 'error' here instead would take the row out of the sweep
 # with nobody alerted, which is the silent loss this whole change exists to end.
-_EVAL_SLOT_WAIT = 20 * 60
+#
+# Five minutes, down from twenty. Twenty was sized for the era when one scoring
+# could hold a slot for an hour; a scoring is now bounded at 12 minutes and
+# typically finishes in two, so five minutes still covers several queue
+# positions in the normal case. It is worth keeping small because this term
+# goes straight into EVAL_STUCK_AFTER — every minute allowed here is a minute a
+# genuinely dead scoring sits unnoticed.
+_EVAL_SLOT_WAIT = 5 * 60
 
 
 def process_evaluation_background(app_obj, submission_id, proposal_text, proposal_type,
@@ -3280,9 +3467,21 @@ def _run_evaluation(app_obj, submission_id, proposal_text, proposal_type,
                 return
 
             if not evaluation:
-                proposal.status = 'error'
-                db.session.commit()
-                print(f"Background eval: OpenAI evaluation failed for {submission_id}")
+                # Deliberately NOT status='error'. The sweep's candidate query
+                # only ever looks at rows still marked 'processing', so writing
+                # 'error' here takes the row out of the sweep permanently — no
+                # retry, and nobody told, because the sweep's alert email is the
+                # only thing that reports a failed scoring to the team.
+                #
+                # That was survivable while the OpenAI call had no timeout and
+                # so almost never returned None. It has one now, which turns
+                # every slow minute at OpenAI into silently abandoned proposals.
+                # Leaving the row where it is hands it to the component that
+                # knows how to retry it and how to tell somebody — the same
+                # contract _EVAL_SLOT_WAIT works to. Two sweep retries later it
+                # reaches 'error' anyway, with an email.
+                print(f"Background eval: OpenAI evaluation failed for {submission_id}; "
+                      f"leaving it at 'processing' for the stuck sweep")
                 return
 
             proposal.tier = evaluation.get('tier', 'C')
@@ -3926,27 +4125,58 @@ def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date
 # twice — and that happens precisely during an OpenAI slowdown, when responses
 # are at their longest.
 #
-# The arithmetic, from the actual library defaults rather than a guess. The
-# client at the top of this file passes no timeout and no max_retries, so
-# openai==1.68.2 applies DEFAULT_TIMEOUT=600s and DEFAULT_MAX_RETRIES=2, i.e.
-# three attempts of 600s per call. A scoring makes TWO such calls
-# (evaluate_proposal, then _detect_ai_content):
+# The arithmetic, COMPUTED from the real constants rather than written down
+# beside them. That is the point of the expression below: these numbers are
+# config vars, and a hand-copied 90 would go stale the first time somebody set
+# AI_BACKGROUND_TIMEOUT_SECONDS on the dyno — silently, in the direction that
+# turns the sweep into a duplicator.
 #
-#     2 calls x 600s x 3 attempts            = 60 min   worst-case run
-#   + _EVAL_SLOT_WAIT                        = 20 min   worst-case queueing
+# A scoring makes TWO OpenAI calls — evaluate_proposal on the full background
+# budget, then _detect_ai_content on its own smaller one. The SDK retries
+# timeouts, so each call's worst case is timeout x (max_retries + 1); and a
+# retry also SLEEPS, honouring a server Retry-After up to
+# AI_RETRY_AFTER_MAX_SECONDS before the next attempt. With the defaults set at
+# the top of this file:
+#
+#     evaluate_proposal   300s x 2 attempts  = 10 min
+#   + _detect_ai_content   60s x 2 attempts  =  2 min
+#   + retry backoff       2 calls x 1 x 60s  =  2 min   Retry-After, honoured
+#   + _EVAL_SLOT_WAIT                        =  5 min   worst-case queueing
 #   ------------------------------------------------------------------
-#                                              80 min   worst case, end to end
+#                                              19 min   worst case, end to end
+#   + EVAL_STUCK_SLACK                       =  3 min
+#   ------------------------------------------------------------------
+#                                              22 min
 #
-# 90 minutes clears that with room. The queue term is why _EVAL_SLOTS is
-# acquired with a timeout below: an unbounded wait for a slot would make the
-# total unbounded too, and then NO finite lease is sound.
+# It was 90 minutes until the timeouts landed, and the 60 minutes of that which
+# was pure OpenAI came from the SDK's own 600s x 3 defaults. The queue term is
+# why _EVAL_SLOTS is acquired with a timeout above: an unbounded wait for a slot
+# would make the total unbounded too, and then NO finite lease is sound.
 #
-# Both numbers come down a long way the moment a timeout is set on the OpenAI
-# client — which is a separate item on the risk register, not this change.
-EVAL_STUCK_AFTER = timedelta(minutes=90)
+# Every term is in the expression, including the backoff. An earlier draft of
+# this left the backoff out and covered it with slack, which held at
+# AI_BACKGROUND_MAX_RETRIES=1 and quietly went unsound at 2 — the SDK's own
+# default, and so the most natural value for anyone to set. Raising a config var
+# to make evaluations MORE reliable must not silently break the sweep.
+#
+# Setting this BELOW the longest a live evaluation can legitimately take is the
+# dangerous direction, and it does not fail loudly — the sweep stops rescuing
+# work and starts duplicating it, re-dispatching a scoring that was merely slow.
+# Both copies finish, the author gets two contradictory evaluation emails, and
+# the company pays twice. That happens precisely during an OpenAI slowdown, when
+# responses are at their longest. Hence the slack term, hence deriving the rest
+# instead of trusting a comment to be updated, and hence check F in
+# ci/check_ai_timeouts.py, which re-does this arithmetic on every build.
+EVAL_STUCK_SLACK = timedelta(minutes=3)
+EVAL_STUCK_AFTER = timedelta(
+    seconds=((AI_BACKGROUND_TIMEOUT_SECONDS + AI_DETECT_TIMEOUT_SECONDS)
+             * (AI_BACKGROUND_MAX_RETRIES + 1)
+             + 2 * AI_BACKGROUND_MAX_RETRIES * AI_RETRY_AFTER_MAX_SECONDS
+             + _EVAL_SLOT_WAIT)
+) + EVAL_STUCK_SLACK
 # The lease. Never shorter than EVAL_STUCK_AFTER, or a retry could be re-claimed
 # while its own OpenAI call is still running.
-EVAL_LEASE = timedelta(minutes=90)
+EVAL_LEASE = EVAL_STUCK_AFTER
 EVAL_MAX_RETRIES = 2          # after this many sweep retries, stop and say so
 EVAL_SWEEP_BATCH = 2          # rows re-dispatched per tick; matches _EVAL_SLOTS
 EVAL_SWEEP_EVERY = 300        # seconds between sweeps
@@ -4871,16 +5101,36 @@ Tone: professional, warm, and specific. Use the author's actual words and voice.
                 db.session.add(submission)
             submission.book_title = answers['book_title'] or None
             submission.answers_json = json.dumps(answers)
-            submission.summary_text = summary
+            # `if summary:`, not a bare assignment. When the AI call above fails
+            # `summary` is None, and `existing` is reused whenever it is still a
+            # draft — so an unconditional write NULLs out the one-pager the
+            # author already had. They would then be refused at
+            # author_quickstart_submit ("No one-pager found to submit. Please
+            # generate it first.") with nothing left to submit.
+            #
+            # This was survivable only because the AI call had no timeout and so
+            # almost never raised. It has one now, which makes a slow OpenAI a
+            # routine way to delete an author's work. The admin twin of this
+            # handler already gets it right — see admin_author_one_pager.
+            if summary:
+                submission.summary_text = summary
             db.session.commit()
         except Exception as e:
             print(f'One-pager save error: {e}')
             submission = None
+        if summary is None:
+            flash('Your answers were saved, but the AI summary timed out. '
+                  'Press Generate again to retry — nothing was lost.', 'warning')
 
         feedbacks = submission.feedbacks.order_by(OnePagerFeedback.created_at.asc()).all() if submission else []
         return render_template('author_coaching_quickstart.html',
                                answers=answers,
-                               summary=summary,
+                               # Fall back to what is stored, for the same reason
+                               # the write above is guarded: on a failed
+                               # generation `summary` is None, and rendering that
+                               # would show the author a blank page for a
+                               # one-pager that is still safely in the database.
+                               summary=summary or (submission.summary_text if submission else None),
                                submission=submission,
                                feedbacks=feedbacks)
 
@@ -6050,12 +6300,19 @@ def api_marketing_generate_plan():
     )
 
     try:
+        # The one request-path call that does not fit the 25s budget: 4500
+        # gpt-4o tokens take 60–90s. Overriding the timeout here (max_retries
+        # stays 0, from the client) caps it at two minutes instead of thirty.
+        # Why it is not simply shortened to 25s — the author only ever sees this
+        # plan via the persist-then-reload path — is explained where
+        # AI_SLOW_REQUEST_TIMEOUT_SECONDS is defined.
         resp = client.chat.completions.create(
             model='gpt-4o',
             messages=[{'role': 'user', 'content': prompt}],
             response_format={'type': 'json_object'},
             temperature=0.75,
             max_tokens=4500,
+            timeout=AI_SLOW_REQUEST_TIMEOUT_SECONDS,
         )
         plan = json.loads(resp.choices[0].message.content)
     except Exception as e:

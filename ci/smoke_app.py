@@ -16,6 +16,15 @@ What this does:
      Heroku, so a migration that would abort the release fails the PR first
   5. renders the unauthenticated public pages
 
+Step 4 only tests anything because MIGRATE_ON_BOOT=0 is set below, before the
+import. Without it, importing app.py runs its own NON-STRICT migration pass
+first; the strict call at step 4 would then find the work already done and pass
+on a migration that had already failed and been swallowed -- a green check
+proving nothing, which is the same shape as the bug it is here to catch.
+
+Deeper migration properties (idempotence, ledger verification, and that a
+failure actually exits non-zero) are asserted by ci/check_migrations.py.
+
 IMPORTANT: OPENAI_API_KEY must be a dummy value, never a real key. Nothing here
 talks to OpenAI.
 """
@@ -38,6 +47,10 @@ os.environ["DATABASE_URL"] = "sqlite:///" + str(SMOKE_DB)
 os.environ.setdefault("SECRET_KEY", "ci-smoke-test-key")
 # Keep _is_production False so secure-cookie config does not break the test client.
 os.environ["APP_BASE_URL"] = "http://localhost:5000"
+# Import must not migrate, so the explicit strict pass below is the first and
+# only one. See the note in the module docstring -- this line is what makes
+# step 4 a real check rather than a tautology.
+os.environ["MIGRATE_ON_BOOT"] = "0"
 
 # (path, allowed status codes)
 PUBLIC_ROUTES: list[tuple[str, tuple[int, ...]]] = [
@@ -105,11 +118,14 @@ def main() -> int:
 
     # --- 3. the release-phase migration path ---------------------------------
     # This mirrors migrate.py, which Heroku runs as `release: python migrate.py`.
-    # If this raises, the Heroku release would abort -- catch it in the PR.
+    # strict=True is what migrate.py uses, and it is what makes a failure abort
+    # the release -- so ask for it explicitly here rather than relying on the
+    # default staying True. If this raises, that release would abort; catch it
+    # in the PR instead.
     try:
         with flask_app.app_context():
             application.db.create_all()
-            application.run_migrations()
+            application.run_migrations(strict=True)
         print("db.create_all() + run_migrations() OK (release phase would succeed)")
     except Exception as exc:  # noqa: BLE001
         failures.append(f"release-phase migration path raised {type(exc).__name__}: {exc}")

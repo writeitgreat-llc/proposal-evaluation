@@ -8763,36 +8763,252 @@ def admin_knowledge_base_download(doc_id):
 # ============================================================================
 # DATABASE MIGRATIONS
 # ============================================================================
+#
+# This repo has no Alembic. Schema changes are the hand-written operations in
+# run_migrations() below, and `release: python migrate.py` (Procfile) is what
+# applies them.
+#
+# Two rules, both of which exist because they were once broken:
+#
+#   1. A failed operation MUST abort the release. It used to print and carry
+#      on, so a column that never applied shipped anyway and 500'd for authors
+#      — fix_schema.py in the repo root is the emergency repair written for
+#      that incident, and docs/DEPLOYMENT.md described a release-abort that
+#      could not actually happen.
+#   2. An operation that has already been applied MUST NOT run again. Every
+#      boot used to re-issue all 68 ALTER TABLEs. On Postgres even a *no-op*
+#      `ADD COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE, and a lock request
+#      that has to wait blocks every ordinary read queued behind it — measured
+#      here: a no-op ALTER sitting behind a 10s query stalled an unrelated
+#      SELECT for 8s. With `--workers 1 --threads 4` that is the whole site.
+#      Commit d99887f ("reduce to 1 worker") is this failure, already survived
+#      once.
 
-def run_migrations():
-    """Ensure all DB columns and tables exist. Safe to run multiple times.
+MIGRATION_LEDGER = 'schema_migrations'
 
-    Each ALTER TABLE runs in its own transaction with IF NOT EXISTS so a
-    single failure cannot block other columns from being added.
+# How long a DDL statement may WAIT for its lock before giving up, per attempt.
+# Not about how long it runs — every ALTER here is metadata-only and finishes
+# in well under a millisecond. It is about never letting DDL sit at the head of
+# the lock queue. If the lock is not free in 3s something real is holding it,
+# and waiting longer only deepens the pile-up.
+MIGRATION_LOCK_WAITS = (3, 6, 12)
+
+
+class MigrationError(RuntimeError):
+    """One or more migration operations failed.
+
+    Raising this is the entire point: `release: python migrate.py` exits
+    non-zero, Heroku aborts the release, the new slug never goes live, and the
+    old dynos keep serving. That is the behaviour docs/DEPLOYMENT.md has always
+    claimed and, until this class existed, never had.
     """
-    from sqlalchemy import text
+
+
+def _migrations_strict(requested):
+    """Resolve strictness, honouring the MIGRATIONS_STRICT emergency override.
+
+    `heroku config:set MIGRATIONS_STRICT=0` is the documented way to force a
+    release through when a migration is failing for a reason you have already
+    diagnosed and accepted. Setting a config var is itself a release, so this
+    takes effect on the release it is set in.
+    """
+    raw = os.environ.get('MIGRATIONS_STRICT', '').strip().lower()
+    if raw in ('0', 'false', 'no', 'off'):
+        return False
+    if raw in ('1', 'true', 'yes', 'on'):
+        return True
+    return requested
+
+
+def run_migrations(strict=True):
+    """Bring the schema up to date once, and fail loudly if anything did not apply.
+
+    Three properties, in order of how much they matter:
+
+    1. FAILURES ARE FATAL. Every operation is attempted; the failures are
+       collected rather than printed-and-forgotten, and with strict=True a
+       MigrationError naming all of them is raised at the end. One broken
+       operation no longer hides behind sixty-seven successful ones.
+
+    2. APPLIED WORK IS NOT REDONE. Completed operations are recorded in the
+       `schema_migrations` ledger and skipped. A steady-state run issues zero
+       DDL and takes zero table locks — which also means a `heroku config:set`
+       or a `releases:rollback`, both of which re-run the release phase, can no
+       longer be blocked by a lock.
+
+    3. THE LEDGER IS VERIFIED, NEVER TRUSTED. Before anything is skipped the
+       ledger is reconciled against the live catalog in one query. A row
+       claiming a column the database does not actually have is deleted and the
+       operation re-applies. Without this, skipping would be strictly more
+       dangerous than the every-boot replay it removes: a restored backup, a
+       `pg:copy`, or a hand-edited ledger could make a real migration disappear
+       forever. With it, the ledger is a cache of observable state, not a
+       promise.
+
+    Atomicity: on PostgreSQL the DDL and its ledger INSERT commit together. On
+    SQLite (laptop and CI only) pysqlite autocommits DDL, so the two can
+    diverge — but only ever in the harmless direction, DDL applied and ledger
+    row missing, which simply re-runs the operation next time.
+
+    Repairs are deliberately excluded from all of the above; see _repair().
+    """
+    from sqlalchemy import text, inspect as _insp
 
     is_pg = 'postgresql' in str(db.engine.url)
+    strict = _migrations_strict(strict)
 
-    def _add(table, col_def):
-        """Add one column to a table — each call is an independent transaction."""
+    tracked = []    # every ledger-eligible key this run knows about
+    applied = []    # executed and recorded this run
+    adopted = []    # already true in the database; recorded without touching it
+    failures = []   # (key, exception) — these, and only these, abort the release
+    repairs = []    # names of repairs attempted; always non-empty, by design
+    repair_warnings = []   # (name, exception) — reported, never fatal
+
+    # Postgres and SQLite spell "insert if not already there" differently, and
+    # the ledger INSERT must never itself be the thing that fails.
+    ledger_insert = (
+        f'INSERT INTO {MIGRATION_LEDGER} (migration_key) VALUES (:k) ON CONFLICT DO NOTHING'
+        if is_pg else
+        f'INSERT OR IGNORE INTO {MIGRATION_LEDGER} (migration_key) VALUES (:k)'
+    )
+
+    # ── the ledger itself ─────────────────────────────────────────────────────
+    with db.engine.begin() as conn:
+        conn.execute(text(
+            f'CREATE TABLE IF NOT EXISTS {MIGRATION_LEDGER} ('
+            f'  migration_key VARCHAR(200) PRIMARY KEY,'
+            f'  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP'
+            f')'
+        ))
+        done = {r[0] for r in conn.execute(text(f'SELECT migration_key FROM {MIGRATION_LEDGER}'))}
+
+    # ── one catalog read for the whole run ────────────────────────────────────
+    # This is what makes the ledger verifiable, and it is also the adoption path
+    # for the existing production database, which has all 67 columns and an
+    # empty ledger. Reading the catalog takes no table locks; replaying 67
+    # no-op ALTERs against live traffic during the release phase does.
+    def _live_columns():
         if is_pg:
+            with db.engine.connect() as conn:
+                # current_schema() matters: an unfiltered information_schema
+                # query matches same-named columns in other schemas and would
+                # report "applied" for something that is not there.
+                return {
+                    (r[0], r[1]) for r in conn.execute(text(
+                        'SELECT table_name, column_name FROM information_schema.columns '
+                        'WHERE table_schema = current_schema()'
+                    ))
+                }
+        _i = _insp(db.engine)
+        return {(t, c['name']) for t in _i.get_table_names() for c in _i.get_columns(t)}
+
+    present = _live_columns()
+
+    # Reconcile: a `col:` row whose column is not actually in the database is a
+    # lie. Drop it so the operation runs again this pass.
+    stale = sorted(
+        k for k in done
+        if k.startswith('col:') and tuple(k[len('col:'):].split('.', 1)) not in present
+    )
+    if stale:
+        with db.engine.begin() as conn:
+            for k in stale:
+                conn.execute(
+                    text(f'DELETE FROM {MIGRATION_LEDGER} WHERE migration_key = :k'), {'k': k}
+                )
+        done -= set(stale)
+        print(f'Migration: ledger claimed {len(stale)} column(s) the database does not '
+              f'have; re-applying {", ".join(stale)}')
+
+    def _is_lock_wait(exc):
+        """True for Postgres 55P03 lock_not_available. Match the SQLSTATE, never
+        the message text."""
+        return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '55P03'
+
+    def _adopt(key):
+        """Record a key whose effect is already true in the database. No DDL, no
+        table lock. Flushed in one transaction at the end of the run."""
+        done.add(key)
+        adopted.append(key)
+
+    def _run(key, statements):
+        """Execute statements and record the key, atomically on Postgres.
+
+        Retries only a lock-wait timeout, because that failure means something
+        else held the lock — not that the statement is wrong. Anything else
+        fails immediately and lands in `failures`.
+        """
+        last = None
+        for attempt, wait in enumerate(MIGRATION_LOCK_WAITS, start=1):
             try:
                 with db.engine.begin() as conn:
-                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'))
+                    if is_pg:
+                        # SET LOCAL, never a bare SET: SET is session-scoped and
+                        # survives the pool's rollback-on-return, silently
+                        # reconfiguring every later checkout of that connection.
+                        # (SET LOCAL only works inside a transaction — which is
+                        # exactly what engine.begin() gives us.)
+                        conn.execute(text(f"SET LOCAL lock_timeout = '{wait}s'"))
+                    for stmt in statements:
+                        conn.execute(text(stmt))
+                    conn.execute(text(ledger_insert), {'k': key})
+                done.add(key)
+                applied.append(key)
+                print(f'Migration applied: {key}')
+                return
             except Exception as e:
-                print(f'Migration ({table}): {e}')
+                last = e
+                if _is_lock_wait(e) and attempt < len(MIGRATION_LOCK_WAITS):
+                    print(f'Migration {key}: lock still busy after {wait}s, retrying')
+                    continue
+                break
+        failures.append((key, last))
+        print(f'MIGRATION FAILED: {key}: {last}')
+
+    def _repair(name, fn):
+        """Run a repair: cheap, WHERE-guarded, and re-run every time on purpose.
+
+        Repairs are NOT ledgered and NOT fatal, and both halves are deliberate.
+        They take row locks, never table locks, so ledgering them would buy
+        nothing — and would cost something real, because a ledgered repair stops
+        repairing at exactly the moment it is next needed. And a repair that
+        cannot run is not a reason to refuse to deploy.
+        """
+        repairs.append(name)
+        try:
+            fn()
+        except Exception as e:
+            repair_warnings.append((name, e))
+            print(f'Migration repair warning ({name}): {e}')
+
+    def _add(table, col_def):
+        """Ensure one column exists.
+
+        The ledger key is derived from the arguments, so two tables with the
+        same column name (proposal.author_id and marketing_module_data.author_id)
+        cannot collide.
+
+        A `col:` key means only "this column exists". It deliberately does NOT
+        capture the type, width or default. So if you ever need to CHANGE an
+        existing column, give that change its own new key rather than editing the
+        definition here — otherwise the ledger skips it and the change silently
+        never applies, which is the exact bug this file exists to prevent.
+        """
+        col_name = col_def.split()[0]
+        key = f'col:{table}.{col_name}'
+        tracked.append(key)
+        if key in done:
+            return
+        if (table, col_name) in present:
+            _adopt(key)
+            return
+        if is_pg:
+            _run(key, [f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'])
         else:
-            # SQLite < 3.37 has no IF NOT EXISTS on ADD COLUMN — check first
-            from sqlalchemy import inspect as _insp
-            try:
-                existing = [c['name'] for c in _insp(db.engine).get_columns(table)]
-                col_name = col_def.split()[0]
-                if col_name not in existing:
-                    with db.engine.begin() as conn:
-                        conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {col_def}'))
-            except Exception as e:
-                print(f'Migration ({table}): {e}')
+            # SQLite has never supported IF NOT EXISTS on ADD COLUMN — not on
+            # any version, verified on 3.51. The `present` check above is what
+            # makes this safe, so do not "modernise" this branch away.
+            _run(key, [f'ALTER TABLE {table} ADD COLUMN {col_def}'])
 
     blob = 'BYTEA' if is_pg else 'BLOB'
 
@@ -8819,14 +9035,19 @@ def run_migrations():
     # brand-new and arrives via the db.create_all() call below.
     _add('admin_user', 'dashboard_email VARCHAR(120)')
     _add('admin_user', 'last_sso_login_at TIMESTAMP')
-    try:
+    # Kept as a repair (unchanged behaviour), but worth knowing what it does:
+    # this re-grants admin to a hardcoded address on every release, so demoting
+    # that account through the admin UI does not stick. Ledgering it would fix
+    # that, but silently changing who is an admin is not this change's job —
+    # tracked separately.
+    def _grant_anna_admin():
         with db.engine.begin() as conn:
             conn.execute(text(
                 f"UPDATE admin_user SET role = '{ROLE_ADMIN}'"
                 f" WHERE email = 'anna@writeitgreat.com' AND (role IS NULL OR role != '{ROLE_ADMIN}')"
             ))
-    except Exception:
-        pass
+
+    _repair('admin_user.anna_role', _grant_anna_admin)
 
     # ── publisher ──────────────────────────────────────────────────────────────
     _add('publisher', 'bio TEXT')
@@ -8862,12 +9083,15 @@ def run_migrations():
     _add('homework_submission', 'ai_feedback TEXT')
     _add('homework_submission', 'admin_feedback TEXT')
     _add('homework_submission', "status VARCHAR(30) DEFAULT 'pending_review'")
-    # Back-fill status for rows inserted before this column existed
-    try:
+    # Back-fill status for rows inserted before this column existed.
+    # A repair, not a migration: it is WHERE-guarded and matches nothing once
+    # the column has a default, but leaving it live costs one indexed UPDATE and
+    # keeps it working if a row ever arrives with a NULL status.
+    def _backfill_homework_status():
         with db.engine.begin() as conn:
             conn.execute(text("UPDATE homework_submission SET status = 'pending_review' WHERE status IS NULL"))
-    except Exception:
-        pass
+
+    _repair('homework_submission.status_backfill', _backfill_homework_status)
 
     # ── marketing_module_data ──────────────────────────────────────────────────
     _add('marketing_module_data', 'author_id INTEGER')
@@ -8880,47 +9104,74 @@ def run_migrations():
     _add('marketing_module_data', 'woodpecker_added BOOLEAN DEFAULT FALSE')
     _add('marketing_module_data', "platform_mode VARCHAR(10)")
     _add('marketing_module_data', 'plan_90day_json TEXT')
-    # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless)
+    # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless).
+    #
+    # This one is the single best argument for the ledger in the whole file. It
+    # has no IF NOT EXISTS guard and is "idempotent" only because Postgres
+    # tolerates DROP NOT NULL on an already-nullable column — so in production,
+    # where the model has declared nullable=True for a long time, it was a pure
+    # no-op that took ACCESS EXCLUSIVE on marketing_module_data on every single
+    # boot, forever. Verified by state (pg_attribute.attnotnull) rather than by
+    # ledger row alone, so a restored backup cannot leave it recorded-but-unset.
     if is_pg:
-        try:
-            with db.engine.begin() as conn:
-                conn.execute(text(
-                    'ALTER TABLE marketing_module_data ALTER COLUMN enrollment_id DROP NOT NULL'
-                ))
-        except Exception:
-            pass
+        key = 'ddl:marketing_module_data.enrollment_id_drop_not_null'
+        tracked.append(key)
+        if key not in done:
+            with db.engine.connect() as conn:
+                row = conn.execute(text(
+                    'SELECT a.attnotnull FROM pg_attribute a'
+                    ' JOIN pg_class c ON c.oid = a.attrelid'
+                    ' JOIN pg_namespace n ON n.oid = c.relnamespace'
+                    " WHERE n.nspname = current_schema()"
+                    "   AND c.relname = 'marketing_module_data'"
+                    "   AND a.attname = 'enrollment_id'"
+                    '   AND a.attnum > 0 AND NOT a.attisdropped'
+                )).first()
+            if row is not None and row[0] is False:
+                _adopt(key)
+            else:
+                # Either still NOT NULL, or the column is missing entirely — in
+                # which case this must fail loudly rather than be skipped.
+                _run(key, ['ALTER TABLE marketing_module_data ALTER COLUMN enrollment_id DROP NOT NULL'])
 
     # ── Repair: ensure every active enrollment has a row for each module ───────
-    try:
-        active_enrollments = CoachingEnrollment.query.filter_by(status='active').all()
-        repaired = 0
-        for enr in active_enrollments:
-            existing_orders = {
-                mp.module_order
-                for mp in AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).all()
-            }
-            for m in COACHING_MODULES:
-                order = m['order']
-                if order not in existing_orders:
-                    if order < enr.current_module:
-                        row_status, unlocked_at = 'approved', datetime.utcnow()
-                    elif order == enr.current_module:
-                        row_status, unlocked_at = 'in_progress', datetime.utcnow()
-                    else:
-                        row_status, unlocked_at = 'locked', None
-                    db.session.add(AuthorModuleProgress(
-                        enrollment_id=enr.id,
-                        module_order=order,
-                        status=row_status,
-                        unlocked_at=unlocked_at,
-                    ))
-                    repaired += 1
-        if repaired:
-            db.session.commit()
-            print(f'Migration: created {repaired} missing module progress row(s)')
-    except Exception as e:
-        db.session.rollback()
-        print(f'Migration repair warning: {e}')
+    # Genuinely a repair and NOT ledgered: its remaining purpose is the day
+    # COACHING_MODULES gains an eighth module, when every pre-existing active
+    # enrollment suddenly lacks that row. Recording it once would switch it off
+    # precisely then. Row locks only, so re-running is cheap.
+    def _repair_module_progress():
+        try:
+            active_enrollments = CoachingEnrollment.query.filter_by(status='active').all()
+            created = 0
+            for enr in active_enrollments:
+                existing_orders = {
+                    mp.module_order
+                    for mp in AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).all()
+                }
+                for m in COACHING_MODULES:
+                    order = m['order']
+                    if order not in existing_orders:
+                        if order < enr.current_module:
+                            row_status, unlocked_at = 'approved', datetime.utcnow()
+                        elif order == enr.current_module:
+                            row_status, unlocked_at = 'in_progress', datetime.utcnow()
+                        else:
+                            row_status, unlocked_at = 'locked', None
+                        db.session.add(AuthorModuleProgress(
+                            enrollment_id=enr.id,
+                            module_order=order,
+                            status=row_status,
+                            unlocked_at=unlocked_at,
+                        ))
+                        created += 1
+            if created:
+                db.session.commit()
+                print(f'Migration: created {created} missing module progress row(s)')
+        except Exception:
+            db.session.rollback()
+            raise
+
+    _repair('author_module_progress.module_rows', _repair_module_progress)
 
     # ── author (new fields) ────────────────────────────────────────────────────
     _add('author', 'pending_setup BOOLEAN DEFAULT FALSE')
@@ -8939,17 +9190,35 @@ def run_migrations():
     _add('one_pager_submission', 'confidentiality_acknowledged_at TIMESTAMP')
 
     # ── one_pager_feedback + social_strategy (new tables via create_all) ────────
-    # No _add needed for brand-new tables
+    # No _add needed for brand-new tables.
+    #
+    # Deliberately NOT ledgered. create_all() means "make every table in
+    # db.metadata exist", and its correct result changes every time a model is
+    # added to this file. Give it a stable key and the first release records it
+    # and every future table silently never gets created — which is precisely
+    # the class of bug this whole function exists to eliminate. It is, however,
+    # now fatal: a table that cannot be created is a broken deploy, not a note.
     try:
         db.create_all()
     except Exception as e:
-        print(f'Migration create_all: {e}')
+        failures.append(('ddl:create_all', e))
+        print(f'MIGRATION FAILED: ddl:create_all: {e}')
+    else:
+        # Re-read the catalog: create_all may have just made a table, and any
+        # _add() below this line would otherwise be judged against a snapshot
+        # taken before that table existed. Harmless on Postgres (IF NOT EXISTS
+        # absorbs it) but on SQLite it would be a duplicate-column error, and
+        # that is now a failed release. One query, once per run.
+        present = _live_columns()
 
     # ── social_strategy share tokens ───────────────────────────────────────────
     # Result pages used to be reachable by sequential id alone. Backfill a token
     # for every existing row so those rows stop being enumerable.
+    # A repair, not a migration — this one is a security property, so it stays
+    # live rather than being recorded and switched off.
     _add('social_strategy', 'share_token VARCHAR(32)')
-    try:
+
+    def _backfill_share_tokens():
         with db.engine.begin() as conn:
             rows = conn.execute(text(
                 'SELECT id FROM social_strategy WHERE share_token IS NULL'
@@ -8961,8 +9230,8 @@ def run_migrations():
                 )
         if rows:
             print(f'Migration: backfilled {len(rows)} social_strategy share_token(s)')
-    except Exception as e:
-        print(f'Migration (social_strategy share_token backfill): {e}')
+
+    _repair('social_strategy.share_token_backfill', _backfill_share_tokens)
 
     # ── proposal results tokens ────────────────────────────────────────────────
     # New proposals get a high-entropy results_token and are served only via
@@ -8970,15 +9239,86 @@ def run_migrations():
     # the opposite of the social_strategy block above: legacy rows keep
     # results_token NULL so every submission_id link already emailed to an
     # author keeps working. Backfilling would silently break those links.
+    # (Multiple NULLs are fine in a unique index on both backends. Anyone who
+    # later "completes" this by backfilling the column or making it NOT NULL
+    # breaks every results link already sent.)
     _add('proposal', 'results_token VARCHAR(32)')
-    try:
-        with db.engine.begin() as conn:
-            conn.execute(text(
-                'CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
-                'ON proposal (results_token)'
-            ))
-    except Exception as e:
-        print(f'Migration (proposal results_token index): {e}')
+
+    idx_key = 'idx:ix_proposal_results_token'
+    tracked.append(idx_key)
+    if idx_key not in done:
+        if is_pg:
+            # CREATE UNIQUE INDEX IF NOT EXISTS matches the index NAME, not its
+            # definition — so an index of the right name and the wrong shape
+            # makes the statement succeed while no uniqueness constraint exists.
+            # Verify the definition, and treat a name collision as a failure
+            # rather than recording a constraint that is not there.
+            with db.engine.connect() as conn:
+                idx = conn.execute(text(
+                    'SELECT i.indisunique, pg_get_indexdef(i.indexrelid)'
+                    ' FROM pg_index i'
+                    ' JOIN pg_class c ON c.oid = i.indexrelid'
+                    ' JOIN pg_namespace n ON n.oid = c.relnamespace'
+                    " WHERE n.nspname = current_schema()"
+                    "   AND c.relname = 'ix_proposal_results_token'"
+                )).first()
+            if idx is None:
+                # Not CONCURRENTLY on purpose: it cannot run inside a
+                # transaction block, so it could not commit with its ledger row.
+                # The table is small and the build is milliseconds.
+                _run(idx_key, ['CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
+                               'ON proposal (results_token)'])
+            elif idx[0] and 'results_token' in (idx[1] or ''):
+                _adopt(idx_key)
+            else:
+                failures.append((idx_key, RuntimeError(
+                    f'index ix_proposal_results_token exists but is not a unique index on '
+                    f'results_token: {idx[1]!r}. results_token would not be enforced unique.'
+                )))
+                print(f'MIGRATION FAILED: {idx_key}: wrong index definition {idx[1]!r}')
+        else:
+            _run(idx_key, ['CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
+                           'ON proposal (results_token)'])
+
+    # ── record everything that was already true, in one transaction ────────────
+    if adopted:
+        try:
+            with db.engine.begin() as conn:
+                for k in adopted:
+                    conn.execute(text(ledger_insert), {'k': k})
+        except Exception as e:
+            failures.append(('ledger:record', e))
+            print(f'MIGRATION FAILED: recording {len(adopted)} verified key(s): {e}')
+
+    # ── say what happened, always ──────────────────────────────────────────────
+    # Even — especially — when there was nothing to do. "Printed nothing because
+    # there was nothing to do" and "the migration code never ran at all" have to
+    # be distinguishable in `heroku logs`, or a neutered strict pass looks
+    # exactly like a healthy one.
+    # "applied now: 0" is the number that says a release did no schema work.
+    # It has to be reachable, so repairs — which run every time by design — are
+    # counted separately and never fold into it.
+    print(
+        f'Migrations: {len(tracked)} tracked, '
+        f'{len(tracked) - len(applied) - len(adopted) - len(failures)} already applied, '
+        f'{len(adopted)} verified against the database, '
+        f'{len(applied)} applied now, '
+        f'{len(failures)} failed | '
+        f'repairs: {len(repairs)} run, {len(repair_warnings)} warned '
+        f'[strict={"on" if strict else "OFF"}, backend={"postgresql" if is_pg else "sqlite"}]'
+    )
+
+    if failures:
+        detail = '\n'.join(f'  - {key}: {err}' for key, err in failures)
+        message = (
+            f'{len(failures)} migration operation(s) failed:\n{detail}\n'
+            f'The schema is NOT what this code expects. Fix the cause and deploy '
+            f'again; MIGRATIONS_STRICT=0 forces a release through if you have '
+            f'already accepted the consequence.'
+        )
+        if strict:
+            raise MigrationError(message)
+        print(f'MIGRATION FAILURES (not strict, continuing):\n{message}')
 
 
 # ============================================================================
@@ -9093,12 +9433,53 @@ def server_error(e):
     return render_template('error.html', error_code=500, error_message="Server error"), 500
 
 
-with app.app_context():
-    db.create_all()
-    try:
-        run_migrations()
-    except Exception as e:
-        print(f"Migration note: {e}")
+def _migrate_on_boot():
+    """Should importing this module change the database?
+
+    On Heroku: no. `release: python migrate.py` (Procfile) owns the schema, and
+    it runs on EVERY release — deploys, config-var changes, add-on attaches and
+    rollbacks alike. A web dyno re-running it at boot bought nothing and cost
+    two things: 68 ACCESS EXCLUSIVE locks on every worker respawn, and the
+    reason Procfile is pinned to `--workers 1` (commit d99887f — two workers
+    migrating concurrently deadlocked each other).
+
+    Everywhere else — laptop, CI, tests, `python app.py` — yes, because there
+    is no release phase to do it.
+
+    MIGRATE_ON_BOOT overrides in both directions, so
+    `heroku run MIGRATE_ON_BOOT=1 python -c "import app"` is still available
+    when you deliberately want a one-off dyno to migrate.
+    """
+    raw = os.environ.get('MIGRATE_ON_BOOT', '').strip().lower()
+    if raw in ('1', 'true', 'yes', 'on'):
+        return True
+    if raw in ('0', 'false', 'no', 'off'):
+        return False
+    # MIGRATIONS_STRICT=0 means someone has told the release phase to ship even
+    # though a migration failed. At that moment the release phase is no longer
+    # the owner of the schema, so hand boot migration back its old job. Without
+    # this the escape hatch is a trap: the release exits 0 with a column
+    # missing, the gate stops any dyno from ever adding it, and no restart,
+    # rollback or `heroku run` can repair it. The hatch must never leave you
+    # worse off than the every-boot behaviour it replaced.
+    if _migrations_strict(True) is False:
+        return True
+    return not os.environ.get('DYNO')
+
+
+if _migrate_on_boot():
+    with app.app_context():
+        # strict=False: a web dyno that cannot migrate should still boot and
+        # serve. On Heroku this branch does not run at all, and the release
+        # phase — which CAN refuse — is strict.
+        try:
+            db.create_all()
+            run_migrations(strict=False)
+        except Exception as e:
+            print(f"Migration note: {e}")
+else:
+    print('Boot migration skipped: the release phase (migrate.py) owns the schema. '
+          'Set MIGRATE_ON_BOOT=1 to override.')
 
 _start_reengagement_thread()
 

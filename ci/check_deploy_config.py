@@ -65,14 +65,24 @@ def main() -> int:
         else:
             has_migrations = (REPO_ROOT / "migrations").is_dir()
             has_migrate_script = (REPO_ROOT / "migrate.py").is_file()
-            if has_migrations or has_migrate_script:
-                what = "a migrations/ directory" if has_migrations else "a migrate.py script"
+            if has_migrate_script:
+                # Hard failure, not a warning. A repo with migrate.py has no
+                # Alembic and no other applier: since app.py stopped migrating
+                # at boot, the release phase is the ONLY thing that changes the
+                # schema. Losing the release line here does not degrade the
+                # deploy, it silently stops schema changes from ever shipping.
+                errors.append(
+                    "Procfile has NO `release:` phase, but this repo has a migrate.py "
+                    "script and nothing else applies the schema. Restore "
+                    "`release: python migrate.py`."
+                )
+            elif has_migrations:
                 warnings.append(
-                    f"Procfile has NO `release:` phase, but this repo has {what}. "
-                    f"Schema changes will not be applied on deploy, and when they "
-                    f"are applied by hand the app can boot against a schema it does "
-                    f"not match. Recommended fix: add a release line to the Procfile "
-                    f"(see the note in ci/check_deploy_config.py)."
+                    "Procfile has NO `release:` phase, but this repo has a migrations/ "
+                    "directory. Schema changes will not be applied on deploy, and when "
+                    "they are applied by hand the app can boot against a schema it does "
+                    "not match. Recommended fix: add a release line to the Procfile "
+                    "(see the note in ci/check_deploy_config.py)."
                 )
 
     # --- runtime.txt --------------------------------------------------------
@@ -121,23 +131,38 @@ def main() -> int:
 # ---------------------------------------------------------------------------
 # NOTE ON THE RELEASE PHASE
 #
-# proposal-evaluation already has one:
-#     release: python migrate.py
-#     web: gunicorn app:app --timeout 120 --workers 1 --threads 4
+# This file is byte-identical in writeitgreat-llc/website and
+# writeitgreat-llc/proposal-evaluation. Keep it that way, and keep this note
+# true of BOTH -- which is the trap it fell into before: it asserted things
+# about one repo that were false in the other, and the reader could not tell.
 #
-# The marketing site does NOT, even though it uses Flask-Migrate and has
-# migrations/versions/*.py. The recommended line is:
+# Both apps have a release phase now:
+#     proposal-evaluation:  release: python migrate.py
+#     website:              release: FLASK_APP="app:create_app()" flask db upgrade
 #
-#     release: flask db upgrade
-#     web: gunicorn "app:create_app()" --bind 0.0.0.0:$PORT
+# WHY IT MATTERS, stated precisely:
 #
-# (FLASK_APP="app:create_app()" must be set as a Heroku config var for that to
-# resolve, or use `python -m flask db upgrade`.)
+#   A release-phase command aborts the release ONLY IF IT EXITS NON-ZERO.
 #
-# WHY IT MATTERS: with a release phase, a failed migration ABORTS THE RELEASE --
-# Heroku keeps the previous dynos running and the old code stays live. Without
-# one, the new code boots against the old schema and every page that touches the
-# new column 500s until someone notices and runs the migration by hand.
+# That condition is the whole mechanism, and omitting it is how this note used
+# to mislead. `flask db upgrade` propagates a failed migration natively. A
+# hand-rolled script does so only if it was written to -- and until 2026-07-31
+# proposal-evaluation's migrate.py was NOT: run_migrations() caught every
+# exception, printed it, and returned normally, so the release always exited 0
+# and a migration that never applied shipped anyway. See fix_schema.py in that
+# repo, which is the emergency repair written the time it happened, and
+# ci/check_migrations.py, which now fails the PR if failures are ever swallowed
+# again.
+#
+# When it does exit non-zero: Heroku keeps the previous dynos running and the
+# old code stays live. Without a release phase at all: the new code boots
+# against the old schema and every page touching the new column 500s until
+# someone notices and runs the migration by hand.
+#
+# A missing `release:` line is a HARD ERROR in a repo that has migrate.py,
+# because there it is the only thing that applies the schema -- app.py no
+# longer migrates on boot. It is a warning in a repo that has migrations/,
+# where `heroku run flask db upgrade` is still a manual fallback.
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

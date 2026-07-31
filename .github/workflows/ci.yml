@@ -31,6 +31,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # Production is Postgres; every other check here runs on SQLite. That gap
+    # used to be harmless, but the migration runner now has a real Postgres-only
+    # branch -- the information_schema snapshot, SET LOCAL lock_timeout, SQLSTATE
+    # 55P03 retry handling and pg_index verification -- and a failed migration
+    # now ABORTS the release. Untested code that can stop a deploy is not
+    # something to find out about during a deploy, so ci/check_migrations.py
+    # runs against both backends.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       # app.py constructs an OpenAI client at IMPORT time and raises if this is
       # unset -- so it has to be present for the app to import at all. It is a
@@ -84,6 +105,22 @@ jobs:
       # quietly stops being true.
       - name: Analytics collector, consent, and privacy invariants
         run: python ci/check_analytics.py
+
+      # A STEP inside proposal-ci, deliberately not a job of its own: proposal-ci
+      # is the required status check, and a new job would be a new status context
+      # that gates nothing until someone re-runs ci/setup_branch_protection.sh
+      # AND adds the name to deploy.yml's BLOCKING_CHECKS.
+      #
+      # This is the check that stops the migration runner from quietly going back
+      # to swallowing failures. It poisons a schema and asserts migrate.py exits
+      # NON-ZERO, asserts a second run of a migrated database issues zero DDL, and
+      # asserts a ledger row claiming a column the database does not have gets
+      # deleted rather than believed. Runs against SQLite and against the Postgres
+      # service above, because production only ever runs the second one.
+      - name: Migrations fail loudly, apply once, and verify their own ledger
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
+        run: python ci/check_migrations.py
 
       # Non-blocking. app.py does `import requests as http_requests` but
       # requests is NOT in requirements.txt -- today it only installs because

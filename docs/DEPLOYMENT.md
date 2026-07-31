@@ -13,7 +13,7 @@ rules are the same.
 | Public URL | https://writeitgreat.com | https://authors.writeitgreat.com |
 | CI check names | `Intake regression suite`, `Engine parity and template integrity`, `App boots on Python 3.11` | `proposal-ci` |
 | Python | 3.11.11 (`runtime.txt`) | 3.11.7 (`runtime.txt`) |
-| Release phase | **missing** (see below) | `release: python migrate.py` |
+| Release phase | `flask db upgrade` | `release: python migrate.py` |
 
 ---
 
@@ -296,10 +296,66 @@ release: python migrate.py
 web: gunicorn app:app --timeout 120 --workers 1 --threads 4
 ```
 
-`migrate.py` runs `db.create_all()` then `run_migrations()`. Because it is a
-release-phase command, **a failed migration aborts the release**: Heroku keeps
-the previous dynos serving and the new slug never goes live. You get a failed
-deploy instead of a live site 500-ing on every page.
+`migrate.py` runs `db.create_all()` then `run_migrations(strict=True)`.
+
+**A release-phase command aborts the release only if it exits non-zero.** That
+is the whole mechanism, and it is worth stating plainly because this file used
+to claim the outcome without the condition. `flask db upgrade` (the marketing
+site) propagates failure natively. A hand-rolled script does so only if it was
+written to.
+
+> **Correction, 31 July 2026.** Until this date the sentence here read "a failed
+> migration aborts the release" for `proposal-evaluation`, and it was **false**.
+> `run_migrations()` wrapped all ~74 operations in `try/except` blocks that
+> printed the error and continued, so it could essentially never raise,
+> `migrate.py` always exited 0, and a migration that silently did not apply
+> shipped anyway. `fix_schema.py` in the repo root is the emergency repair
+> written the time that happened. Nobody was watching for it, because this file
+> said someone was.
+
+What is true now:
+
+- **Failures are fatal.** Every operation is still attempted, but failures are
+  collected and raised as a `MigrationError` naming all of them. `migrate.py`
+  prints `=== RELEASE ABORTED: MIGRATION FAILED ===` and exits 1, so Heroku
+  discards the release and the previous dynos keep serving.
+- **Applied work is not redone.** Completed operations are recorded in a
+  `schema_migrations` ledger and skipped. A release with no schema change issues
+  **zero DDL**. This matters more than it sounds: Heroku runs the release phase
+  for *every* release, including `heroku config:set` and
+  `heroku releases:rollback`, and DDL that has to wait for a lock blocks every
+  query queued behind it. A rollback must never be the thing that jams.
+- **The ledger is verified, not trusted.** Each run reconciles it against the
+  live catalog in one query; a row claiming a column the database does not have
+  is deleted and the operation re-applies. A restored backup cannot make a
+  migration disappear.
+- **Web dynos no longer migrate at boot.** The release phase owns the schema.
+  Off Heroku (laptop, CI, tests) boot migration still runs, because there is no
+  release phase there.
+
+**Reading a release log.** Every run prints one summary line, including when it
+did nothing — silence and "it never ran" have to be distinguishable:
+
+```
+Migrations: 69 tracked, 69 already applied, 0 verified against the database,
+0 applied now, 0 failed | repairs: 4 run, 0 warned [strict=on, backend=postgresql]
+```
+
+`0 applied now, 0 failed` is a healthy no-op release. `repairs` are the four
+data-fix operations that re-run every time on purpose and are never fatal.
+
+**Two escape hatches**, both config vars, both taking effect on the release that
+sets them:
+
+| Var | Effect |
+|---|---|
+| `MIGRATIONS_STRICT=0` | Ship even though a migration failed. Also **re-enables boot migration**, so the dynos can still repair the schema — the hatch must never leave you worse off than the every-boot behaviour it replaced. Buys a deploy, not a schema: unset it and deploy again once the incident is over. |
+| `MIGRATE_ON_BOOT=1` | Force a dyno to migrate at boot, e.g. `heroku run MIGRATE_ON_BOOT=1 python -c "import app"`. |
+
+`ci/check_migrations.py` asserts all of this on every PR, against SQLite *and*
+Postgres — including a negative test that poisons a schema and requires
+`migrate.py` to exit non-zero. If that check ever goes green while failures are
+being swallowed, the check is broken, not the claim.
 
 **The marketing site does NOT have one**, even though it uses Flask-Migrate and
 has `migrations/versions/*.py`. `ci/check_deploy_config.py` raises this as a
@@ -340,7 +396,21 @@ python3 ci/check_deploy_config.py
 OPENAI_API_KEY=dummy python3 ci/smoke_app.py
 python3 ci/check_undeclared_imports.py
 python3 ci/check_deploy_config.py
+python3 ci/check_migrations.py       # add MIGRATION_TEST_DATABASE_URL for the
+                                     # Postgres half -- see below
 ```
+
+`ci/check_migrations.py` runs against SQLite on its own. Give it a throwaway
+Postgres and it also exercises the half production actually uses:
+
+```bash
+createdb wig_migcheck
+MIGRATION_TEST_DATABASE_URL=postgresql://localhost/wig_migcheck \
+  python3 ci/check_migrations.py
+```
+
+It creates and drops its own private schema per scenario, so it never touches
+anything in `public`.
 
 Note for the marketing site: it needs **Python 3.10+** (`app/__init__.py` uses
 `str | None`). On a 3.9 machine the app-boot and route checks cannot run locally

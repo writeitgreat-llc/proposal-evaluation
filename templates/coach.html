@@ -341,8 +341,20 @@ main { display: flex; flex-direction: column; height: calc(100vh - 80px); }
                     showSubmitCTA();
                 }
                 save();
+            } else if (resp.status === 401) {
+                // The session expired mid-conversation. Say so, rather than the
+                // generic "try again" below — retrying is the one thing that
+                // cannot work here. Plain text, no markup: formatMessage()
+                // escapes HTML, which is deliberate and must stay that way.
+                appendBubble('agent', 'Your session has timed out. Your conversation is '
+                    + 'saved — please sign in again to carry on.');
+                setTimeout(function () {
+                    window.location.href = '{{ url_for("author_login") }}';
+                }, 2500);
             } else {
-                appendBubble('agent', 'Sorry, I had trouble responding. Please try again.');
+                // Show the server's reason when it gave one (a rate limit, say);
+                // fall back to the generic line otherwise.
+                appendBubble('agent', data.error || 'Sorry, I had trouble responding. Please try again.');
             }
         } catch (e) {
             removeTyping();

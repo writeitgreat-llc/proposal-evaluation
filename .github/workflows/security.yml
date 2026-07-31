@@ -199,10 +199,14 @@ jobs:
       # try/except/pass. Gating on the raw count would be noise, so the gate is
       # HIGH severity + MEDIUM confidence with a per-test-id allowance; the
       # remaining 18 are printed but do not block.
+      # --paths is an ENUMERATION, not a glob: a new top-level module is invisible
+      # to this gate until it is named here, and this repo is public. Add every
+      # new production-touching file. `ci` is a directory and covers ci/*.py.
       - name: bandit
         run: |
           python ci/bandit_gate.py \
             --paths app.py migrate.py fix_schema.py analytics_collect.py \
+                    analytics_channel_rules.py backfill_analytics_channel.py ci \
             --allowance ci/bandit_allowance.json \
             --min-severity HIGH \
             --min-confidence MEDIUM \

@@ -56,6 +56,59 @@ if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
+# ── Connection pool ───────────────────────────────────────────────────────────
+# MUST stay above `db = SQLAlchemy(app)` below. Flask-SQLAlchemy reads this
+# config key when it builds the engine, at construction time — set it after that
+# line and it is silently ignored, which looks exactly like it working.
+#
+# Left unset, SQLAlchemy defaults to pool_size=5 + max_overflow=10, so ONE web
+# process may open 15 connections. Heroku Postgres essential-0 allows 20 for the
+# whole role (verified: `heroku pg:info -a proposal-evaluation`, "Connections:
+# 1/20"). One dyno was entitled to 75% of the database, and it was reachable
+# rather than theoretical, because every background scoring thread pinned a
+# connection for the entire OpenAI call.
+#
+# The budget, per process, ceiling 5 + 3 = 8:
+#     4  gunicorn request threads (Procfile: --workers 1 --threads 4)
+#     1  the _start_reengagement_thread() loop (outbox drains + hourly emails)
+#     2  concurrent scorings (_EVAL_SLOTS)
+#     1  spare for the short-lived email / funnel-event threads
+#
+# Against the 20-connection ceiling: a deploy briefly overlaps two web dynos
+# (2 x 8 = 16) while the release dyno runs migrate.py (~2), leaving ~2 for
+# `heroku pg:psql`. Raising --workers, --threads or _EVAL_SLOTS means raising
+# nothing here — it means re-doing this arithmetic first.
+#
+# pool_pre_ping is the fix for the errors after a Postgres maintenance restart:
+# without it the pool hands out connections the server has already closed and
+# the caller sees "server closed the connection unexpectedly" until they cycle.
+#
+# Postgres only. The connect_args below are psycopg2 keywords and sqlite3 raises
+# TypeError on them, and every ci/ harness plus local dev runs on sqlite:///.
+if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 5,
+        'max_overflow': 3,
+        # Well inside gunicorn's --timeout 120: a saturated pool must fail the
+        # request, not hold the worker until the platform SIGKILLs it.
+        'pool_timeout': 20,
+        'pool_pre_ping': True,
+        'pool_recycle': 1800,
+        'connect_args': {
+            # Shows up in pg_stat_activity, so `heroku pg:ps` can tell this
+            # app's connections apart from a psql session — and, during an
+            # incident, a wedged scoring thread from a wedged web request.
+            'application_name': 'authors-portal-web',
+            'connect_timeout': 10,
+            # Detect a half-open connection (dyno-to-database network drop)
+            # rather than blocking on a socket nothing is listening to.
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 3,
+        },
+    }
+
 # ── APP_BASE_URL — must be defined before cookie config (used as the HTTPS signal)
 # Set APP_URL (or APP_BASE_URL) in Heroku Config Vars:
 #   APP_URL = https://authors.writeitgreat.com
@@ -898,7 +951,18 @@ class Proposal(db.Model):
 
     # Original uploaded file
     original_filename = db.Column(db.String(500))
-    original_file = db.Column(db.LargeBinary)
+    # Deferred on purpose. This is the only large column on the model — an
+    # author upload, capped at 5MB since PR #129 — and almost nothing wants it:
+    # four single-row routes serve or re-parse the file, and everything else
+    # (admin lists, the author dashboard, exports, the funnel, every count)
+    # reads scalar columns off the same rows. Left eager, a `SELECT *` over the
+    # proposal table pulls every manuscript ever uploaded into the dyno's 512MB
+    # to answer a question about scores and titles.
+    #
+    # The cost is one extra SELECT on the routes that genuinely need the bytes.
+    # That is the right way round: those routes handle one row, and they were
+    # going to read the blob anyway.
+    original_file = db.deferred(db.Column(db.LargeBinary))
     
     # Status tracking
     status = db.Column(db.String(50), default='submitted')
@@ -908,7 +972,34 @@ class Proposal(db.Model):
     # Timestamps
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
+    # Bookkeeping for sweep_stuck_evaluations(), which re-dispatches scoring
+    # that died along with its dyno.
+    #
+    # evaluation_attempts counts SWEEP RETRIES only, never the original
+    # dispatch, so 0 is the right value for every row that already exists and
+    # every row created from here on — no backfill and no changes at the three
+    # places a Proposal is created.
+    #
+    # evaluation_claimed_at is a LEASE, not a start time: the sweep stamps it on
+    # taking ownership and will not take ownership again until it has expired.
+    # It is deliberately its own column rather than a reuse of updated_at, which
+    # carries onupdate=utcnow and so moves whenever anything writes to the row —
+    # including the sweep's own claim, which would push the row straight out of
+    # the window the sweep selects on and cap every proposal at exactly one
+    # retry, forever, invisibly.
+    # nullable=False + server_default are load-bearing, not decoration.
+    # db.create_all() — which is how CI and every fresh database get their
+    # schema — emits a column with no DB-level default, while the _add() line in
+    # run_migrations() emits `DEFAULT 0`. So CI's schema and production's differ
+    # on exactly this field, and on the create_all side any row inserted without
+    # going through the Python default lands NULL. NULL + 1 is NULL in SQL, so
+    # the retry counter would never rise, the cap would never trip, and the row
+    # would be re-scored on every lease expiry forever. Measured, not theorised.
+    evaluation_attempts = db.Column(db.Integer, default=0, nullable=False,
+                                    server_default='0')
+    evaluation_claimed_at = db.Column(db.DateTime)
+
     # Email tracking
     author_email_sent = db.Column(db.Boolean, default=False)
     team_email_sent = db.Column(db.Boolean, default=False)
@@ -1545,6 +1636,49 @@ def publisher_login_required(f):
     def decorated(*args, **kwargs):
         if not getattr(current_user, 'is_publisher', False):
             return redirect(url_for('publisher_login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── JSON siblings of the two decorators above ────────────────────────────────
+#
+# Deliberately NOT wrapped in @login_required, unlike the four decorators above.
+# @login_required sends an anonymous caller through _route_aware_unauthorized()
+# near the top of this file, which returns a 302 to an HTML login page — a
+# fetch() caller then runs .json() on that page and throws a parse error
+# instead of showing "please sign in". These return 401 JSON.
+#
+# The `_required` suffix is load-bearing beyond readability:
+# ci/check_route_guards.py treats any decorator ending in `_required` as an auth
+# guard, so a future parameterised route using one of these is recognised with
+# no CI edit.
+
+def author_api_required(f):
+    """Decorator: requires an author session; answers JSON, never a redirect."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+            return jsonify({'success': False,
+                            'error': 'Please sign in to continue.'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+def portal_api_required(f):
+    """Decorator: requires an author OR team session; answers JSON.
+
+    /api/evaluate needs both. It is driven by templates/index.html, which
+    index() serves to anyone signed in, and which branches on
+    current_user.is_team_member — so an author-only guard would break the
+    team's own submission path.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated or not (
+                getattr(current_user, 'is_author', False)
+                or getattr(current_user, 'is_team_member', False)):
+            return jsonify({'success': False,
+                            'error': 'Please sign in to continue.'}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -3012,11 +3146,76 @@ def _detect_ai_content(text: str) -> dict:
 # BACKGROUND PROCESSING
 # ============================================================================
 
+# How many proposals may be scored at the same moment.
+#
+# /api/evaluate spawns one thread per submission and nothing counted them, so
+# ten authors submitting inside two minutes meant ten concurrent scorings. Each
+# is at least two OpenAI calls that this app sets no timeout on (the client at
+# the top of this file passes none, so openai==1.68.2 applies its own 600s x 2
+# retries), so a scoring can legitimately run for tens of minutes.
+#
+# Two, matching _UPLOAD_PARSE_SLOTS. Queueing costs the author nothing they can
+# see: the work is almost entirely waiting on OpenAI, their results page is
+# already polling and already says "Being Evaluated", and a queued submission is
+# one that still finishes. An unbounded burst is the one that does not.
+#
+# This bounds OpenAI concurrency, memory and spend. It is deliberately NOT what
+# protects the connection pool — see the three-phase note in
+# process_evaluation_background, which is what actually does that.
+_EVAL_SLOTS = threading.BoundedSemaphore(
+    max(1, int(os.environ.get('EVAL_CONCURRENCY') or 2)))
+
+# How long a scoring will wait for one of those slots before giving up.
+#
+# A bounded wait, not a patient one, and the bound is what makes the stuck
+# sweep's lease sound: EVAL_LEASE has to exceed the worst-case time from
+# dispatch to completion, and with an unbounded queue that worst case is
+# unbounded too. See the arithmetic above EVAL_STUCK_AFTER.
+#
+# Giving up here deliberately leaves the row at 'processing' and writes no
+# status of its own. That is not losing the submission — it is handing it to
+# the sweep, which is the component that knows how to retry it and how to tell
+# somebody. Writing 'error' here instead would take the row out of the sweep
+# with nobody alerted, which is the silent loss this whole change exists to end.
+_EVAL_SLOT_WAIT = 20 * 60
+
+
 def process_evaluation_background(app_obj, submission_id, proposal_text, proposal_type,
                                    author_name='', book_title='', platform_data=None):
-    """Run OpenAI evaluation and email notifications in a background thread"""
+    """Run OpenAI evaluation and email notifications in a background thread.
+
+    Split into three phases so that the slow middle one holds no database
+    connection.
+
+    It used to run as one transaction: the first query opened one, and it stayed
+    open across `evaluate_proposal` and `_detect_ai_content` until the commit at
+    the end. So a scoring pinned a connection for its entire duration — minutes
+    — and ten concurrent scorings could exhaust a 20-connection database on
+    their own, taking logins, registrations and submissions down with them. The
+    semaphore above caps the concurrency; this split is what makes a scoring
+    cheap to hold open in the first place.
+
+    The slot is taken before the app context, so a thread that is merely queued
+    holds no context and no session either — it is asleep, holding nothing.
+    """
+    if not _EVAL_SLOTS.acquire(timeout=_EVAL_SLOT_WAIT):
+        # Left at 'processing' on purpose — sweep_stuck_evaluations() owns it now.
+        print(f'Background eval: no scoring slot within {_EVAL_SLOT_WAIT}s for '
+              f'{submission_id}; leaving it for the stuck sweep')
+        return
+    try:
+        _run_evaluation(app_obj, submission_id, proposal_text, proposal_type,
+                        author_name, book_title, platform_data)
+    finally:
+        _EVAL_SLOTS.release()
+
+
+def _run_evaluation(app_obj, submission_id, proposal_text, proposal_type,
+                    author_name='', book_title='', platform_data=None):
+    """The three phases themselves. Always called holding an _EVAL_SLOTS slot."""
     with app_obj.app_context():
         try:
+            # ── Phase 1 (database): read everything the evaluation needs ──────
             proposal = Proposal.query.filter_by(submission_id=submission_id).first()
             if not proposal:
                 print(f"Background eval: proposal {submission_id} not found")
@@ -3032,40 +3231,59 @@ def process_evaluation_background(app_obj, submission_id, proposal_text, proposa
                               Proposal.id != proposal.id)
                       .first())
 
-            if cached and cached.evaluation_json:
-                evaluation = json.loads(cached.evaluation_json)
-                print(f"Background eval: using cached result for {submission_id} (matched {cached.submission_id})")
+            # Copied out as plain values on purpose. Phase 2 must not touch an
+            # ORM attribute: every one of these instances is expired by the
+            # commit below, and reading one would silently re-open the very
+            # connection this split exists to give back.
+            cached_json = cached.evaluation_json if cached else None
+            cached_sid = cached.submission_id if cached else None
+            marketing_text = proposal.marketing_strategy or ''
+
+            db.session.commit()
+            db.session.remove()
+
+            # ── Phase 2 (no database connection held): the slow part ─────────
+            if cached_json:
+                evaluation = json.loads(cached_json)
+                print(f"Background eval: using cached result for {submission_id} (matched {cached_sid})")
             else:
                 evaluation = evaluate_proposal(proposal_text, proposal_type, author_name, book_title,
                                                platform_data=platform_data)
+
+            if evaluation:
+                # Embed platform data so the advance calculator (and all downstream loaders)
+                # can access it from evaluation_json without touching the Proposal model.
+                evaluation['platform_data'] = platform_data or {}
+                evaluation['marketing_text'] = marketing_text
+
+                # AI content detection — run on the raw proposal text
+                ai_result = _detect_ai_content(proposal_text)
+                evaluation['ai_likelihood'] = ai_result['likelihood']
+                evaluation['ai_signals'] = ai_result['signals']
+
+                # Apply score penalty for likely-AI content
+                if ai_result['penalty'] > 0:
+                    raw_score = evaluation.get('total_score', evaluation.get('overall_score', 50))
+                    penalised = max(0, float(raw_score) - ai_result['penalty'])
+                    evaluation['total_score'] = penalised
+                    evaluation['overall_score'] = penalised
+                    evaluation['ai_penalty_applied'] = ai_result['penalty']
+                    print(f"AI detection: {ai_result['likelihood']}% likelihood — penalty {ai_result['penalty']}pts applied")
+
+                # Always recompute advance estimate using the current submission's platform data
+                compute_advance_estimate(evaluation)
+
+            # ── Phase 3 (database): record the outcome ───────────────────────
+            proposal = Proposal.query.filter_by(submission_id=submission_id).first()
+            if not proposal:
+                print(f"Background eval: proposal {submission_id} vanished mid-evaluation")
+                return
 
             if not evaluation:
                 proposal.status = 'error'
                 db.session.commit()
                 print(f"Background eval: OpenAI evaluation failed for {submission_id}")
                 return
-
-            # Embed platform data so the advance calculator (and all downstream loaders)
-            # can access it from evaluation_json without touching the Proposal model.
-            evaluation['platform_data'] = platform_data or {}
-            evaluation['marketing_text'] = proposal.marketing_strategy or ''
-
-            # AI content detection — run on the raw proposal text
-            ai_result = _detect_ai_content(proposal_text)
-            evaluation['ai_likelihood'] = ai_result['likelihood']
-            evaluation['ai_signals'] = ai_result['signals']
-
-            # Apply score penalty for likely-AI content
-            if ai_result['penalty'] > 0:
-                raw_score = evaluation.get('total_score', evaluation.get('overall_score', 50))
-                penalised = max(0, float(raw_score) - ai_result['penalty'])
-                evaluation['total_score'] = penalised
-                evaluation['overall_score'] = penalised
-                evaluation['ai_penalty_applied'] = ai_result['penalty']
-                print(f"AI detection: {ai_result['likelihood']}% likelihood — penalty {ai_result['penalty']}pts applied")
-
-            # Always recompute advance estimate using the current submission's platform data
-            compute_advance_estimate(evaluation)
 
             proposal.tier = evaluation.get('tier', 'C')
             proposal.overall_score = evaluation.get('total_score', evaluation.get('overall_score', 50))
@@ -3089,6 +3307,10 @@ def process_evaluation_background(app_obj, submission_id, proposal_text, proposa
             print(f"Background eval error for {submission_id}: {e}")
             traceback.print_exc()
             try:
+                # The session may be in a failed transaction from the exception
+                # above; a bare query would raise again and lose the status
+                # write. Start clean.
+                db.session.rollback()
                 proposal = Proposal.query.filter_by(submission_id=submission_id).first()
                 if proposal:
                     proposal.status = 'error'
@@ -3689,12 +3911,237 @@ def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date
     send_email(to_email, f"Reminder: {author_name} is waiting for your feedback", html_content)
 
 
+# ── Stuck-evaluation sweep ───────────────────────────────────────────────────
+#
+# Scoring runs in a daemon thread inside the web process, so it dies with the
+# dyno: on every deploy, on every config change, and once a day when Heroku
+# cycles the dyno anyway. The row stays 'processing', the author's results page
+# polls a spinner forever, no results email is ever sent, and nothing anywhere
+# records that it happened.
+#
+# EVAL_STUCK_AFTER has to clear the longest a LIVE evaluation can legitimately
+# take. Set it below that and the sweep stops being a recovery mechanism and
+# becomes a duplicator: it re-dispatches a scoring that is still running, both
+# copies finish, the author gets two evaluation emails and the company pays
+# twice — and that happens precisely during an OpenAI slowdown, when responses
+# are at their longest.
+#
+# The arithmetic, from the actual library defaults rather than a guess. The
+# client at the top of this file passes no timeout and no max_retries, so
+# openai==1.68.2 applies DEFAULT_TIMEOUT=600s and DEFAULT_MAX_RETRIES=2, i.e.
+# three attempts of 600s per call. A scoring makes TWO such calls
+# (evaluate_proposal, then _detect_ai_content):
+#
+#     2 calls x 600s x 3 attempts            = 60 min   worst-case run
+#   + _EVAL_SLOT_WAIT                        = 20 min   worst-case queueing
+#   ------------------------------------------------------------------
+#                                              80 min   worst case, end to end
+#
+# 90 minutes clears that with room. The queue term is why _EVAL_SLOTS is
+# acquired with a timeout below: an unbounded wait for a slot would make the
+# total unbounded too, and then NO finite lease is sound.
+#
+# Both numbers come down a long way the moment a timeout is set on the OpenAI
+# client — which is a separate item on the risk register, not this change.
+EVAL_STUCK_AFTER = timedelta(minutes=90)
+# The lease. Never shorter than EVAL_STUCK_AFTER, or a retry could be re-claimed
+# while its own OpenAI call is still running.
+EVAL_LEASE = timedelta(minutes=90)
+EVAL_MAX_RETRIES = 2          # after this many sweep retries, stop and say so
+EVAL_SWEEP_BATCH = 2          # rows re-dispatched per tick; matches _EVAL_SLOTS
+EVAL_SWEEP_EVERY = 300        # seconds between sweeps
+
+
+def read_evaluation_inputs(proposal):
+    """Snapshot everything a re-run needs, as plain Python values.
+
+    Called BEFORE the row is claimed, deliberately. Claiming commits, which
+    expires the instance, so reading these afterwards would silently re-issue a
+    full-row SELECT — and would raise DetachedInstanceError outright the day
+    anyone moves the loop out of the app context. Plain values in hand, the
+    re-dispatch is safe from any thread.
+
+    Everything needed survives the crash: proposal_text is stored on the row at
+    submission time. The original file is deliberately never re-parsed — that
+    would re-enter the upload-parse semaphore from a background thread.
+    """
+    try:
+        platform = json.loads(proposal.platform_data) if proposal.platform_data else None
+    except (ValueError, TypeError):
+        platform = None
+    return (app, proposal.submission_id, proposal.proposal_text or '',
+            proposal.proposal_type or 'full', proposal.author_name,
+            proposal.book_title, platform)
+
+
+def rerun_evaluation(inputs):
+    """Re-dispatch scoring from a snapshot taken by read_evaluation_inputs()."""
+    threading.Thread(target=process_evaluation_background, args=inputs,
+                     daemon=True).start()
+
+
+def send_stuck_evaluation_alert(retried, abandoned):
+    """Tell the team what the sweep just did. Returns True if the email went."""
+    def _rows(rows):
+        out = ''
+        for p in rows:
+            age = int((datetime.utcnow() - (p.submitted_at or datetime.utcnow())).total_seconds() // 60)
+            out += (f"<tr><td style='padding:6px 10px;'>{p.submission_id}</td>"
+                    f"<td style='padding:6px 10px;'>{p.author_email or '—'}</td>"
+                    f"<td style='padding:6px 10px;'>{p.book_title or '—'}</td>"
+                    f"<td style='padding:6px 10px;'>{age} min</td>"
+                    f"<td style='padding:6px 10px;'>"
+                    f"<a href='{APP_BASE_URL}/admin/proposal/{p.submission_id}'>open</a></td></tr>")
+        return out
+
+    parts = []
+    if abandoned:
+        parts.append(
+            f"<h3 style='color:#a31d12;margin-bottom:0.25rem;'>Gave up — these need a human "
+            f"({len(abandoned)})</h3>"
+            f"<p style='margin-top:0;color:#555;'>Re-dispatched {EVAL_MAX_RETRIES} times and still "
+            f"unfinished. Marked as failed so the author's page stops spinning. Re-run from the "
+            f"admin page, or contact the author.</p>"
+            f"<table style='border-collapse:collapse;font-size:0.9em;'>{_rows(abandoned)}</table>")
+    if retried:
+        parts.append(
+            f"<h3 style='margin-bottom:0.25rem;'>Re-dispatched ({len(retried)})</h3>"
+            f"<p style='margin-top:0;color:#555;'>Scoring is running again. No action needed unless "
+            f"they appear here repeatedly.</p>"
+            f"<table style='border-collapse:collapse;font-size:0.9em;'>{_rows(retried)}</table>")
+
+    subject = (f"[Author portal] {len(abandoned)} evaluation(s) need a human"
+               if abandoned else
+               f"[Author portal] {len(retried)} stuck evaluation(s) re-dispatched")
+    html = ("<html><body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">"
+            "<div style='max-width:640px;margin:0 auto;padding:1.5rem;'>"
+            "<h2 style='margin-top:0;'>Stuck evaluation sweep</h2>"
+            "<p style='color:#555;'>Proposals whose scoring stopped without finishing — usually "
+            "because a deploy or a daily dyno restart killed the background thread mid-run.</p>"
+            + ''.join(parts) +
+            "<p style='font-size:0.85em;color:#888;margin-top:1.5rem;'>Automated message from the "
+            "author portal.</p></div></body></html>")
+
+    sent = False
+    for addr in TEAM_EMAILS:
+        addr = addr.strip()
+        if addr and send_email(addr, subject, html):
+            sent = True
+    if not sent:
+        # send_email returns False rather than raising when SMTP is not
+        # configured, so without this line an unconfigured mailer looks exactly
+        # like a healthy sweep with nothing to report.
+        print('Stuck sweep: ALERT NOT SENT (send_email returned False for every '
+              'address in TEAM_EMAILS) — check SMTP_USER / SMTP_PASSWORD.')
+    return sent
+
+
+def sweep_stuck_evaluations():
+    """Re-dispatch proposals whose scoring died, and report what happened.
+
+    Runs on the shared loop below, so it must be quick and must never raise —
+    the same contract drain_funnel_outbox() works to.
+
+    The try/except sits INSIDE the app context, like drain_funnel_outbox's. Put
+    it outside and the db.session.rollback() in the handler raises "working
+    outside of application context", gets swallowed by its own except, and the
+    rollback silently never happens — protection that reads as real and is not.
+    """
+    with app.app_context():
+        try:
+            now = datetime.utcnow()
+            # Naive UTC throughout. Proposal.submitted_at is db.DateTime with no
+            # timezone=True and defaults to datetime.utcnow, so it is naive; an
+            # aware cutoff from datetime.now(timezone.utc) would raise on every
+            # comparison ("can't compare offset-naive and offset-aware").
+            stale_before = now - EVAL_STUCK_AFTER
+            lease_before = now - EVAL_LEASE
+
+            candidates = (Proposal.query
+                          .filter(Proposal.status == 'processing',
+                                  Proposal.submitted_at.isnot(None),
+                                  # submitted_at, never updated_at — see the
+                                  # model. updated_at moves on every write,
+                                  # including this sweep's own claim.
+                                  Proposal.submitted_at < stale_before,
+                                  db.or_(Proposal.evaluation_claimed_at.is_(None),
+                                         Proposal.evaluation_claimed_at < lease_before))
+                          .order_by(Proposal.submitted_at.asc())
+                          .limit(EVAL_SWEEP_BATCH * 5)
+                          .all())
+            if not candidates:
+                return
+
+            retried, abandoned = [], []
+            for proposal in candidates:
+                if len(retried) >= EVAL_SWEEP_BATCH:
+                    break   # the rest keep their claim and wait for the next tick
+
+                attempts = proposal.evaluation_attempts or 0
+                if attempts >= EVAL_MAX_RETRIES:
+                    # Out of retries. 'error' is this app's existing terminal
+                    # state for a failed evaluation, and moving to it is what
+                    # takes the row out of this sweep permanently — otherwise it
+                    # would be re-alerted on every tick, forever.
+                    claimed = _claim_stuck_proposal(proposal, now, lease_before,
+                                                    give_up=True)
+                    if claimed:
+                        abandoned.append(proposal)
+                    continue
+
+                # Snapshot BEFORE claiming: the claim commits, which expires the
+                # instance. See read_evaluation_inputs().
+                inputs = read_evaluation_inputs(proposal)
+                if _claim_stuck_proposal(proposal, now, lease_before, give_up=False):
+                    retried.append(proposal)
+                    rerun_evaluation(inputs)
+
+            if retried or abandoned:
+                print(f'Stuck sweep: re-dispatched {len(retried)}, gave up on {len(abandoned)}')
+                send_stuck_evaluation_alert(retried, abandoned)
+        except Exception as e:
+            print(f'Stuck sweep error (non-fatal): {e}')
+            traceback.print_exc()
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+
+def _claim_stuck_proposal(proposal, now, lease_before, give_up):
+    """Take ownership of one stuck row, atomically. True if we got it.
+
+    A conditional UPDATE with a rowcount check, not a read-then-write. The
+    predicate re-states every condition the SELECT tested, so the row is only
+    claimed if it is still stuck and still unclaimed at the moment of writing —
+    which is what makes a second sweeper, or the row's own evaluation finishing
+    a moment ago, unable to produce a duplicate scoring.
+    """
+    # coalesce, not a bare +1: see the column definition. A pre-existing NULL
+    # would otherwise stay NULL through every increment and the retry cap would
+    # never be reached.
+    values = {'evaluation_claimed_at': now,
+              'evaluation_attempts': db.func.coalesce(Proposal.evaluation_attempts, 0) + 1}
+    if give_up:
+        values['status'] = 'error'
+
+    updated = (db.session.query(Proposal)
+               .filter(Proposal.id == proposal.id,
+                       Proposal.status == 'processing',
+                       db.or_(Proposal.evaluation_claimed_at.is_(None),
+                              Proposal.evaluation_claimed_at < lease_before))
+               .update(values, synchronize_session=False))
+    db.session.commit()
+    return updated == 1
+
+
 def _start_reengagement_thread():
     """Background thread that checks re-engagement and one-pager reminder emails every hour."""
     import time
     def _loop():
         time.sleep(300)  # wait 5 min after startup before first run
         next_email_check = 0.0  # first pass runs immediately (as before)
+        next_stuck_sweep = 0.0  # ditto
         while True:
             # Outbox drain every ~2 minutes (retries lost funnel webhooks);
             # the email checks keep their HOURLY cadence by wall clock — a
@@ -3709,6 +4156,11 @@ def _start_reengagement_thread():
             # exists to prevent. Wrapped in its own try/except internally, like
             # the funnel drain, so it cannot kill this loop.
             analytics_collect.drain_analytics_outbox(app)
+            # Wall clock, like the email check below and for the same reason: a
+            # slow drain above must not stretch the sweep's cadence.
+            if time.time() >= next_stuck_sweep:
+                next_stuck_sweep = time.time() + EVAL_SWEEP_EVERY
+                sweep_stuck_evaluations()
             if time.time() >= next_email_check:
                 next_email_check = time.time() + 3600
                 check_reengagement_emails()
@@ -3809,9 +4261,30 @@ FINAL STEP — WHEN ALL SECTIONS ARE SOLID:
 When you have covered all 7 sections and the author's answers are publisher-ready (or close to it), tell them clearly: summarise what they've built, highlight the 2-3 strongest elements, and suggest they submit for a full evaluation using the button below the chat. Do not suggest submission prematurely — only when you genuinely believe the material is ready."""
 
 
+# Per-author ceilings for the two coach endpoints, and the input caps that stop
+# one allowed request being arbitrarily expensive.
+#
+# Set generously. A real coaching session is a long back-and-forth and these
+# must not interrupt one; they exist to stop a script, not to ration authors.
+# The asymmetry is deliberate — chat is the conversational endpoint and gets the
+# larger allowance; feedback is a per-section button nobody clicks 40 times.
+COACH_CHAT_PER_HOUR     = 60
+COACH_FEEDBACK_PER_HOUR = 40
+COACH_MSG_MAX_CHARS     = 6_000     # per message, after the 30-message trim
+COACH_HISTORY_MAX_CHARS = 40_000    # whole conversation sent to OpenAI
+
+
 @app.route('/api/coach-chat', methods=['POST'])
+@author_api_required
 def api_coach_chat():
-    """Conversational coaching agent — accepts full message history, returns next agent turn."""
+    """Conversational coaching agent — accepts full message history, returns next agent turn.
+
+    Signed-in authors only. The page that drives this, /coach, has always
+    redirected anonymous visitors to the login form, but this endpoint did not
+    check — so the sign-in was decoration and anyone could bill gpt-4o to the
+    company's OpenAI account in a loop, four concurrent requests being enough to
+    occupy every request slot the portal has.
+    """
     try:
         data     = request.get_json(force=True) or {}
         messages = data.get('messages', [])
@@ -3820,13 +4293,37 @@ def api_coach_chat():
         if not isinstance(messages, list) or not messages:
             return jsonify({'success': False, 'error': 'No messages provided.'})
 
+        if not _check_rate_limit(current_user.id, max_requests=COACH_CHAT_PER_HOUR,
+                                 window=3600, bucket=_coach_chat_rate):
+            return jsonify({'success': False,
+                            'error': 'You have sent a lot of messages in a short time. '
+                                     'Please wait a few minutes and try again.'}), 429
+
         system = COACH_SYSTEM_PROMPT
         if book_title:
-            system += f'\n\nThe author\'s working book title is: "{book_title}"'
+            system += f'\n\nThe author\'s working book title is: "{book_title[:200]}"'
 
         # Trim history to last 30 messages to keep context manageable
         history = [m for m in messages if isinstance(m, dict) and m.get('role') in ('user', 'assistant')]
         history = history[-30:]
+
+        # Trimming to 30 messages bounds the COUNT, never the size, and the two
+        # are not the same bill: MAX_CONTENT_LENGTH allows a 16MB body, so 30
+        # messages can still be a maximum-context request. Cap each message and
+        # the total, and do it after the trim so the cap applies to what is
+        # actually sent.
+        history = [{'role': m['role'], 'content': str(m.get('content') or '')[:COACH_MSG_MAX_CHARS]}
+                   for m in history]
+        budget = COACH_HISTORY_MAX_CHARS
+        kept = []
+        for m in reversed(history):          # keep the most recent turns
+            budget -= len(m['content'])
+            if budget < 0:
+                break
+            kept.append(m)
+        history = list(reversed(kept))
+        if not history:
+            return jsonify({'success': False, 'error': 'That message is too long to send.'})
 
         response = client.chat.completions.create(
             model='gpt-4o',
@@ -3844,8 +4341,18 @@ def api_coach_chat():
 
 
 @app.route('/api/coach-feedback', methods=['POST'])
+@author_api_required
 def api_coach_feedback():
-    """Return AI bullet-point feedback for a single coaching section."""
+    """Return AI bullet-point feedback for a single coaching section.
+
+    Signed-in authors only, same as api_coach_chat above.
+
+    Nothing in this repo calls this endpoint — no template, no static JS — so it
+    is reachable only by addressing it directly. Guarded rather than deleted:
+    this repository is public, the route has been live and callable for months,
+    and a 401 tells anything that does call it what changed, where a 404 would
+    not.
+    """
     try:
         data = request.get_json(force=True) or {}
         section    = data.get('section', '').strip()
@@ -3855,6 +4362,12 @@ def api_coach_feedback():
 
         if not text or len(text) < 10:
             return jsonify({'success': False, 'error': 'Please write something before requesting feedback.'})
+
+        if not _check_rate_limit(current_user.id, max_requests=COACH_FEEDBACK_PER_HOUR,
+                                 window=3600, bucket=_coach_feedback_rate):
+            return jsonify({'success': False,
+                            'error': 'You have requested a lot of feedback in a short time. '
+                                     'Please wait a few minutes and try again.'}), 429
 
         section_guides = {
             'hook': (
@@ -4574,9 +5087,27 @@ def admin_marketing_lead_notes(md_id):
 # SOCIAL MEDIA STRATEGY — PUBLIC ROUTES
 # ============================================================================
 
+# Ceilings for the anonymous social-strategy generator.
+#
+# Tight, because unlike the coach endpoints there is no account behind the
+# caller and every accepted POST is an OpenAI call plus an outbound email to an
+# address the caller chose. Three generations an hour is more than any genuine
+# author needs — the tool produces one strategy from five answers — and the
+# looser peer ceiling is what a shared office or a mobile network needs.
+SOCIAL_PER_HOUR      = 3     # per (peer, claimed client) pair
+SOCIAL_PEER_PER_HOUR = 30    # per real TCP peer
+
+
 @app.route('/social-strategy', methods=['GET', 'POST'])
 def social_strategy_standalone():
-    """Standalone social media strategy tool — no login required."""
+    """Standalone social media strategy tool — no login required.
+
+    Anonymous ON PURPOSE, and it must stay that way: this is the pre-account
+    lead magnet the marketing site drives to, it captures a name and email from
+    people who do not have an account yet, and requiring a sign-in would remove
+    the reason it exists. So it gets a throttle instead of a gate — the one
+    control that bounds the OpenAI bill without closing the funnel.
+    """
     if request.method == 'POST':
         form_data = {
             'book_about':    request.form.get('book_about', '').strip(),
@@ -4595,6 +5126,30 @@ def social_strategy_standalone():
                     form_data['background'], form_data['lead_name'], form_data['lead_email']]):
             flash('Please fill in all required fields.', 'error')
             return render_template('social_strategy_standalone.html', form=form_data)
+
+        # Throttle. Same two-bucket shape as api_evaluate, same ordering, same
+        # reasoning — read the long comment there. Short version: peer_ip is the
+        # real TCP peer and cannot be forged, so it is checked FIRST and a
+        # rejected request never gets to insert a caller key; the caller key
+        # pairs that peer with the Cloudflare-supplied address, so a
+        # direct-to-origin caller claiming a real prospect's IP can only fill
+        # buckets under its own peer rather than locking that prospect out.
+        #
+        # Placed after the required-fields check so an incomplete submission
+        # does not spend the visitor's allowance, and before anything that costs
+        # money. 429 rather than 200: it renders the same page either way, but
+        # the status is the only thing that makes this throttle visible in
+        # `heroku logs` or any router metric. form_data goes back so a throttled
+        # author does not lose what they typed.
+        peer_ip = request.remote_addr or 'unknown'
+        caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
+        if (not _check_rate_limit(peer_ip, max_requests=SOCIAL_PEER_PER_HOUR,
+                                  window=3600, bucket=_social_peer_rate)
+                or not _check_rate_limit(caller_key, max_requests=SOCIAL_PER_HOUR,
+                                         window=3600, bucket=_social_rate)):
+            flash('You have generated several strategies recently. '
+                  'Please wait a little while before trying again.', 'error')
+            return render_template('social_strategy_standalone.html', form=form_data), 429
 
         inputs = {k: v for k, v in form_data.items() if k not in ('lead_name', 'lead_email')}
         inputs['platforms'] = ', '.join(form_data['platforms']) or 'Not specified'
@@ -5688,15 +6243,21 @@ def api_coaching_save_continue():
 
 
 @app.route('/api/evaluate', methods=['POST'])
+@portal_api_required
 def api_evaluate():
     """Handle proposal submission and evaluation"""
     try:
-        # This route carries no auth decorator, so it accepts anonymous POSTs
-        # even though the form that drives it (templates/index.html, served by
-        # index() at the top of this file) is behind author_login. It parses an
-        # uploaded document inline before returning, and there are four request
-        # slots for the whole site, so it is the cheapest way to take the portal
-        # down.
+        # This route used to carry no auth decorator, so it accepted anonymous
+        # POSTs even though the only form that drives it (templates/index.html,
+        # served by index() at the top of this file) is behind a login. It now
+        # requires an author or team session, which is what index() already
+        # required of anyone who could see the form.
+        #
+        # The two throttles below are KEPT, not replaced. Authentication changes
+        # who can reach this, not how much one signed-in caller may do, and
+        # author registration is still open to anyone — so an attacker can still
+        # obtain a session. The route parses an uploaded document inline and the
+        # site has four request slots in total.
         #
         # Two throttles, in this order for two reasons.
         #
@@ -5923,6 +6484,22 @@ _submit_rate = {}
 _evaluate_rate = {}
 _evaluate_peer_rate = {}
 
+# The AI coach endpoints. Keyed on current_user.id, not an address, and that is
+# the point: both are behind author_api_required now, so the signed-in author id
+# is the one per-person identifier here that cannot be spoofed or shared. An IP
+# key would be wrong in both directions behind Cloudflare — one visitor scatters
+# across several edge addresses within seconds, and many visitors share one.
+_coach_chat_rate = {}
+_coach_feedback_rate = {}
+
+# /social-strategy stays anonymous by design — it is the pre-account lead magnet
+# — so it gets the same two-bucket treatment as /api/evaluate, and for the same
+# reasons. See the long comment in api_evaluate: peer first because it is the
+# only unforgeable one, caller key second so a direct-to-origin caller cannot
+# burn a named prospect's allowance by claiming their address.
+_social_rate = {}
+_social_peer_rate = {}
+
 # Nothing else ever deletes a key, and the /api/evaluate buckets are keyed by
 # unauthenticated callers, so without a ceiling these dicts grow until the
 # 512MB dyno dies. A sweep alone is not enough: the case that grows the dict
@@ -6131,20 +6708,28 @@ def results(submission_id):
         compute_advance_estimate(evaluation)
     word_count = len(proposal.proposal_text.split()) if proposal.proposal_text else 0
 
-    # Benchmarking: how does this proposal compare to others?
-    benchmark = None
-    if not processing and proposal.overall_score is not None:
-        all_scores = [p.overall_score for p in
-                      Proposal.query.filter(Proposal.overall_score.isnot(None),
-                                            Proposal.status == 'completed').all()]
-        if len(all_scores) >= 3:
-            score = float(proposal.overall_score)
-            better_than = int(round(sum(1 for s in all_scores if score > s) / len(all_scores) * 100))
-            avg = int(round(sum(all_scores) / len(all_scores)))
-            benchmark = {'better_than': better_than, 'avg': avg, 'total': len(all_scores)}
+    # The "you scored higher than X% of proposals" banner used to be built here
+    # by loading every scored Proposal row and counting in Python. It is gone,
+    # along with its block in results.html.
+    #
+    # Worth recording why, because "make the query cheap" was the obvious fix
+    # and it would have been the wrong one. The query filtered on
+    # `Proposal.status == 'completed'`, and 'completed' is not a status this app
+    # has: the vocabulary is STATUS_OPTIONS plus 'processing' and 'error', and
+    # both admin write paths (admin_proposal_detail, admin_bulk_action) validate
+    # against STATUS_OPTIONS before assigning. So the filter matched zero rows
+    # from the day it shipped (a49fc93, 2026-04-01), len(all_scores) was always
+    # 0, the `>= 3` guard was never satisfied, and no author has ever seen the
+    # banner. Removed rather than repaired — reviving a comparison authors have
+    # never been shown is a product decision, not a performance fix.
+    #
+    # The failure it was reported as — loading every manuscript to compute one
+    # number — was real in shape but latent in fact, because the dead filter
+    # kept the result set empty. The genuine protection against that shape is
+    # Proposal.original_file being deferred; see the model.
 
     return render_template('results.html', proposal=proposal, evaluation=evaluation,
-                           processing=processing, word_count=word_count, benchmark=benchmark)
+                           processing=processing, word_count=word_count)
 
 
 @app.route('/download/<submission_id>')
@@ -9021,6 +9606,11 @@ def run_migrations(strict=True):
     _add('proposal', 'marketing_strategy TEXT')
     _add('proposal', 'author_id INTEGER')
     _add('proposal', 'confidentiality_acknowledged_at TIMESTAMP')
+    # Retry bookkeeping for sweep_stuck_evaluations(). Both are additive with a
+    # constant default, so they adopt cleanly on the live table and are legal on
+    # SQLite's ADD COLUMN as well.
+    _add('proposal', 'evaluation_attempts INTEGER DEFAULT 0')
+    _add('proposal', 'evaluation_claimed_at TIMESTAMP')
 
     # ── admin_user ─────────────────────────────────────────────────────────────
     _add('admin_user', 'password_reset_token VARCHAR(100)')

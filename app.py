@@ -331,9 +331,32 @@ if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
             #
             # Linux-only libpq option: real on a dyno, silently ignored on a
             # Mac. Do not conclude from a laptop test that it does not work.
+            #
+            # WEB DYNOS ONLY — removed again below for every other process.
             'tcp_user_timeout': 5000,
         },
     })
+
+    # Bounding a connection is only worth doing where a stuck one costs a
+    # REQUEST THREAD, and this is the enforcement of that.
+    #
+    # The marketing site learned this expensively: a connect timeout on its
+    # release phase blocked release v62, and raising the number did not fix it.
+    # Connects timed from `heroku run` one-off dynos — the same dyno class the
+    # release phase uses — ran 7.52s, 31.61s, 31.65s, 18.50s, 5.54s and 7.08s,
+    # with the 31s samples arriving AFTER a successful connect in the same run.
+    # Any ceiling under ~35s is therefore a coin flip on every deploy.
+    #
+    # This app's own database measured 0.09-0.33s across four connects, so it
+    # is not in that state today — but migrate.py runs on exactly that dyno
+    # class during the release phase, and a deploy blocked by a guess about
+    # network latency is not a trade worth making for a health probe.
+    #
+    # `connect_timeout: 10` above predates this work and stays: it has run
+    # every green deploy this app has had.
+    if not os.environ.get('DYNO', '').startswith('web.'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS']['connect_args'].pop(
+            'tcp_user_timeout', None)
 
 # ── APP_BASE_URL — must be defined before cookie config (used as the HTTPS signal)
 # Set APP_URL (or APP_BASE_URL) in Heroku Config Vars:

@@ -5650,6 +5650,11 @@ def author_quickstart_submit():
         author_name=current_user.name,
         author_email=current_user.email,
         book_title=submission.book_title,
+        # The dashboard builds its /admin/one-pager/<id> deep link from this.
+        # Until now the id travelled ONLY inside external_id ('pe-1pg-<id>'),
+        # so the receiver had to parse the idempotency key to find it. Still a
+        # lean contract field — an identifier, never the one-pager's content.
+        proposal_submission_id=str(submission.id),
     )
     # Plain int, read before the send. Same reason as author_coaching_enroll:
     # the commit above expired this instance, and re-reading it from inside the

@@ -15,3 +15,8 @@ pyotp==2.9.0
 qrcode==7.4.2
 Pillow==12.3.0
 requests==2.32.5
+# Error tracking. Pinned exactly, and 2.66.1 specifically: pip-audit reports no
+# known vulnerability against it (2026-08-03), so it adds nothing to
+# ci/vuln_baseline.txt. It is inert without SENTRY_DSN — see observability.py —
+# so installing it here does not by itself start sending anything anywhere.
+sentry-sdk==2.66.1

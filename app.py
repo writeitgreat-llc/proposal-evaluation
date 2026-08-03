@@ -5,9 +5,11 @@ Flask application with database, admin dashboard, status tracking, and email not
 """
 
 import os
+import sys
 import json
 import time
 import uuid
+import logging
 import secrets
 import hashlib
 import hmac
@@ -16,7 +18,13 @@ import traceback
 import threading
 import requests as http_requests
 from io import BytesIO
-from datetime import datetime, timedelta
+# `timezone` is imported for /healthz and, for now, only for /healthz. Every
+# model column and every comparison in this file is NAIVE UTC (datetime.utcnow),
+# and mixing the two raises "can't compare offset-naive and offset-aware
+# datetimes" at runtime — see the note at the reengagement cutoff below. Use
+# datetime.now(timezone.utc) for values that leave the app as text; keep using
+# datetime.utcnow() for anything that touches a column.
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -35,6 +43,172 @@ import base64
 import openai
 from docx import Document
 import pypdf
+
+# ============================================================================
+# ERROR TRACKING AND LOGGING
+# ============================================================================
+# Both blocks are ABOVE `app = Flask(__name__)` on purpose, and the ordering
+# between them does not matter — see the note under the logging block.
+
+import sentry_sdk
+
+from observability import init_sentry
+
+# Why this cannot move below `app = Flask(__name__)`: everything between here
+# and the end of this file runs at import time — the engine options, the model
+# definitions, the boot-migration pass — and a failure in any of it is exactly
+# the kind of outage nobody currently hears about. Sentry can only report an
+# exception raised while the app object is being built if the client already
+# exists when it is raised.
+#
+# Module scope rather than a factory because there is no factory: the Procfile
+# runs `gunicorn app:app`, so gunicorn imports THIS module and takes `app` off
+# it. With preload_app unset (it is — the Procfile passes only --timeout,
+# --workers 1 and --threads 4) that import happens after the fork, so the one
+# worker process initialises its own Sentry client and owns its own transport
+# thread. Putting this behind `if __name__ == '__main__':` would give
+# production no client at all, and setting preload_app = True later would stop
+# delivery SILENTLY — at that point init has to move into a post_fork hook.
+#
+# No DSN, no Sentry: init_sentry() returns False having done nothing when
+# SENTRY_DSN is unset, which is what keeps CI, ci/smoke_app.py and laptops
+# silent. THIS REPO IS PUBLIC. The DSN lives in Heroku config vars; never write
+# one into this file, and never add a fallback.
+#
+# Wrapped because monitoring must never be able to take the app down. This call
+# is at module scope, which is still correct — only the failure mode changes.
+# Unwrapped, a typo'd or truncated SENTRY_DSN makes sentry_sdk.init() raise
+# BadDsn straight out of `import app`, and on this app `import app` is the
+# release phase: the Procfile runs `release: python migrate.py`, which imports
+# this module. So a bad character in a config var that has nothing to do with
+# the schema would abort a SCHEMA release and block the deploy of an
+# already-merged main, with a stack trace that names Sentry rather than the
+# thing anybody was deploying.
+#
+# `except Exception` and not a narrower `BadDsn`: importing sentry_sdk.utils to
+# name that class would pull the SDK into the import path of an app that may
+# have no DSN at all, and the point here is that NOTHING this call raises may
+# reach the process. Deliberately silent, too — logging is configured a few
+# lines below this, so a logger call here would go nowhere useful. If you need
+# to know whether Sentry came up, look for the `sentry_config` tag on events,
+# or check that `SENTRY_DSN` is set; do not "improve" this by re-raising.
+try:
+    init_sentry("authors", capture_logs_at=logging.ERROR)
+except Exception:
+    pass
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# There was none. 106 print() calls were this app's entire diagnostic story, and
+# a print is not a log: no level, so nothing downstream can filter it; no
+# timestamp, so an incident cannot be put back in order; no logger name, so
+# nothing says which part of a 10,000-line file spoke; and no structure, so a
+# drain (Papertrail, Sentry, anything) can only store it as an opaque line.
+# `heroku logs --tail` is a terminal, not a monitoring system.
+#
+# stdout specifically. gunicorn is started WITHOUT --capture-output here, so it
+# does not redirect this process's streams into its own error log — the dyno's
+# stdout is inherited straight through to the Heroku log drain, which is also
+# why the existing print() calls show up there at all. A FileHandler would
+# write to an ephemeral filesystem nobody can read.
+#
+# force=True makes this idempotent. `python app.py` executes this module as
+# __main__ and anything doing `import app` afterwards executes it a SECOND time
+# (the same hazard the analytics_collect note below describes); without force
+# that second pass would stack a duplicate handler and every line would print
+# twice.
+#
+# On the ordering with init_sentry() above: LoggingIntegration patches
+# logging.Logger.callHandlers rather than installing a handler of its own, so it
+# sees records regardless of what is configured here or when. The knob that DOES
+# silence it is LOG_LEVEL — a record the logger drops never reaches Sentry
+# either, so LOG_LEVEL above ERROR turns off log-derived events as a side
+# effect. Explicit sentry_sdk.capture_exception() calls are unaffected.
+#
+# LOG_LEVEL is validated against an explicit set, NOT with
+# getattr(logging, name, logging.INFO). getattr looks up any attribute of the
+# logging module, and most of them are not levels: LOG_LEVEL=BASIC_FORMAT
+# returns the format STRING '%(levelname)s:%(name)s:%(message)s', which sails
+# past the default and makes basicConfig raise at import — i.e. a boot crash on
+# every dyno, in the release phase too, from one wrong word in a config var
+# whose worst case should be "logs are noisier than you wanted". LOG_LEVEL=FATAL
+# and =WARN would also silently work via getattr and then not match anything
+# anyone greps for, so they are mapped to their canonical names instead.
+_LOG_LEVEL_NAMES = {
+    'CRITICAL': logging.CRITICAL,
+    'FATAL': logging.CRITICAL,
+    'ERROR': logging.ERROR,
+    'WARNING': logging.WARNING,
+    'WARN': logging.WARNING,
+    'INFO': logging.INFO,
+    'DEBUG': logging.DEBUG,
+    'NOTSET': logging.NOTSET,
+}
+_LOG_LEVEL = (os.environ.get('LOG_LEVEL') or 'INFO').strip().upper()
+_LOG_LEVEL_VALUE = _LOG_LEVEL_NAMES.get(_LOG_LEVEL, logging.INFO)
+_log_handler = logging.StreamHandler(sys.stdout)
+_log_handler.setFormatter(logging.Formatter(
+    fmt='%(asctime)s %(levelname)-8s %(name)s: %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%S%z',
+))
+logging.basicConfig(
+    level=_LOG_LEVEL_VALUE,
+    handlers=[_log_handler],
+    force=True,
+)
+
+# getLogger('authors'), not getLogger(__name__). __name__ is "app" under
+# gunicorn and "__main__" under `python app.py`, and a logger name that depends
+# on how the process was started is a logger name nobody can filter on. It also
+# matches the `app` tag init_sentry() puts on every event.
+logger = logging.getLogger('authors')
+
+# Said once, at WARNING, after the handler exists — an unrecognised LOG_LEVEL
+# silently becoming INFO is exactly the kind of thing somebody debugs for an
+# hour. It is a warning and not a hard failure on purpose: a bad LOG_LEVEL must
+# not be able to stop the app booting either, which is the whole point of the
+# lookup table above.
+if _LOG_LEVEL not in _LOG_LEVEL_NAMES:
+    logger.warning(
+        'LOG_LEVEL=%r is not a logging level name; falling back to INFO. '
+        'Valid values: %s', _LOG_LEVEL, ', '.join(sorted(_LOG_LEVEL_NAMES)),
+    )
+
+
+def capture_failure(operation, message, **details):
+    """Report a swallowed exception, and swallow it exactly as before.
+
+    CALL THIS FROM INSIDE AN `except` BLOCK, AND ONLY FROM THERE — it reads the
+    live exception off sys.exc_info(). It never re-raises and it never touches
+    control flow: before this change exactly one of this file's 115 handlers
+    re-raised and the other 114 swallowed, and every one of those was a product
+    decision somebody made. This changes only whether anybody finds out.
+
+    `operation` becomes the `op` tag. Sentry titles an issue after the exception
+    type and the top stack frame, which for this app is frequently a shared
+    helper — three unrelated features that all fail inside send_email() collapse
+    into one unreadable issue without a tag to separate them.
+
+    `details` becomes a Sentry context, so put IDs in it and nothing else. It
+    is NOT scrubbed by key unless the key happens to be on observability.py's
+    denylist, so an author's email or a paragraph of their proposal passed here
+    would be shipped verbatim. submission_id, enrollment_id, module_order: yes.
+    Anything a person wrote or is identified by: no.
+
+    Safe with Sentry switched off. capture_exception() on an uninitialised SDK
+    is a no-op, which is the state in CI and on every laptop, so call sites need
+    no guard.
+    """
+    with sentry_sdk.new_scope() as scope:
+        scope.set_tag('op', operation)
+        if details:
+            scope.set_context('operation', details)
+        sentry_sdk.capture_exception()
+    # After the capture, not before. Both calls carry the same exception object,
+    # and the SDK's DedupeIntegration drops whichever it sees second — so this
+    # order means the event that reaches Sentry is the tagged one, and the log
+    # line stays a log line rather than billing a second event against the
+    # 5,000/month org pool.
+    logger.exception('%s: %s', operation, message)
 
 # ============================================================================
 # FLASK APP CONFIGURATION
@@ -83,10 +257,47 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # without it the pool hands out connections the server has already closed and
 # the caller sees "server closed the connection unexpectedly" until they cycle.
 #
+# ── hide_parameters: keeps authors' data out of the log drain ────────────────
+# Set FIRST, and for every dialect, because it is not a tuning knob — it is the
+# only thing standing between a failed INSERT and an author's email address,
+# password hash, manuscript text or proposal body being written to stdout.
+#
+# What it stops. SQLAlchemy formats a failed statement as
+#
+#   (psycopg2.errors.UniqueViolation) duplicate key value violates ...
+#   [SQL: INSERT INTO author (email, password_hash) VALUES (%(email)s, ...)]
+#   [parameters: {'email': 'author@example.com', 'password_hash': 'scrypt:...'}]
+#
+# and that whole string is str(exc). capture_failure() passes it to
+# logger.exception(), gunicorn runs without --capture-output, so stdout is the
+# Heroku log drain. With this option the parameter line becomes
+# `[SQL parameters hidden due to hide_parameters=True]` and nothing else about
+# the error changes: the exception type, the DETAIL line's column names and the
+# statement's SHAPE — the parts that are actually diagnostic — all survive.
+#
+# DO NOT delete this on the grounds that observability.py already redacts
+# `[parameters: ...]`. That redaction lives in `_before_send`, which is a Sentry
+# hook: it does not run when SENTRY_DSN is unset, and it never sees the log
+# stream at all even when it is. The two protect different destinations and both
+# are required — the module's own comment at observability.py:128 says so. This
+# is also NOT covered by CI: ci/check_sentry_scrub.py exercises the Sentry path,
+# and no check reads stdout.
+#
+# Outside the Postgres branch below on purpose. `hide_parameters` is consumed by
+# create_engine itself, not passed through to the driver, so unlike connect_args
+# it is safe on sqlite — and sqlite is what every ci/ harness and every laptop
+# runs, which is precisely where a stray traceback gets pasted into a public
+# GitHub issue on a public repo. The branch below therefore .update()s this dict
+# rather than replacing it; if you ever change that back to a plain assignment,
+# carry this key over with it.
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'hide_parameters': True,
+}
+
 # Postgres only. The connect_args below are psycopg2 keywords and sqlite3 raises
 # TypeError on them, and every ci/ harness plus local dev runs on sqlite:///.
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'].update({
         'pool_size': 5,
         'max_overflow': 3,
         # Well inside gunicorn's --timeout 120: a saturated pool must fail the
@@ -106,8 +317,23 @@ if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
             'keepalives_idle': 30,
             'keepalives_interval': 10,
             'keepalives_count': 3,
+            # The keepalives above only detect a socket whose peer has GONE.
+            # They do nothing about a Postgres that keeps the connection open
+            # and simply stops answering — which is the failure /healthz exists
+            # to report, and the one that would otherwise pin a request thread
+            # until gunicorn's --timeout 120 killed it. Measured with a
+            # black-hole TCP proxy: still blocked at 45s without this.
+            #
+            # Deliberately NOT a session-wide "-c statement_timeout": this same
+            # config is imported by migrate.py during the release phase, so a
+            # ceiling here would abort a long migration and fail the deploy.
+            # /healthz sets SET LOCAL statement_timeout itself instead.
+            #
+            # Linux-only libpq option: real on a dyno, silently ignored on a
+            # Mac. Do not conclude from a laptop test that it does not work.
+            'tcp_user_timeout': 5000,
         },
-    }
+    })
 
 # ── APP_BASE_URL — must be defined before cookie config (used as the HTTPS signal)
 # Set APP_URL (or APP_BASE_URL) in Heroku Config Vars:
@@ -2012,7 +2238,9 @@ def extract_text_from_pdf(file):
         # Discard the fragment. Half a proposal that clears the 500-character
         # gate is worse than no proposal: the author gets an evaluation of
         # whatever happened to parse, with nothing anywhere saying so.
-        print(f"PDF extraction error after {len(parts)} pages: {e}")
+        capture_failure('upload.pdf_extract',
+                        f"PDF extraction error after {len(parts)} pages: {e}",
+                        pages_parsed=len(parts), declared_bytes=size)
         return ""
 
     return "".join(parts)[:PDF_MAX_CHARS]
@@ -2025,7 +2253,10 @@ def extract_text_from_docx(file):
         text = "\n".join([para.text for para in doc.paragraphs])
         return text
     except Exception as e:
-        print(f"DOCX extraction error: {e}")
+        # Same silent-partial risk as the PDF path above: "" reaches the caller
+        # as a document with no text in it, which the 500-character gate then
+        # rejects as if the AUTHOR had uploaded an empty file.
+        capture_failure('upload.docx_extract', f"DOCX extraction error: {e}")
         return ""
 
 
@@ -2079,7 +2310,7 @@ def convert_docx_to_html(file_bytes):
         result = re.sub(r'((?:<li>.*?</li>\s*)+)', r'<ul>\1</ul>', result)
         return result
     except Exception as e:
-        print(f"DOCX to HTML conversion error: {e}")
+        capture_failure('upload.docx_to_html', f"DOCX to HTML conversion error: {e}")
         return None
 
 
@@ -2551,8 +2782,13 @@ Return ONLY the JSON object, no other text."""
 
         return evaluation
     except Exception as e:
-        print(f"Evaluation error: {e}")
-        traceback.print_exc()
+        # None here is not "no result", it is a proposal an author paid
+        # attention to that never gets scored. _run_evaluation deliberately
+        # leaves the row at 'processing' for the stuck sweep rather than
+        # marking it 'error', so without this capture the ONLY signal is the
+        # sweep's alert email three retries later — if that email sends.
+        capture_failure('ai.evaluate_proposal', f"Evaluation error: {e}",
+                        proposal_type=proposal_type)
         return None
 
 
@@ -3023,11 +3259,29 @@ def send_social_strategy_email(to_email: str, name: str,
 
 
 def send_email(to_email, subject, html_content, attachments=None):
-    """Send email via SMTP"""
+    """Send email via SMTP.
+
+    Returns False on every failure and RAISES NOTHING. That contract is why
+    every "the email silently didn't send" bug in this app looks the way it
+    does: of 24 call sites, 17 sit inside a try/except that can never fire, and
+    most of those ignore the return value too. The two captures below are
+    therefore the only place a failed send becomes visible, and they must stay
+    even if the callers are ever fixed to check the result.
+
+    Do not "fix" this by raising. Several of those callers run after a request
+    has already committed a database change (an enrolment, a reset token), and
+    an exception there would turn a missing email into a 500 on a completed
+    action.
+    """
     if not SMTP_USER or not SMTP_PASSWORD:
-        print("Email not configured - skipping")
+        # Not an exception — no credentials configured is a deployment state,
+        # not a fault, and on a laptop it is the normal one. WARNING (not
+        # ERROR) keeps it out of Sentry: observability.py captures log records
+        # at ERROR and above.
+        logger.warning('Email not configured (SMTP_USER/SMTP_PASSWORD unset) - '
+                       'skipping send of %r', subject)
         return False
-    
+
     try:
         msg = MIMEMultipart()
         msg['From'] = FROM_EMAIL
@@ -3049,12 +3303,24 @@ def send_email(to_email, subject, html_content, attachments=None):
         
         return True
     except smtplib.SMTPAuthenticationError as e:
-        print(f"Email SMTP auth error: {e}")
-        print("HINT: Gmail requires an App Password (16-char) when 2FA is enabled.")
-        print("Generate one at: https://myaccount.google.com/apppasswords")
+        # Separated from the generic handler deliberately: this one is not
+        # transient. It means EVERY email from this app is failing, right now,
+        # for everyone — password resets included — and it stays that way until
+        # a human rotates a credential. Its own `op` tag so it cannot hide
+        # inside the general email-failure issue.
+        capture_failure('email.smtp_auth', f"Email SMTP auth error: {e}",
+                        smtp_host=SMTP_HOST, smtp_user_set=bool(SMTP_USER))
+        # WARNING, not ERROR: this is a fixed hint, not a new fault, and at
+        # ERROR it would bill a SECOND Sentry event on top of the capture above
+        # — DedupeIntegration only collapses records that carry the exception.
+        logger.warning("HINT: Gmail requires an App Password (16-char) when 2FA is enabled. "
+                       "Generate one at: https://myaccount.google.com/apppasswords")
         return False
     except Exception as e:
-        print(f"Email error: {e}")
+        # No subject in the context. Subjects here interpolate the book title,
+        # and the author's title is theirs — the stack frame already says which
+        # caller failed, which is the part worth knowing.
+        capture_failure('email.send', f"Email error: {e}")
         return False
 
 
@@ -3317,7 +3583,11 @@ def _detect_ai_content(text: str) -> dict:
         penalty = max(0.0, (likelihood - 50) / 50 * 15) if likelihood > 50 else 0.0
         return {'likelihood': likelihood, 'signals': signals, 'penalty': round(penalty, 1)}
     except Exception as e:
-        print(f'AI detection error (non-fatal): {e}')
+        # "non-fatal" is true for the request and false for the score: a
+        # likelihood of 0 with no signals is indistinguishable from a genuine
+        # "this reads as human", so a persistent failure here quietly turns the
+        # AI-content penalty off for every proposal and nothing looks wrong.
+        capture_failure('ai.detect_ai_content', f'AI detection error (non-fatal): {e}')
         return {'likelihood': 0, 'signals': [], 'penalty': 0.0}
 
 
@@ -3498,13 +3768,20 @@ def _run_evaluation(app_obj, submission_id, proposal_text, proposal_type,
                     proposal.team_email_sent = True
                 db.session.commit()
             except Exception as email_error:
-                print(f"Email error (non-fatal): {email_error}")
+                # Non-fatal for the evaluation, which is already committed —
+                # but the author_email_sent / team_email_sent flags stay False
+                # and nothing retries them, so a scored proposal sits finished
+                # with nobody told.
+                capture_failure('eval.notify',
+                                f"Email error (non-fatal): {email_error}",
+                                submission_id=submission_id)
 
-            print(f"Background eval: completed for {submission_id}")
+            logger.info("Background eval: completed for %s", submission_id)
 
         except Exception as e:
-            print(f"Background eval error for {submission_id}: {e}")
-            traceback.print_exc()
+            capture_failure('eval.background',
+                            f"Background eval error for {submission_id}: {e}",
+                            submission_id=submission_id)
             try:
                 # The session may be in a failed transaction from the exception
                 # above; a bare query would raise again and lose the status
@@ -3515,7 +3792,14 @@ def _run_evaluation(app_obj, submission_id, proposal_text, proposal_type,
                     proposal.status = 'error'
                     db.session.commit()
             except Exception:
-                pass
+                # Worst case in this whole file: the evaluation failed AND the
+                # row could not be moved to 'error', so it stays 'processing'
+                # forever. The stuck sweep is the only thing that can still
+                # rescue it, and if the database is what broke, it cannot.
+                capture_failure('eval.mark_error',
+                                f"Could not mark {submission_id} as errored after a "
+                                f"failed evaluation; the row is stranded at 'processing'",
+                                submission_id=submission_id)
 
 
 def send_author_milestone_email(proposal, new_status):
@@ -4330,12 +4614,18 @@ def sweep_stuck_evaluations():
                 print(f'Stuck sweep: re-dispatched {len(retried)}, gave up on {len(abandoned)}')
                 send_stuck_evaluation_alert(retried, abandoned)
         except Exception as e:
-            print(f'Stuck sweep error (non-fatal): {e}')
-            traceback.print_exc()
+            # The sweep is the retry mechanism AND the only thing that emails
+            # anyone about a failed scoring. A sweep that throws every tick is
+            # therefore invisible twice over: no retries happen and no alert is
+            # sent about the fact that no retries happen.
+            capture_failure('eval.stuck_sweep', f'Stuck sweep error (non-fatal): {e}')
             try:
                 db.session.rollback()
             except Exception:
-                pass
+                capture_failure('eval.stuck_sweep_rollback',
+                                'Rollback failed after a stuck-sweep error; this '
+                                'thread holds a poisoned session and every later '
+                                'tick will fail on it')
 
 
 def _claim_stuck_proposal(proposal, now, lease_before, give_up):
@@ -4417,6 +4707,143 @@ def favicon():
         'favicon.ico',
         mimetype='image/vnd.microsoft.icon',
     )
+
+
+@app.route('/healthz')
+def healthz():
+    """Liveness probe for the external uptime monitor. No login, ever.
+
+    It runs a real `SELECT 1` rather than returning a constant, because the
+    failure this exists to catch is not "the dyno is gone" — Heroku restarts
+    those on its own — it is "the dyno is up and the database is not", which a
+    static 200 reports as healthy. Every author-facing page on this app needs
+    Postgres, so a portal that cannot reach it is down whatever the process
+    thinks.
+
+    WHAT THIS DELIBERATELY DOES NOT DO:
+
+      * It never puts the exception text in the response. This endpoint is
+        public and unauthenticated, and a psycopg2/SQLAlchemy connection error
+        renders the DSN — host, database, and on some failure modes the
+        password — straight into its str(). The detail goes to the log; the
+        caller gets the word "error". Do not "improve" the diagnostics here by
+        echoing the exception.
+      * It is not rate limited. This app rate-limits per route by calling
+        _check_rate_limit() explicitly (there is no global before_request), so
+        exempting this route means not adding that call — the monitor polls
+        every minute from a small pool of addresses and must never be throttled
+        into a false alarm.
+      * It is not cached. no-store for the browser/proxy layer AND
+        CDN-Cache-Control for an edge in front of it: a cached 200 is a
+        monitoring system that reports the last good minute forever.
+
+    (body, status, headers) rather than make_response() — flask's make_response
+    is not imported in this file and adding it for one route is a bigger change
+    than the tuple, which this app already uses for its 429s.
+
+    THE RESPONSE SHAPE IS A THREE-APP CONTRACT. writeitgreat.com,
+    authors.writeitgreat.com and app.writeitgreat.com all answer GET /healthz
+    with the same keys, the same statuses and the same headers, so that ONE
+    uptime-monitor template covers the fleet:
+
+        200  {"ok": true,  "db": "ok",    "release": <str|null>, "time": <iso>}
+        503  {"ok": false, "db": "error", "release": <str|null>, "time": <iso>}
+
+    Renaming a key here — `time` was `checked_at` until 2026-08-03 — does not
+    break this app, it breaks the monitor for all three, silently, because a
+    keyword check that stops matching reads as "down" or (worse, depending on
+    the rule) as "up forever". Change it in three repos or not at all.
+    """
+    # Timezone-AWARE UTC, and this is the one place in this file that is.
+    # datetime.utcnow().isoformat() + 'Z' was hand-stamping an offset onto a
+    # naive value: correct by luck, and only while nobody edits it. Aware also
+    # means every ISO-8601 parser on the monitoring side gets `+00:00`, which is
+    # what the other two apps emit; a parser fed a bare `Z` by one host and an
+    # offset by the others is a bug waiting for an incident to surface it.
+    payload = {
+        'ok': True,
+        'db': 'ok',
+        # Set by Heroku on every release. Absent locally and in CI, which is
+        # information rather than a fault, so it stays null rather than lying.
+        # NOTE: this is null in production too until someone runs
+        # `heroku labs:enable runtime-dyno-metadata -a proposal-evaluation`.
+        'release': os.environ.get('HEROKU_RELEASE_VERSION') or None,
+        'time': datetime.now(timezone.utc).isoformat(),
+    }
+    status = 200
+
+    try:
+        # Bound the check, or the probe becomes the outage it exists to report.
+        #
+        # connect_timeout=10 (engine options, above) covers only opening the
+        # socket. A Postgres that ACCEPTS connections and then never answers —
+        # the classic wedge: lock pile-up, connection-limit exhaustion, a failing
+        # follower — leaves this SELECT waiting on a read with nothing to
+        # interrupt it but gunicorn's --timeout 120. That is one of only four
+        # request threads pinned for two minutes, once per poll, once a minute,
+        # so the monitor's own traffic finishes the job the database started.
+        #
+        # 5s because Heroku's router gives a request 30s before it returns its
+        # own 503 (H12), and a probe that is killed by the router reports
+        # "timeout", not "database down" — the same alert with the diagnosis
+        # removed. 5s leaves the answer, the JSON and the log line comfortably
+        # inside that window while still being ~50x a healthy round trip.
+        #
+        # SET LOCAL and not SET: LOCAL is scoped to the current transaction, so
+        # it cannot leak onto a pooled connection and silently cap a long
+        # scoring query later. SQLAlchemy autobegins the transaction on this
+        # first execute, which is what makes LOCAL take effect at all (issued
+        # outside a transaction, Postgres logs a warning and ignores it).
+        #
+        # Guarded on the dialect because sqlite — every ci/ harness and every
+        # laptop — has no statement_timeout and raises OperationalError on the
+        # statement, which would turn a green CI probe red for the wrong reason.
+        #
+        # Residual, stated rather than hidden: pool_pre_ping and this SET are
+        # themselves round trips issued before any timeout is in force, so a
+        # server that answers NOTHING can still stall ahead of the SELECT.
+        # Closing that means a connection-level `options: -c statement_timeout=`
+        # in connect_args, which would cap every query this app makes, including
+        # the scoring writes. That is a real decision with real blast radius —
+        # do not make it here as a drive-by.
+        if db.engine.dialect.name == 'postgresql':
+            db.session.execute(text("SET LOCAL statement_timeout = '5s'"))
+        db.session.execute(text('SELECT 1'))
+    except Exception:
+        payload['ok'] = False
+        payload['db'] = 'error'
+        status = 503
+        # LOG it; do NOT capture_failure() it. This is the one place in this
+        # file where reporting the exception is the wrong call. During a real
+        # database outage every author-facing request is already failing and
+        # already being captured, so a capture here only re-reports a known
+        # outage once per poll — 60 events an hour, out of an org-wide pool of
+        # 5,000 a month shared with three other apps — and each one crowds out
+        # the burst budget that would otherwise carry the events that say WHICH
+        # query broke. The monitor is the alarm for this; Sentry is the
+        # diagnosis for everything else.
+        #
+        # logger.warning and not .error/.exception, deliberately, and this is
+        # the trap: init_sentry() above passes capture_logs_at=logging.ERROR, so
+        # LoggingIntegration turns any ERROR-or-above record into a Sentry event
+        # by itself. "Promoting" this line to logger.error() would quietly
+        # reinstate exactly the per-poll billing this comment exists to prevent,
+        # with no visible code change to capture_failure(). exc_info=True still
+        # puts the full traceback in the log, which is where it belongs.
+        logger.warning('/healthz database check failed', exc_info=True)
+        # The session is now in a failed transaction, and gunicorn hands this
+        # thread straight on to a real request — leaving it poisoned would turn
+        # one database blip into a run of unrelated 500s.
+        try:
+            db.session.rollback()
+        except Exception:
+            logger.warning('/healthz could not roll back after the failed check')
+
+    headers = {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'CDN-Cache-Control': 'no-store',
+    }
+    return jsonify(payload), status, headers
 
 
 @app.route('/')
@@ -4566,7 +4993,8 @@ def api_coach_chat():
         return jsonify({'success': True, 'message': reply})
 
     except Exception as e:
-        print(f'/api/coach-chat error: {e}')
+        capture_failure('ai.coach_chat', f'/api/coach-chat error: {e}',
+                        author_id=getattr(current_user, 'id', None))
         return jsonify({'success': False, 'error': 'Could not get a response. Please try again.'})
 
 
@@ -4673,7 +5101,8 @@ Example: {{"bullets": ["**Strong:** Your opening sentence immediately names a sp
         return jsonify({'success': True, 'bullets': bullets[:5]})
 
     except Exception as e:
-        print(f"/api/coach-feedback error: {e}")
+        capture_failure('ai.coach_feedback', f"/api/coach-feedback error: {e}",
+                        author_id=getattr(current_user, 'id', None))
         return jsonify({'success': False, 'error': 'Could not generate feedback. Please try again.'})
 
 
@@ -4862,7 +5291,23 @@ Now follow the evaluation contract and return JSON."""
             bullets = ['→ Please revisit the homework prompt and submit a fuller response.']
         return True, bullets, publisher_ready
     except Exception as e:
-        print(f"AI homework review error: {e}")
+        # BEHAVIOUR PRESERVED, NOT ENDORSED. The first element of this tuple is
+        # `approved`, and returning True here means the caller
+        # (api_coaching_homework_submit) marks the module approved and unlocks
+        # the next one — so an OpenAI outage silently advances every author who
+        # submits during it, on a review that never happened.
+        #
+        # That is arguably deliberate: the docstring above says "approved is
+        # always True so authors can always advance", and the success path
+        # returns True unconditionally too. It is left exactly as it was; the
+        # capture exists so that if it ever IS wrong, there is a record of how
+        # many authors it advanced and when. Deciding whether to change it is
+        # somebody else's call, not this change's.
+        capture_failure('ai.homework_review',
+                        f"AI homework review error: {e} — auto-approving the "
+                        f"submission and unlocking the next module, which is the "
+                        f"existing behaviour",
+                        module_order=module_info['order'], word_count=word_count)
         return True, ['We encountered an issue reviewing your submission. Please try again.'], False
 
 
@@ -4897,7 +5342,16 @@ def author_coaching_dashboard():
                         current_mp.homework_reminder_sent_at = datetime.utcnow()
                         db.session.commit()
                     except Exception:
-                        pass
+                        # Note what is NOT caught here: the send helper wraps
+                        # send_email(), which returns False rather than raising,
+                        # so a failed send still stamps homework_reminder_sent_at
+                        # and the reminder is never retried. This handler only
+                        # fires on the commit.
+                        capture_failure('email.homework_reminder',
+                                        'Homework reminder send/commit failed on the '
+                                        'coaching dashboard',
+                                        enrollment_id=enrollment.id,
+                                        module_order=enrollment.current_module)
 
         all_progress = list(enrollment.module_progress.order_by(
             AuthorModuleProgress.module_order).all())
@@ -4997,10 +5451,28 @@ def author_coaching_enroll():
             db.session.commit()
         except Exception as e:
             db.session.rollback()
-            import traceback
-            print(f"Enrollment error: {e}\n{traceback.format_exc()}")
+            capture_failure('coaching.enroll', f"Enrollment error: {e}")
             flash('Something went wrong creating your enrollment. Please try again.', 'error')
             return render_template('author_coaching_enroll.html')
+
+        # Plain int, read while the session is clean. The commit above expired
+        # this instance, so `enrollment.id` in the handler below would emit a
+        # SELECT — and if what failed there was the second commit, that SELECT
+        # raises on the failed transaction and the except block turns a missing
+        # welcome email into a 500 on a completed enrolment.
+        #
+        # Wrapped for the same reason, one step earlier: THIS read is itself the
+        # expiry refresh, so it is a statement, and it is the first statement
+        # after a commit that has already succeeded. The enrolment exists at
+        # this point. A database that goes away in the gap would otherwise
+        # escape an untried line and 500 an author whose enrolment worked —
+        # which is a user-facing behaviour change, introduced by a diagnostics
+        # change, which is precisely what this whole pass is not allowed to do.
+        # It only feeds the log line below, so None is a fine answer.
+        try:
+            enrolled_id = enrollment.id
+        except Exception:
+            enrolled_id = None
 
         # Send welcome email
         try:
@@ -5008,7 +5480,10 @@ def author_coaching_enroll():
                 enrollment.welcome_email_sent = True
                 db.session.commit()
         except Exception:
-            pass
+            capture_failure('email.coaching_welcome',
+                            'Coaching welcome email failed after the enrolment was '
+                            'committed; the author is enrolled and has not been told',
+                            enrollment_id=enrolled_id)
 
         flash('Welcome to the Proposal Builder! Module 1 is ready for you.', 'success')
         return redirect(url_for('author_coaching_onboarding'))
@@ -5176,10 +5651,20 @@ def author_quickstart_submit():
         author_email=current_user.email,
         book_title=submission.book_title,
     )
+    # Plain int, read before the send. Same reason as author_coaching_enroll:
+    # the commit above expired this instance, and re-reading it from inside the
+    # handler could raise on a session the failure has already poisoned.
+    one_pager_id = submission.id
     try:
         send_one_pager_submitted_notification(current_user, submission)
     except Exception:
-        pass
+        # This is the notification that tells the TEAM a one-pager arrived.
+        # Losing it does not affect the author at all, which is exactly why it
+        # can go missing for weeks without anyone noticing.
+        capture_failure('email.one_pager_notification',
+                        'One-pager submitted notification failed; the submission is '
+                        'saved but the team has not been told',
+                        submission_id=one_pager_id)
 
     # Auto-generate social media strategy in background; redirect to it
     strategy_id = None
@@ -5891,6 +6376,12 @@ def api_coaching_homework_submit():
     if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
         return jsonify({'success': False, 'error': 'Not authenticated.'})
 
+    # Bound before the try so the handler at the bottom can report them. Both
+    # are assigned inside it, and a malformed body makes int() raise on the
+    # second line — without these two the except block would itself raise
+    # NameError and turn a clean JSON error into a 500.
+    enrollment_id = None
+    module_order = None
     try:
         data = request.get_json(force=True) or {}
         enrollment_id = data.get('enrollment_id')
@@ -5966,7 +6457,10 @@ def api_coaching_homework_submit():
                         if send_coaching_complete_email(current_user, enrollment):
                             enrollment.complete_email_sent = True
                     except Exception:
-                        pass
+                        capture_failure('email.coaching_complete',
+                                        'Programme-complete email failed; the enrolment '
+                                        'is marked completed regardless',
+                                        enrollment_id=enrollment.id)
 
         db.session.commit()
 
@@ -5982,7 +6476,9 @@ def api_coaching_homework_submit():
         })
 
     except Exception as e:
-        print(f'/api/coaching/homework error: {e}')
+        capture_failure('coaching.homework_submit',
+                        f'/api/coaching/homework error: {e}',
+                        enrollment_id=enrollment_id, module_order=module_order)
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Could not submit homework. Please try again.'})
 
@@ -6036,7 +6532,8 @@ Be specific and credible. Avoid generic advice. Think like a smart literary agen
         result = json.loads(response.choices[0].message.content)
         return jsonify({'success': True, **result})
     except Exception as e:
-        print(f"Research agent error: {e}")
+        capture_failure('ai.coaching_research', f"Research agent error: {e}",
+                        module_order=module_order)
         return jsonify({'success': False, 'error': 'Research agent encountered an error. Please try again.'})
 
 
@@ -6173,7 +6670,21 @@ def api_marketing_pitch_eval():
             if raw.startswith('json'): raw = raw[4:]
         feedback = json.loads(raw)
     except Exception as e:
-        print(f"Pitch eval error: {e}")
+        # BEHAVIOUR PRESERVED, NOT ENDORSED. `feedback` below is not a fallback
+        # message, it is fabricated praise: the author is shown two compliments
+        # about a pitch no model ever read, it is persisted to
+        # md.pitch_feedback_json, and the pitch_challenge XP is awarded on the
+        # way out — so from every angle the failure is indistinguishable from a
+        # successful evaluation. An OpenAI outage produces a run of identical
+        # "feedback" in the database with nothing marking it as synthetic.
+        #
+        # Left exactly as it is. This capture is what makes it visible, and the
+        # `op` tag is what lets somebody count how many rows are affected before
+        # deciding what the honest behaviour should be.
+        capture_failure('ai.pitch_eval',
+                        f"Pitch eval error: {e} — returning and PERSISTING the "
+                        f"hardcoded fallback praise, which is the existing behaviour",
+                        pitch_mode=pitch_mode, standalone=bool(standalone))
         feedback = {
             'bullets': ['Your pitch clearly communicates passion for the topic.',
                         'The concept is accessible and easy to follow.'],
@@ -6316,7 +6827,10 @@ def api_marketing_generate_plan():
         )
         plan = json.loads(resp.choices[0].message.content)
     except Exception as e:
-        print(f"Generate plan error: {e}")
+        # The one call in the request path allowed a two-minute budget, so this
+        # is also where a gunicorn thread gets held longest — worth knowing how
+        # often it ends this way rather than in a plan.
+        capture_failure('ai.marketing_plan', f"Generate plan error: {e}")
         return jsonify({'success': False, 'error': 'Could not generate plan. Please try again.'}), 500
 
     plan['goals'] = goals
@@ -6494,7 +7008,15 @@ def api_coaching_save_continue():
                 db.session.commit()
                 email_sent = True
             except Exception:
-                pass
+                # `email_sent` in the response is only honest about exceptions.
+                # send_coaching_homework_reminder_email() wraps send_email(),
+                # which RETURNS FALSE and never raises, so a genuinely failed
+                # send still lands on the line above and reports email_sent:true
+                # to the client. Reported, not changed.
+                capture_failure('coaching.save_continue_reminder',
+                                'Homework reminder send/commit failed on '
+                                '/api/coaching/save-continue',
+                                enrollment_id=enrollment_id, module_order=module_order)
 
     return jsonify({'success': True, 'email_sent': email_sent})
 
@@ -6688,8 +7210,11 @@ def api_evaluate():
         })
 
     except Exception as e:
-        print(f"Error: {e}")
-        traceback.print_exc()
+        # The catch-all around the whole of /api/evaluate. Everything an author
+        # can hit — upload parsing, the size gate, the insert, the thread spawn
+        # — ends here as one indistinguishable "unexpected error", and the
+        # author is told to try again on something that may fail every time.
+        capture_failure('api.evaluate', f"Error: {e}")
         return jsonify({'success': False, 'error': 'An unexpected error occurred. Please try again.'})
 
 
@@ -6949,8 +7474,7 @@ def api_submit():
         })
 
     except Exception as e:
-        print(f"/api/submit error: {e}")
-        traceback.print_exc()
+        capture_failure('api.submit', f"/api/submit error: {e}")
         return _json({'success': False, 'error': 'An unexpected error occurred. Please try again.'}, 500)
 
 
@@ -7004,8 +7528,11 @@ def download_pdf(submission_id):
             mimetype='application/pdf'
         )
     except Exception as e:
-        print(f"PDF download error: {e}")
-        traceback.print_exc()
+        # submission_id here is the RESULTS KEY from the URL, which for a new
+        # row is a 128-bit capability token — never put it in the context. The
+        # proposal's own short id is the safe identifier.
+        capture_failure('pdf.download_report', f"PDF download error: {e}",
+                        proposal_submission_id=proposal.submission_id)
         flash('Error generating PDF report. Please try again later.', 'error')
         return redirect(url_for('results', submission_id=submission_id))
 
@@ -7252,10 +7779,21 @@ def author_forgot_password():
                 </div>
             </body></html>
             """
+            # The try/except is kept because send_email() is not the only thing
+            # that can raise here, but it is NOT what catches a failed send:
+            # send_email() returns False and raises nothing. Checking the return
+            # value is the whole point of this block. The author is still told
+            # the same thing either way — see the flash below — so this changes
+            # nothing they see, only whether we know their reset never arrived.
             try:
-                send_email(email, 'Reset Your Password - Write It Great', html_content)
+                if not send_email(email, 'Reset Your Password - Write It Great', html_content):
+                    logger.error('Author password reset email did not send (author_id=%s); '
+                                 'the reset token is live but nobody has the link',
+                                 author.id)
             except Exception as e:
-                print(f"Author password reset email error: {e}")
+                capture_failure('email.author_password_reset',
+                                f"Author password reset email error: {e}",
+                                author_id=author.id)
 
         # Always show success to avoid email enumeration
         flash('If an account exists with that email, a reset link has been sent.', 'success')
@@ -7523,10 +8061,17 @@ def publisher_forgot_password():
                 </div>
             </body></html>
             """
+            # Same shape as author_forgot_password above: the return value, not
+            # the exception, is what tells you the reset never went out.
             try:
-                send_email(email, 'Reset Your Password - Write It Great', html_content)
+                if not send_email(email, 'Reset Your Password - Write It Great', html_content):
+                    logger.error('Publisher password reset email did not send '
+                                 '(publisher_id=%s); the reset token is live but '
+                                 'nobody has the link', publisher.id)
             except Exception as e:
-                print(f"Publisher password reset email error: {e}")
+                capture_failure('email.publisher_password_reset',
+                                f"Publisher password reset email error: {e}",
+                                publisher_id=publisher.id)
 
         flash('If an account exists with that email, a reset link has been sent.', 'success')
         return redirect(url_for('publisher_login'))
@@ -8369,6 +8914,12 @@ def sso_consume():
         db.session.commit()
     except Exception:
         db.session.rollback()
+        # Best-effort, and the sign-on continues either way. Captured because
+        # the jti INSERT immediately above is what makes these tokens single
+        # use: if the database is refusing writes here it was probably refusing
+        # them there too, and this is the cheapest place that notices.
+        capture_failure('sso.prune_consumed_jti',
+                        'Pruning consumed SSO jtis failed; sign-on continues')
 
     # ── Identity mapping (case-insensitive) ─────────────────────────────────
     # The explicit dashboard_email override wins; only accounts WITHOUT an
@@ -8878,7 +9429,10 @@ def admin_coaching_unlock_module(enrollment_id, module_order):
         try:
             send_coaching_module_unlocked_email(author, module_info, enrollment)
         except Exception:
-            pass
+            capture_failure('email.module_unlocked',
+                            'Module-unlocked email failed after an admin unlocked a '
+                            'module; the flash below still says it succeeded',
+                            enrollment_id=enrollment_id, module_order=module_order)
 
     flash(f'Module {module_order} unlocked for {author.name}.', 'success')
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
@@ -8943,14 +9497,20 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
                 try:
                     send_coaching_module_unlocked_email(enrollment.author, next_module_info, enrollment)
                 except Exception:
-                    pass
+                    capture_failure('email.module_unlocked_admin',
+                                    'Next-module-unlocked email failed after an admin '
+                                    'approved homework',
+                                    enrollment_id=enrollment_id, module_order=next_order)
         elif submission.module_order == len(COACHING_MODULES):
             enrollment.status = 'completed'
             enrollment.completed_at = enrollment.completed_at or datetime.utcnow()
             try:
                 send_coaching_complete_email(enrollment.author, enrollment)
             except Exception:
-                pass
+                capture_failure('email.coaching_complete_admin',
+                                'Programme-complete email failed after an admin '
+                                'approved the final module',
+                                enrollment_id=enrollment_id)
 
         flash('Homework approved and next module unlocked.', 'success')
 
@@ -8968,7 +9528,16 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
             if module_info:
                 send_coaching_homework_reviewed_email(enrollment.author, module_info, submission)
         except Exception:
-            pass
+            # The flash above is already on the wire and states as fact that the
+            # author was notified. It is set before the send on purpose (the
+            # send is best-effort), so an admin can request a revision, be told
+            # the author knows, and be wrong. Reported, not changed — and note
+            # the send helper returning False does not even reach this handler.
+            capture_failure('email.homework_reviewed',
+                            'Revision-requested email failed; the admin has already '
+                            'been told the author was notified',
+                            enrollment_id=enrollment_id,
+                            module_order=submission.module_order)
 
     db.session.commit()
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
@@ -9561,7 +10130,11 @@ def admin_knowledge_base_upload():
         elif ext == 'pdf':
             content_text = extract_text_from_pdf(BytesIO(file_bytes))
     except Exception as e:
-        print(f'KB extract error: {e}')
+        # content_text stays '' and the row is stored anyway, so the document
+        # lands in the knowledge base looking fine and contributes nothing to
+        # _get_kb_context() — every coaching prompt is quietly poorer and the
+        # admin who uploaded it has no way to tell.
+        capture_failure('admin.kb_extract', f'KB extract error: {e}', file_type=ext)
 
     doc = KnowledgeBaseDocument(
         title=title,
@@ -10329,7 +10902,14 @@ if _migrate_on_boot():
             db.create_all()
             run_migrations(strict=False)
         except Exception as e:
-            print(f"Migration note: {e}")
+            # "Migration note" undersells this: strict=False means the process
+            # goes on to serve traffic against a schema it just failed to
+            # bring up to date, and the next thing to touch the missing column
+            # 500s somewhere unrelated. This branch does not run on Heroku (the
+            # release phase owns the schema and CAN refuse) — but it is every
+            # laptop, and it is what runs if MIGRATIONS_STRICT=0 ever hands the
+            # job back to boot.
+            capture_failure('boot.migrate', f"Migration note: {e}")
 else:
     print('Boot migration skipped: the release phase (migrate.py) owns the schema. '
           'Set MIGRATE_ON_BOOT=1 to override.')

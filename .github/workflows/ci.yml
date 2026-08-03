@@ -105,6 +105,28 @@ jobs:
       - name: Every OpenAI call has a time budget
         run: python ci/check_ai_timeouts.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # reason as the steps around it, and it matters more here than usual: a
+      # new job would need a new required-check name, which lives in THREE
+      # places that drift apart silently (the live branch-protection policy,
+      # ci/setup_branch_protection.sh, and deploy.yml's BLOCKING_CHECKS). Adding
+      # a step to a job that is already required costs nothing and gates
+      # everything.
+      #
+      # It lives in this job rather than in security.yml because it is the only
+      # one that has already run `pip install -r requirements.txt`; the security
+      # jobs are deliberately static and install nothing but their own scanner.
+      #
+      # What it proves: that observability.py still stops Sentry shipping
+      # personal data. Every leak it checks for is an SDK DEFAULT -- request
+      # bodies up to 10,000 bytes, locals in every frame, no truncation, and a
+      # URL captured whatever else is off -- so a future edit that "simplifies"
+      # that file back toward the five-line documented install reintroduces all
+      # of them at once, and nothing else in CI would notice. It initialises
+      # against a dead local DSN and sends nothing anywhere.
+      - name: Sentry cannot ship personal data
+        run: python ci/check_sentry_scrub.py
+
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 

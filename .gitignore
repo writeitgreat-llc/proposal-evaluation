@@ -4,6 +4,21 @@ __pycache__/
 instance/
 *.db
 
+# Local virtualenv (runtime.txt pins 3.11; make it from a real 3.11, not the
+# system python3).
+#
+# NOT here because of gitleaks. That reason was written down and it is wrong:
+# gitleaks honours .gitignore, so `gitleaks dir .` skips a local .venv either
+# way (checked against the pinned 8.30.1 with the entry removed — still exit 0),
+# and CI never has one at scan time.
+#
+# The reason is plain hygiene, and it matters more here than on the private
+# repos: this repo is PUBLIC, so a `git add -A` that swept in site-packages
+# would publish thousands of vendored files nobody reviewed, permanently, in
+# a tree where every file is assumed to have been read by someone.
+.venv/
+venv/
+
 # env files -- this repo is PUBLIC on GitHub; a committed .env is leaked forever
 .env
 .env.*

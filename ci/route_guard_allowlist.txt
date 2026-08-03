@@ -58,3 +58,26 @@
 # somebody auditing "what in this app is reachable without a login" will look.
 /e                                   # analytics beacon: no parameter, write-only outbox, no client-controlled identity
 /consent                             # records the caller's own cookie choice; sets only their own cookie
+
+# --- liveness probe: deliberately public, no parameter at all ---
+# Added 2026-08-03 with the error-tracking + uptime work. An external monitor
+# has to be able to call this without credentials, which is the whole point of
+# it: a check that needs a login only proves the login works.
+#
+# Against the three questions at the top of this file: no URL parameter, so
+# nothing to guess or enumerate, and it READS nothing belonging to anybody. The
+# response is four fields — ok, db, release, time — none of which is a
+# secret. `release` is the Heroku release number, which is already visible in
+# every deploy log and identifies a build, not a person.
+#
+# The one real disclosure decision here is what a FAILURE says, and the answer
+# is deliberately "error" and nothing else: an unredacted SQLAlchemy connection
+# error renders the DSN, so the exception text goes to Sentry and the log and
+# never into the body. If anyone ever adds detail to that response, this line
+# stops being true.
+#
+# NOTE, same as the two lines above: this is documentation, not enforcement.
+# check_route_guards.py only inspects rules containing <...>, so it never sees
+# this route; it is listed because this file is where somebody auditing "what
+# in this app is reachable without a login" will look.
+/healthz                             # liveness probe: no parameter, reads nothing, never echoes the exception

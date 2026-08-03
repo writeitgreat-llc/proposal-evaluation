@@ -380,6 +380,139 @@ phase, that deploy simply fails and the old site stays up.
 
 ---
 
+## Monitoring
+
+Two independent things, and they answer different questions: `/healthz` tells you
+**whether the app is up**, Sentry tells you **what broke**. Neither replaces the
+other and neither is on by default — `/healthz` needs a monitor pointed at it,
+Sentry needs a `SENTRY_DSN` set.
+
+### `/healthz`
+
+```bash
+curl -i https://authors.writeitgreat.com/healthz
+```
+
+Public, unauthenticated, never rate limited, never cached. It runs a real
+`SELECT 1`, so it reports "the dyno is up and the database is not" — the failure
+a static 200 hides.
+
+**The response shape is a three-app contract.** `writeitgreat.com`,
+`authors.writeitgreat.com` and `app.writeitgreat.com` all answer `GET /healthz`
+identically so that **one** uptime-monitor template covers the fleet:
+
+| | healthy | unhealthy |
+|---|---|---|
+| status | `200` | `503` |
+| `ok` | `true` | `false` |
+| `db` | `"ok"` | `"error"` |
+| `release` | Heroku release/commit, or `null` | same |
+| `time` | `2026-08-03T16:04:08.486570+00:00` | same |
+
+Headers on both: `Cache-Control: no-store, no-cache, must-revalidate` and
+`CDN-Cache-Control: no-store`.
+
+Configure the monitor as **`GET /healthz`, expect `200`, body contains
+`"ok":true`** — that rule is valid against all three apps unchanged.
+
+Things worth knowing before you change anything here:
+
+- **`time` is timezone-aware UTC** (`+00:00`, not a bare `Z`). All three apps
+  emit the same form; a parser fed one of each will eventually be fed the wrong
+  one during an incident.
+- **Renaming a key is a three-repo change.** It does not break this app, it
+  breaks the monitor for all three, silently — a keyword rule that stops
+  matching reads as "down", or as "up forever", depending on how it was written.
+  `time` was called `checked_at` here until 2026-08-03; that is the last time it
+  is allowed to differ.
+- **The body never contains the exception.** A SQLAlchemy/psycopg2 connection
+  error renders the DSN — host, database, sometimes the password — into its
+  `str()`, and this endpoint is public. Detail goes to the log; the caller gets
+  the word `error`. Do not "improve" the diagnostics here.
+- **A DB failure is logged, not sent to Sentry.** During an outage every real
+  request is already failing and already being reported; capturing here would
+  re-report a known outage once per poll and eat the burst budget that carries
+  the events saying *which* query broke.
+- **The probe is bounded, by three settings covering three different failures.**
+  `SET LOCAL statement_timeout = '5s'` in the view bounds a slow or queued query
+  on a database that is still answering (skipped on SQLite, which would raise on
+  it). `connect_timeout` bounds opening a connection. `tcp_user_timeout` bounds
+  an already-open socket that has stopped being answered — and that last one is
+  the case a statement timeout can never reach, because the setting would have
+  to travel over the wedged socket to take effect. It is also what covers
+  `pool_pre_ping`, which runs before the view's first statement.
+  Without these, one poll pins one of the four gunicorn threads for the full
+  `--timeout 120`, once a minute, and the probe becomes the outage instead of
+  reporting it.
+  Two caveats: `tcp_user_timeout` is a **Linux-only** libpq option, real on a
+  dyno and ignored on a Mac, so it cannot be reproduced locally; and there is
+  deliberately **no session-wide `statement_timeout`**, because `migrate.py`
+  imports this config during the release phase and a ceiling there would abort a
+  long migration and fail the deploy.
+- **`release` is `null` until someone enables the dyno metadata:**
+
+  ```bash
+  heroku labs:enable runtime-dyno-metadata -a proposal-evaluation
+  ```
+
+  Until then this field is honestly `null` rather than wrong, and Sentry events
+  also ship with no release (which is what kills commit/stack-frame
+  association). Setting `SENTRY_RELEASE` explicitly works too.
+
+`/healthz` is asserted on by `ci/smoke_app.py`, so a 404 or a 503 in CI fails the
+build before it can page anybody.
+
+### Sentry (`SENTRY_*` config vars)
+
+All of the wiring lives in `observability.py`, which is vendored
+**byte-identically** into all three Write It Great repos — do not edit it in one
+place. `ci/check_sentry_scrub.py` (a step in `proposal-ci`) proves it still
+scrubs; `CONFIG_VERSION` in that file is the only cross-repo drift detector
+there is, and it rides on every event as the `sentry_config` tag.
+
+| Var | Default | What it does |
+|---|---|---|
+| `SENTRY_DSN` | unset | **The on switch.** Unset, `init_sentry()` returns `False` having done nothing — no client, no traffic, nothing to leak. That is why CI, `ci/smoke_app.py` and laptops are silent. |
+| `SENTRY_ENVIRONMENT` | `production` | Environment tag on every event. |
+| `SENTRY_RELEASE` | unset | Overrides release detection. Prefer the 40-char commit SHA — Sentry maps stack frames to commits with a SHA and cannot with `v62`. |
+| `SENTRY_SAMPLE_RATE` | `1.0` | Fraction of error events sent. Lower it only during an incident. |
+| `SENTRY_MAX_EVENTS_PER_HOUR` | `15` | Per-process hourly ceiling. Bounds a burst, not a month. |
+| `SENTRY_MAX_PER_FINGERPRINT_PER_HOUR` | `3` | Per-issue hourly ceiling, so one hot loop cannot crowd out everything else. |
+| `LOG_LEVEL` | `INFO` | Logging threshold. **It also gates Sentry**: `LoggingIntegration` turns `ERROR` records into events, and a record the logger drops never reaches Sentry, so `LOG_LEVEL=CRITICAL` silently turns log-derived events off. |
+
+**THIS REPO IS PUBLIC.** The DSN lives in Heroku config vars only. Never write
+one into a file here, never add a fallback, never put one in a workflow.
+
+```bash
+heroku config:set SENTRY_DSN='https://…@…ingest.sentry.io/…' -a proposal-evaluation
+heroku config:unset SENTRY_DSN -a proposal-evaluation   # the off switch
+```
+
+Two things that are deliberate and look like bugs:
+
+- **`init_sentry()` is wrapped in `try/except Exception: pass`.** Monitoring must
+  never be able to take the app down. `import app` *is* the release phase here
+  (`release: python migrate.py` imports it), so unwrapped, a typo'd `SENTRY_DSN`
+  would raise `BadDsn` and abort a **schema** release over a config var that has
+  nothing to do with the schema — blocking the deploy of an already-merged
+  `main`. It is silent because logging is configured a few lines later; check
+  the `sentry_config` tag on events if you need to know Sentry came up.
+- **`hide_parameters: True` in `SQLALCHEMY_ENGINE_OPTIONS`** is not redundant
+  with the scrubbing in `observability.py`. That scrubbing runs in `_before_send`,
+  a Sentry hook, which does not run at all when `SENTRY_DSN` is unset and never
+  sees the log stream anyway. Without `hide_parameters`, a failed `INSERT` writes
+  the bound values — author email, password hash, proposal text — into the
+  exception message, which `logger.exception()` puts on stdout, which on Heroku
+  is the log drain. One protects Sentry, the other protects the logs. Keep both.
+
+Recommended order for turning DSNs on, one app per week: `wig-dashboard` first
+(internal only, so a scrubbing mistake exposes staff data rather than
+customers'), **this app** second — it carries manuscripts, so read the first
+day's events for stray `[parameters: …]` before trusting it — and the marketing
+site last.
+
+---
+
 ## Running the checks locally
 
 Everything CI runs is a committed script — no CI-only magic.

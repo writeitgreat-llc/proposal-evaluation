@@ -59,6 +59,12 @@ PUBLIC_ROUTES: list[tuple[str, tuple[int, ...]]] = [
     ("/author/login", (200,)),
     ("/author/register", (200,)),
     ("/publisher/login", (200,)),
+    # 200 and not 503, which is the point: /healthz runs a real SELECT 1, so a
+    # 200 here proves the route works AND that the schema built above is
+    # reachable. It is also the only route in this list an external uptime
+    # monitor depends on -- if it starts 503ing or 404ing, the monitor either
+    # pages for nothing or stops watching, and both are worse than no monitor.
+    ("/healthz", (200,)),
 ]
 
 # The marketing site hard-links to this exact path from several pages.

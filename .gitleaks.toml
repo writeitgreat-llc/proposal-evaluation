@@ -1,0 +1,60 @@
+# gitleaks configuration.
+#
+# READ BEFORE ADDING A LINE. This repo is PUBLIC and the `gitleaks` job is a
+# hard gate on every PR. Every entry here is a finding somebody decided not to
+# act on, so each one needs a reason written down and each one must be as narrow
+# as gitleaks allows.
+#
+# `useDefault = true` keeps the entire stock ruleset. This file only ever
+# subtracts one specific literal from it; it must never become a place where
+# rules are turned off.
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# ci/check_sentry_scrub.py contains
+#
+#     TOKEN = "9f8a...4c"   # uuid4().hex-shaped
+#
+# a hardcoded constant in the Sentry scrubbing self-test. It is not a credential
+# for anything and never was: the check builds a synthetic Sentry event with
+# that value in the URL path, the query string and the Referer header, and
+# asserts that none of the three survives _before_send. A uuid4-shaped literal
+# is the entire point of it — a placeholder like "TOKEN123" would not exercise
+# observability.py's token-shape regex and the check would pass while proving
+# nothing.
+#
+# gitleaks flags it on `generic-api-key`, which is an entropy rule: 32 hex
+# characters score 3.906 against its 3.5 threshold, and the variable is helpfully
+# named TOKEN. There is no way to stop it matching without weakening the test,
+# and ci/check_sentry_scrub.py is vendored BYTE-IDENTICALLY into all three Write
+# It Great repos, so an inline `gitleaks:allow` comment there would break that
+# parity to satisfy a scanner only this repo runs.
+#
+# WHY THIS FORM, AND NOT THE TWO OBVIOUS ALTERNATIVES:
+#
+#   * NOT a `paths` allowlist. That makes gitleaks skip the whole file, so a
+#     real key pasted into it later is never scanned — a permanent blind spot in
+#     a public repo, and invisible because the job stays green.
+#   * NOT a `.gitleaksignore` fingerprint. Those pin a LINE NUMBER
+#     (`path:rule:line`), and this file's line numbers already moved once when
+#     the CONFIG_VERSION "2" assertion was added. A suppression that breaks
+#     whenever the file it protects is edited turns a required check red on the
+#     one file whose whole job is byte-parity across three repos.
+#
+# A regex allowlist on the literal itself is immune to both: the file stays
+# fully scanned, the line may move freely, and only this exact 32-character
+# string is exempt. Verified against the pinned gitleaks 8.30.1 (see
+# GITLEAKS_VERSION in .github/workflows/security.yml) that a GitHub-PAT-shaped
+# secret planted in that same file is still caught. The anchors are load-bearing
+# — without ^...$ the pattern would also excuse any longer secret that happens
+# to contain these characters.
+#
+# security.yml runs three scans — `gitleaks dir .`, the PR-diff `gitleaks git`,
+# and the full-history `gitleaks git --log-opts=--all`. A repo-root
+# .gitleaks.toml is picked up by all three; it needs no --config flag and no
+# workflow change.
+[[allowlists]]
+description = "The fake reset token ci/check_sentry_scrub.py feeds its synthetic event"
+regexes = ['''^9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c$''']

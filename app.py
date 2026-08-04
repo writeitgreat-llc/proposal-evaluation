@@ -1253,6 +1253,20 @@ class Author(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     password_reset_token = db.Column(db.String(100))
     password_reset_expires = db.Column(db.DateTime)
+    # Email confirmation. NULL means "this address has never been proven to
+    # belong to whoever typed it". Deliberately a nullable TIMESTAMP rather
+    # than a boolean: a boolean needs matching defaults on BOTH the model and
+    # the _add() line or create_all() and run_migrations() build different
+    # schemas (app.py:1378-1385 documents that trap costing a live bug), while
+    # a nullable timestamp has no default on either side and records WHEN,
+    # which is what an audit of the July spam actually needed.
+    #
+    # Every row that existed before this shipped is backfilled as verified in
+    # run_migrations() — see 'author.email_verified_backfill'. Without that,
+    # every real author becomes unverified the instant this deploys.
+    email_verified_at = db.Column(db.DateTime)
+    email_verify_token = db.Column(db.String(100))
+    email_verify_expires = db.Column(db.DateTime)
 
     # Markers to distinguish user types in user loader
     is_author = True
@@ -1278,6 +1292,20 @@ class Author(UserMixin, db.Model):
         if datetime.utcnow() > self.password_reset_expires:
             return False
         return True
+
+    def generate_email_verify_token(self):
+        """Mint the confirm-your-address token. Same shape as the reset token
+        above so there is one pattern to reason about, but a much longer life:
+        a reset is something you asked for seconds ago, whereas this arrives
+        unbidden and competes with a spam folder and a weekend. An hour would
+        turn ordinary human delay into a support ticket."""
+        self.email_verify_token = uuid.uuid4().hex
+        self.email_verify_expires = datetime.utcnow() + timedelta(days=14)
+        return self.email_verify_token
+
+    @property
+    def email_is_verified(self):
+        return self.email_verified_at is not None
 
     # Admin-created account fields
     pending_setup = db.Column(db.Boolean, default=False)   # True until they set their own password
@@ -4045,15 +4073,66 @@ def send_coaching_complete_email(author, enrollment):
 # ADMIN INVITE & ONE-PAGER EMAILS
 # ============================================================================
 
-def send_author_welcome_email(author):
-    """Send a warm welcome email to a newly self-registered author."""
+def send_author_verify_email(to_email, to_name, token):
+    """Ask a new registrant to prove the address is theirs.
+
+    Plain values rather than an ORM instance, because this is called from a
+    daemon thread with no app context and the row is expired by the commit that
+    precedes it.
+
+    Kept deliberately plain and transactional. The whole reason this email
+    exists is that the branded welcome used to go to anyone whose address a bot
+    typed into the form; if this replacement carried the same marketing payload
+    it would draw the same complaints and damage the same sending reputation.
+    No prompt, no call to action beyond the one link, nothing to mistake for
+    a newsletter.
+
+    The registrant's name appears NOWHERE in here — not in the subject, not in
+    the greeting. That is the specific defect being fixed: the old welcome put
+    whatever string was typed into the form straight into the subject line, so
+    223 strangers received mail from us titled "Welcome to Write It Great,
+    hshrfhpwmp!". Leaving the name out removes the HTML-injection surface as
+    well, since nothing in this file escapes it.
+    """
+    app_url = APP_BASE_URL
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.7;color:#333;">
+    <div style="max-width:600px;margin:0 auto;padding:24px;">
+        {_coaching_email_header()}
+        <p>Hi there,</p>
+        <p>Someone used this address to create an account at Write It Great. Please confirm it so we know we can reach you.</p>
+        <p style="text-align:center;margin:2rem 0;">
+            <a href="{app_url}/author/verify-email/{token}" style="display:inline-block;padding:14px 28px;background:#2D1B69;color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
+                Confirm my email address
+            </a>
+        </p>
+        <p style="font-size:0.85rem;color:#888;">If you did not create an account at Write It Great, you can ignore this email and nothing further will be sent to you.</p>
+        {_coaching_email_footer()}
+    </div></body></html>"""
+    try:
+        return send_email(to_email, 'Confirm your email address', html_content)
+    except Exception as e:
+        print(f"Author verify email error: {e}")
+        return False
+
+
+def send_author_welcome_email(to_email, to_name):
+    """Send a warm welcome email to an author who has confirmed their address.
+
+    Only ever sent AFTER confirmation — see author_verify_email(). Do not wire
+    this back into registration: sending it there is what turned the sign-up
+    form into a relay for 223 unsolicited branded emails in July 2026.
+
+    Takes plain values rather than the ORM instance it used to take, because
+    its one caller runs it in a daemon thread with no app context, where an
+    instance expired by the preceding commit is a latent AttributeError.
+    """
     app_url = APP_BASE_URL
     import random
     prompt = random.choice(REENGAGEMENT_PROMPTS)
     html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.7;color:#333;">
     <div style="max-width:600px;margin:0 auto;padding:24px;">
         {_coaching_email_header()}
-        <p>Hi {author.name},</p>
+        <p>Hi {to_name},</p>
         <p>Welcome to <strong>Write It Great</strong> — you've just done something most aspiring authors never do: you took the first step. 🎉</p>
         <p>Here's your mission for the next 20 minutes:</p>
         <div style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:6px;padding:16px 20px;margin:20px 0;">
@@ -4070,7 +4149,7 @@ def send_author_welcome_email(author):
         {_coaching_email_footer()}
     </div></body></html>"""
     try:
-        return send_email(author.email, f'Welcome to Write It Great, {author.name}! Here\'s your first step 🚀', html_content)
+        return send_email(to_email, f'Welcome to Write It Great, {to_name}! Here\'s your first step 🚀', html_content)
     except Exception as e:
         print(f"Welcome email error: {e}")
         return False
@@ -7269,6 +7348,30 @@ _submit_rate = {}
 # Wix endpoint use up an author's upload allowance and vice versa. See the
 # comment in api_evaluate for why that endpoint needs two of them.
 _evaluate_rate = {}
+
+# Account creation gets its own two buckets, so a burst of sign-ups cannot
+# consume the proposal-upload allowance of an author who shares an address.
+#
+# TWO of them, for the reason api_evaluate spells out at length: behind
+# Cloudflare `request.remote_addr` is an EDGE address — shared between
+# unrelated visitors and rotated between requests. A single tight limit keyed
+# on it would throttle real authors who happen to share an edge (precisely the
+# campaign case) while binding an attacker not at all. So the peer bucket stays
+# deliberately loose and exists only to bound a direct-to-origin flood, and the
+# per-visitor control is keyed on (peer, client_ip()) — client_ip() reads
+# CF-Connecting-IP, which is the real visitor for Cloudflare traffic, and
+# pairing it with the unforgeable peer stops a direct-to-origin caller burning
+# a named author's allowance by claiming their address.
+#
+# Be honest about what neither bucket buys: this would NOT have caught the July
+# 2026 flood. That bot paced itself at roughly one account an hour — across 225
+# registrations only ONE arrived within two minutes of another — precisely so
+# that limits like these never fire. Turnstile is what stops that attacker.
+# These are for the next one, who will not be so patient.
+_register_peer_rate = {}
+_register_rate = {}
+REGISTER_PEER_PER_HOUR = 120
+REGISTER_PER_HOUR = 8
 _evaluate_peer_rate = {}
 
 # The AI coach endpoints. Keyed on current_user.id, not an address, and that is
@@ -7297,6 +7400,82 @@ _RATE_BUCKET_MAX_KEYS = 10000
 
 def _last_hit(hits):
     return hits[-1] if hits else 0.0
+
+
+# ── Turnstile (Cloudflare's human check) ─────────────────────────────────────
+#
+# Deliberately in the FORM rather than as a WAF rule in front of the page. A WAF
+# Managed Challenge was switched on during the 4 Aug incident and stopped the
+# bot immediately, but it interposes a full-page interstitial on
+# /author/register — which is the landing point of every campaign link from the
+# marketing site. It produced a blank screen on a real first visit and was only
+# survived by knowing to go back and retry. On the conversion path that is a
+# lost author. A widget inside the form cannot do that: the page always renders,
+# and the check happens on submit.
+#
+# The SITE key is public by design (it ships in the HTML) and is safe in this
+# public repo. The SECRET key is read from the environment and must never
+# appear here.
+TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
+TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
+TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+
+
+def turnstile_enabled():
+    """Both halves or nothing.
+
+    A half-configured widget is worse than none: with only a site key the page
+    renders a challenge whose answer nothing checks, and with only a secret
+    every real visitor is rejected for failing to send a token no page asked
+    them for. Returning False here makes the whole feature a no-op, which is
+    also what lets CI, the smoke test and a local checkout register normally
+    without holding Cloudflare credentials.
+    """
+    return bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY)
+
+
+def _turnstile_ok(token, remote_ip=None):
+    """True when Cloudflare vouches for this submission.
+
+    The two failure directions are NOT symmetric, so they are handled
+    differently on purpose:
+
+    * A token that is missing, malformed or rejected is a definite answer —
+      refuse. That is the bot case.
+    * The verify endpoint being unreachable, slow or 5xx is NOT an answer about
+      the visitor at all; it is our infrastructure failing. Refusing there would
+      take account creation down for everyone the moment Cloudflare had a bad
+      minute, on the exact page a paid campaign points at. So that case is
+      allowed through and logged loudly.
+
+    That is a real trade: during a Cloudflare outage the door is open. The
+    honeypot, the rate limit and email confirmation all still apply, and an
+    outage is rare and short compared with the cost of a dead sign-up form
+    during a campaign.
+    """
+    if not turnstile_enabled():
+        return True
+    if not token:
+        return False
+    try:
+        payload = {'secret': TURNSTILE_SECRET_KEY, 'response': token}
+        if remote_ip:
+            payload['remoteip'] = remote_ip
+        # Short timeout: this sits in the request path of a form POST, and a
+        # visitor waiting on a hung third party is a visitor who leaves.
+        resp = http_requests.post(TURNSTILE_VERIFY_URL, data=payload, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        # warning, not info: nothing in this app configures logging, so the
+        # root logger's WARNING level is the floor for anything that actually
+        # reaches the logs.
+        app.logger.warning('Turnstile verification unreachable, allowing signup: %s', e)
+        return True
+    if not data.get('success'):
+        app.logger.warning('Turnstile rejected a signup: %s', data.get('error-codes'))
+        return False
+    return True
 
 
 def _check_rate_limit(ip, max_requests=10, window=3600, bucket=None):
@@ -7557,6 +7736,38 @@ def author_register():
         session.pop('user_type', None)
 
     if request.method == 'POST':
+        # Honeypot: a field the CSS parks off-screen, so no human and no screen
+        # reader meets it. Named _gotcha rather than website/url/phone because
+        # password managers and form-fillers populate off-screen fields with
+        # THOSE names, and a filled trap here silently discards a real author.
+        # Answer with the ordinary success redirect so a bot learns nothing and
+        # retries nothing, but create nothing.
+        if request.form.get('_gotcha', '').strip():
+            app.logger.warning('Author signup honeypot tripped; no account created.')
+            return redirect(url_for('author_login'))
+
+        # Peer first, then the per-visitor key — same order and same reasoning
+        # as api_evaluate: the unforgeable value is checked first so a rejected
+        # request never gets far enough to insert a forgeable key, which would
+        # otherwise let an attacker rotating a header fill the dict while being
+        # refused.
+        peer_ip = request.remote_addr or 'unknown'
+        caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
+        if (not _check_rate_limit(peer_ip, max_requests=REGISTER_PEER_PER_HOUR,
+                                  window=3600, bucket=_register_peer_rate)
+                or not _check_rate_limit(caller_key, max_requests=REGISTER_PER_HOUR,
+                                         window=3600, bucket=_register_rate)):
+            flash('Too many sign-up attempts from this connection. '
+                  'Please wait a little while and try again.', 'error')
+            return render_template('author_register.html',
+                                   turnstile_site_key=TURNSTILE_SITE_KEY)
+
+        if not _turnstile_ok(request.form.get('cf-turnstile-response', ''), peer_ip):
+            flash("We could not confirm you're human. Please reload the page "
+                  'and try again.', 'error')
+            return render_template('author_register.html',
+                                   turnstile_site_key=TURNSTILE_SITE_KEY)
+
         name = request.form.get('name', '').strip()
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
@@ -7564,15 +7775,18 @@ def author_register():
 
         if not all([name, email, password]):
             flash('All fields are required.', 'error')
-            return render_template('author_register.html')
+            return render_template('author_register.html',
+                                   turnstile_site_key=TURNSTILE_SITE_KEY)
 
         if password != confirm:
             flash('Passwords do not match.', 'error')
-            return render_template('author_register.html')
+            return render_template('author_register.html',
+                                   turnstile_site_key=TURNSTILE_SITE_KEY)
 
         if len(password) < 8:
             flash('Password must be at least 8 characters.', 'error')
-            return render_template('author_register.html')
+            return render_template('author_register.html',
+                                   turnstile_site_key=TURNSTILE_SITE_KEY)
 
         existing = Author.query.filter_by(email=email).first()
         if existing:
@@ -7581,6 +7795,7 @@ def author_register():
 
         author = Author(email=email, name=name)
         author.set_password(password)
+        verify_token = author.generate_email_verify_token()
         db.session.add(author)
         db.session.commit()
 
@@ -7590,15 +7805,94 @@ def author_register():
 
         session['user_type'] = 'author'
         login_user(author)
-        # Fire-and-forget welcome email
-        threading.Thread(target=send_author_welcome_email, args=(author,), daemon=True).start()
+
+        # The welcome email now waits for the address to be confirmed, and that
+        # is the single most important line in this change.
+        #
+        # Until 4 Aug 2026 this fired unconditionally, which meant anyone could
+        # type a stranger's address into this form and have a branded "Welcome
+        # to Write It Great" message sent to them from hello@writeitgreat.com.
+        # A bot did exactly that 223 times between 19 July and 4 August, using
+        # harvested real addresses, with its own generated gibberish in the
+        # subject line. The form was a free relay pointed at the account the
+        # whole company sends client mail from.
+        #
+        # What goes out now is a plain confirm-your-address email, which is
+        # what the recipient's mail provider expects from a sign-up form and
+        # what a stranger can ignore without it looking like spam from us. It
+        # does NOT make the relay harm zero — a bot that gets past Turnstile
+        # still causes one transactional email to whatever address it typed —
+        # but it removes the marketing payload and the branded subject, which
+        # is the part that draws complaints.
+        #
+        # Plain values into the thread, never the ORM instance: `author` is
+        # expired by the commit above and the thread has no app context. Every
+        # other threaded sender in this file does this and says so; this call
+        # site was the one exception, and only worked by luck because
+        # login_user() happens to re-load the row first.
+        threading.Thread(target=send_author_verify_email,
+                         args=(author.email, author.name, verify_token),
+                         daemon=True).start()
+
+        # The funnel event still fires HERE, not on confirmation, and that is
+        # deliberate. Gating it would mean every real author who never gets
+        # round to clicking the link vanishes from Andy's pipeline — trading a
+        # spam problem for a lost-lead problem, which is a worse trade. Turnstile
+        # is what keeps bots out of the pipeline; this event stays honest about
+        # who arrived.
         _emit_funnel_event('author_registered', f'pe-reg-{author.id}',
                            author_name=author.name, author_email=author.email)
-        flash(f'Welcome, {name}! Your account has been created.', 'success')
+        flash(f"Welcome, {name}! Please check {email} and confirm your address "
+              'so we can send you your next step.', 'success')
         return redirect(url_for('author_dashboard'))
 
     total_authors = Author.query.count()
-    return render_template('author_register.html', total_authors=total_authors)
+    return render_template('author_register.html', total_authors=total_authors,
+                           turnstile_site_key=TURNSTILE_SITE_KEY)
+
+
+@app.route('/author/verify-email/<token>')
+def author_verify_email(token):
+    """Confirm an address, then release the welcome email and open the funnel.
+
+    Unauthenticated on purpose: the link is followed from a mail client, which
+    may well be a different browser or device from the one that registered, and
+    demanding a login first is how confirmation links get abandoned. The token
+    is the credential — uuid4, single-use, cleared on consumption, and expiring
+    after fourteen days.
+    """
+    author = Author.query.filter_by(email_verify_token=token).first() if token else None
+    if author is None:
+        flash('That confirmation link is not valid. If you have already '
+              'confirmed, just log in.', 'error')
+        return redirect(url_for('author_login'))
+
+    if author.email_is_verified:
+        flash('Your email address is already confirmed. Please log in.', 'success')
+        return redirect(url_for('author_login'))
+
+    if author.email_verify_expires and datetime.utcnow() > author.email_verify_expires:
+        flash('That confirmation link has expired. Please ask us to send a new '
+              'one at hello@writeitgreat.com.', 'error')
+        return redirect(url_for('author_login'))
+
+    # Read the values out BEFORE the commit expires the instance — the thread
+    # below has no app context and could not re-load them.
+    to_email, to_name = author.email, author.name
+
+    author.email_verified_at = datetime.utcnow()
+    author.email_verify_token = None
+    author.email_verify_expires = None
+    db.session.commit()
+
+    # NOW the welcome email goes out — to an address we know reaches the person
+    # who asked for it.
+    threading.Thread(target=send_author_welcome_email,
+                     args=(to_email, to_name), daemon=True).start()
+
+    flash('Thank you — your email address is confirmed.', 'success')
+    return redirect(url_for('author_dashboard') if current_user.is_authenticated
+                    else url_for('author_login'))
 
 
 @app.route('/author/login', methods=['GET', 'POST'])
@@ -10611,6 +10905,45 @@ def run_migrations(strict=True):
     _add('author', 'last_login_at TIMESTAMP')
     _add('author', 'streak_days INTEGER DEFAULT 0')
     _add('author', 'last_active_date DATE')
+    _add('author', 'email_verified_at TIMESTAMP')
+    _add('author', 'email_verify_token VARCHAR(100)')
+    _add('author', 'email_verify_expires TIMESTAMP')
+
+    # Every author who existed before email confirmation shipped is verified by
+    # definition — they registered when registering was all there was. Without
+    # this, the ALTER above leaves them NULL, NULL reads as "never confirmed",
+    # and every real author is treated as unproven on the first request after
+    # release.
+    #
+    # _run, NOT _repair, and the difference is the whole point. A repair
+    # re-executes on every release (including config-var changes and
+    # rollbacks), so `SET email_verified_at = now() WHERE email_verified_at IS
+    # NULL` would quietly verify every genuine new signup that had not got
+    # round to clicking the link yet, and the feature would defeat itself
+    # within a day of shipping. _run is ledgered: it happens exactly once, in
+    # the same transaction as its ledger row, and a failure aborts the release
+    # rather than being swallowed — which is right, because the failure mode
+    # here is locking real authors out of their own accounts.
+    #
+    # created_at, not now(): it keeps the audit honest, and it is COALESCEd
+    # because created_at is nullable on rows old enough to predate its default.
+    # This also marks the July bot accounts verified. That is deliberate and
+    # harmless — they are being deleted separately, and the alternative (a
+    # cleverer WHERE clause) risks excluding a real author, which is the one
+    # outcome that actually costs something.
+    # The `tracked` + `if not in done` guard is load-bearing, not boilerplate:
+    # _run() does NOT check the ledger itself (its callers do — see the
+    # results_token index below), so calling it bare re-executes the UPDATE on
+    # every single release. That was caught by test, not by reading: it silently
+    # verified a genuine unconfirmed signup on the next deploy, which is the
+    # exact failure this whole feature exists to prevent.
+    bf_key = 'author.email_verified_backfill'
+    tracked.append(bf_key)
+    if bf_key not in done:
+        _run(bf_key, [
+            "UPDATE author SET email_verified_at = COALESCE(created_at, CURRENT_TIMESTAMP) "
+            "WHERE email_verified_at IS NULL",
+        ])
 
     # ── one_pager_submission ───────────────────────────────────────────────────
     _add('one_pager_submission', 'admin_notes TEXT')

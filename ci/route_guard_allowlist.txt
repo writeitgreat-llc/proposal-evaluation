@@ -17,6 +17,15 @@
 /publisher/reset-password/<token>    # uuid4 reset token, 1h expiry, cleared on use
 /admin/reset-password/<token>        # uuid4 reset token, 1h expiry, cleared on use
 
+# Email confirmation. Unauthenticated by design: the link is followed from a
+# mail client, often on a different device from the one that registered, and
+# requiring a login first is how confirmation links get abandoned. The token is
+# the credential — uuid4, single-use, cleared on consumption, 14-day expiry
+# (longer than a password reset because this one arrives unbidden and competes
+# with a spam folder). Confirming grants no privilege: it only releases the
+# welcome email and records the timestamp.
+/author/verify-email/<token>         # uuid4 verify token, 14d expiry, cleared on use
+
 # --- evaluation results: capability URL mailed to the author ---
 # FIXED 2026-07-21 (security/results-tokens). The old note here warned that
 # generate_submission_id() ("WIG-<YYYYMMDD>-<5 hex>", ~20 bits behind a

@@ -11,7 +11,7 @@ edit that "simplifies" observability.py back toward the documented five-line
 install will reintroduce all of them at once, and nothing else in CI would
 notice.
 
-Two things are checked, and the second is the one that matters:
+Three things are checked, and the second is the one that matters:
 
   1. That init_sentry() produces a client whose options are what we think.
      Checked by initialising against a DEAD LOCAL DSN -- init succeeds, the
@@ -21,6 +21,13 @@ Two things are checked, and the second is the one that matters:
 
   2. That a synthetic event carrying every kind of secret these apps actually
      handle comes out the far side of _before_send with none of them left.
+
+  3. That every event is tagged with the KIND of process that produced it, so
+     a maintenance script crashing on a one-off dyno cannot be mistaken for the
+     public site falling over. This one is checked end to end, on an event read
+     back off the transport, because the failure it guards against -- a tag
+     that is computed correctly and then never reaches an event -- looks
+     exactly like success from inside the module.
 """
 
 from __future__ import annotations
@@ -54,6 +61,11 @@ TOKEN = "9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"  # uuid4().hex-shaped
 def main() -> int:
     os.environ["SENTRY_DSN"] = DEAD_DSN
     os.environ.pop("SENTRY_SAMPLE_RATE", None)
+    # Pose as the one-off dyno from the incident the process_type tag exists
+    # for. init_sentry() reads DYNO once, so this has to be set BEFORE it runs;
+    # section 7 then proves the tag reached a real event, not just that the
+    # helper returns the right string.
+    os.environ["DYNO"] = "run.1234"
 
     initialised = observability.init_sentry("ci-selftest")
     check(initialised, "init_sentry() returned False with SENTRY_DSN set")
@@ -200,9 +212,61 @@ def main() -> int:
     os.environ.pop("SENTRY_MAX_EVENTS_PER_HOUR", None)
     os.environ.pop("SENTRY_MAX_PER_FINGERPRINT_PER_HOUR", None)
 
-    # --- 7. cross-repo drift ------------------------------------------------
-    check(observability.CONFIG_VERSION == "2",
-          f"CONFIG_VERSION is {observability.CONFIG_VERSION!r}, expected '2'. If you changed "
+    # --- 7. the process_type tag --------------------------------------------
+    # A maintenance script that crashes must not look like a production
+    # outage. Two halves, and the second is the one that would actually catch a
+    # regression: that the tag survives all the way onto a real event.
+    captured: list = []
+    client.transport.capture_envelope = lambda envelope: captured.extend(
+        item.payload.json for item in envelope.items
+    )
+    observability._window_start = 0.0
+    observability._window_total = 0
+    observability._window_counts.clear()
+    sentry_sdk.capture_message("ci-selftest: process tag")
+
+    # Pick the ERROR event out of the envelope by event_id rather than trusting
+    # position: sessions and client reports ride in envelopes too, and a check
+    # that goes red for that reason costs ~72 billed CI minutes to take back.
+    events = [p for p in captured if isinstance(p, dict) and "event_id" in p]
+    tags = (events[0].get("tags") if events else None) or {}
+    check(bool(events), "no event reached the transport at all")
+    check(tags.get("process_type") == "run",
+          f'process_type on a real event is {tags.get("process_type")!r}, not "run" '
+          "-- DYNO was 'run.1234' at init, so a heroku-run crash would still be "
+          "indistinguishable from a visitor-facing 500")
+    check(tags.get("sentry_config") == observability.CONFIG_VERSION,
+          "the sentry_config tag did not reach the event -- it is the ONLY "
+          "cross-repo drift detector that exists")
+
+    # Every shape Heroku actually produces, plus the two it never does.
+    original_dyno = os.environ.get("DYNO")
+    for dyno, expected in (
+        ("web.1", "web"),
+        ("scheduler.1234", "scheduler"),
+        ("release.1234", "release"),
+        ("run.1234", "run"),
+        ("worker.2", "worker"),
+        ("web", "web"),                 # no instance suffix
+        ("Web.1", "web"),               # case is not significant
+        ("", "local"),                  # set but empty
+        ("weird value!", "unknown"),    # never passed through unsanitised
+        ("x" * 40, "unknown"),          # nor unbounded in length
+    ):
+        os.environ["DYNO"] = dyno
+        got = observability.process_type()
+        check(got == expected,
+              f"process_type() with DYNO={dyno!r} returned {got!r}, expected {expected!r}")
+    os.environ.pop("DYNO", None)
+    check(observability.process_type() == "local",
+          "process_type() must be 'local' with no DYNO at all -- that is a "
+          "laptop or a CI runner, not a dyno we failed to recognise")
+    if original_dyno is not None:
+        os.environ["DYNO"] = original_dyno
+
+    # --- 8. cross-repo drift ------------------------------------------------
+    check(observability.CONFIG_VERSION == "3",
+          f"CONFIG_VERSION is {observability.CONFIG_VERSION!r}, expected '3'. If you changed "
           "observability.py on purpose, bump it here AND copy the file to the "
           "other two repos -- no CI job can see across them.")
 

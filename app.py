@@ -4416,43 +4416,72 @@ def check_reengagement_emails():
                     if email_type not in types_sent:
                         send_reengagement_email(author, email_type, completed_count=completed_count)
         except Exception as e:
+            # Reported as well as printed, for the reason spelled out on its
+            # sibling below: these two are the only hourly email jobs, they are
+            # the least-watched code in the app, and a print() in a daemon
+            # thread is indistinguishable from nothing happening.
+            capture_failure('reminders.reengagement_check',
+                            f"Re-engagement check error: {e}")
             print(f"Re-engagement check error: {e}")
 
 
 def check_one_pager_reminders():
-    """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback."""
-    try:
-        now = datetime.utcnow()
-        # Find submitted one-pagers that are assigned but have no feedback yet
-        pending = (OnePagerSubmission.query
-                   .filter(OnePagerSubmission.status == 'submitted',
-                           OnePagerSubmission.assigned_to.isnot(None),
-                           OnePagerSubmission.assigned_at.isnot(None))
-                   .all())
-        for sub in pending:
-            # Skip if any feedback has already been given
-            if sub.feedbacks.count() > 0:
-                continue
-            hours_since = (now - sub.assigned_at).total_seconds() / 3600
-            assignee_email = TEAM_MEMBER_EMAILS.get(sub.assigned_to)
-            if not assignee_email:
-                continue
-            author_name   = sub.author.name
-            admin_url     = f"{APP_BASE_URL}/admin/one-pager/{sub.id}"
-            assigned_date = sub.assigned_at.strftime('%B %d, %Y')
+    """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback.
 
-            if hours_since >= 48 and not sub.reminder_1_sent_at:
-                _send_one_pager_reminder(assignee_email, sub.assigned_to,
-                                         author_name, assigned_date, admin_url)
-                sub.reminder_1_sent_at = now
-                db.session.commit()
-            elif hours_since >= 96 and not sub.reminder_2_sent_at:
-                _send_one_pager_reminder(assignee_email, sub.assigned_to,
-                                         author_name, assigned_date, admin_url)
-                sub.reminder_2_sent_at = now
-                db.session.commit()
-    except Exception as e:
-        print(f"One-pager reminder check error: {e}")
+    The `with app.app_context()` is not decoration. This runs in the hourly
+    daemon thread started by start_background_jobs(), which has no request and
+    therefore no application context, so the first ORM query below raises
+    "Working outside of application context" before a single reminder is
+    considered. It did exactly that, once an hour, from the day it shipped
+    (2c221ec, 16 April 2026) until 4 August — three and a half months in which
+    no 48h or 96h reminder was ever delivered and nothing looked wrong.
+
+    Two things hid it, and both are fixed here. The context was missing while
+    its sibling check_reengagement_emails() twenty lines up has always had one,
+    so the pair looked symmetrical at a glance. And the except printed to
+    stdout and swallowed, which on Heroku means one line an hour in a log
+    nobody tails, saying something that reads like routine noise.
+    """
+    with app.app_context():
+        try:
+            now = datetime.utcnow()
+            # Find submitted one-pagers that are assigned but have no feedback yet
+            pending = (OnePagerSubmission.query
+                       .filter(OnePagerSubmission.status == 'submitted',
+                               OnePagerSubmission.assigned_to.isnot(None),
+                               OnePagerSubmission.assigned_at.isnot(None))
+                       .all())
+            for sub in pending:
+                # Skip if any feedback has already been given
+                if sub.feedbacks.count() > 0:
+                    continue
+                hours_since = (now - sub.assigned_at).total_seconds() / 3600
+                assignee_email = TEAM_MEMBER_EMAILS.get(sub.assigned_to)
+                if not assignee_email:
+                    continue
+                author_name   = sub.author.name
+                admin_url     = f"{APP_BASE_URL}/admin/one-pager/{sub.id}"
+                assigned_date = sub.assigned_at.strftime('%B %d, %Y')
+
+                if hours_since >= 48 and not sub.reminder_1_sent_at:
+                    _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                             author_name, assigned_date, admin_url)
+                    sub.reminder_1_sent_at = now
+                    db.session.commit()
+                elif hours_since >= 96 and not sub.reminder_2_sent_at:
+                    _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                             author_name, assigned_date, admin_url)
+                    sub.reminder_2_sent_at = now
+                    db.session.commit()
+        except Exception as e:
+            # The line below is what this failure looked like for 3.5 months:
+            # one print an hour into a log nobody reads. capture_failure sends
+            # it somewhere a person actually sees, without changing the
+            # swallow-and-carry-on behaviour, which is deliberate — one bad
+            # submission must not stop the other reminders going out.
+            capture_failure('reminders.one_pager_check',
+                            f"One-pager reminder check error: {e}")
+            print(f"One-pager reminder check error: {e}")
 
 
 def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date, admin_url):

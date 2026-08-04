@@ -34,6 +34,103 @@ def annotate(level: str, message: str, file: str | None = None) -> None:
         print(f"[{level.upper()}] {message}")
 
 
+def _check_web_concurrency(web_command: str, errors: list[str]) -> None:
+    """Assert the two numbers that must never drift apart.
+
+    Nothing else in CI reads them. Before this, the Procfile could be edited to
+    any worker or thread count and every check stayed green, because this file
+    only ever asserted that a `web:` line EXISTS.
+
+    1. `--workers 1` is load-bearing, not a default nobody revisited. Eleven
+       rate-limit buckets, the plan-liveness BOOT_ID token, the background email
+       loop and three concurrency semaphores all live in ONE process's memory and
+       are correct only because there is exactly one. app.py says so in the
+       imperative above `_check_rate_limit`. Raising it does not degrade those —
+       it silently multiplies every rate limit by the worker count and lets the
+       email loop run twice, which means authors get each nudge twice.
+
+       This is also why the Procfile keeps its flags on the command line instead
+       of moving to a gunicorn.conf.py: gunicorn defaults `workers` to
+       WEB_CONCURRENCY, which Heroku's buildpack sets from dyno memory and which
+       does NOT appear in `heroku config`. A conf file that omits `workers` hands
+       the process count to the buildpack. The command line is the only place
+       beyond its reach.
+
+    2. `--threads` must equal `pool_size - 1`. Every request thread can pin a
+       database connection for the whole request — seven routes still call OpenAI
+       synchronously behind auth, where Flask-Login has already checked one out
+       and nothing commits until the end — so threads outrunning the pool means
+       `sqlalchemy.exc.TimeoutError` raised inside `user_loader`, before any
+       view's own error handling, on EVERY authenticated route. The `- 1` is the
+       re-engagement loop, a permanent resident of the pool. See the arithmetic
+       above `SQLALCHEMY_ENGINE_OPTIONS` in app.py.
+    """
+    workers = re.search(r"--workers\s+(\d+)", web_command)
+    threads = re.search(r"--threads\s+(\d+)", web_command)
+
+    if not workers:
+        errors.append(
+            "Procfile web line does not pin `--workers`. It must read `--workers 1`: "
+            "this app keeps rate limits, the plan-liveness token and the background "
+            "email loop in one process's memory. Without the flag, gunicorn takes the "
+            "count from WEB_CONCURRENCY, which Heroku sets invisibly."
+        )
+    elif workers.group(1) != "1":
+        errors.append(
+            f"Procfile web line says `--workers {workers.group(1)}`. This app is "
+            "single-process by design -- more than one silently multiplies every rate "
+            "limit and sends authors duplicate nudge email. Moving off one process is "
+            "a correctness project, not a config change."
+        )
+
+    if not threads:
+        errors.append("Procfile web line does not set `--threads`.")
+        return
+
+    pool_size = _read_pool_size()
+    if pool_size is None:
+        errors.append(
+            "Could not read `pool_size` from app.py, so the thread/pool coupling "
+            "cannot be checked. Fix the parse in ci/check_deploy_config.py rather "
+            "than deleting this check."
+        )
+        return
+
+    expected = pool_size - 1
+    if int(threads.group(1)) != expected:
+        errors.append(
+            f"Procfile has `--threads {threads.group(1)}` but app.py has "
+            f"`pool_size = {pool_size}`, which allows {expected} request threads "
+            "(one connection is reserved for the re-engagement loop). These must move "
+            "together: more threads than connections means a saturated pool raises "
+            "TimeoutError inside Flask-Login, which 500s every authenticated route, "
+            "not just the slow one. If you are changing the relationship on purpose, "
+            "change it here too."
+        )
+    else:
+        # Print what was READ, never a literal. An earlier draft hardcoded
+        # "--workers 1" here and cheerfully reported it next to a Procfile that
+        # said 2 -- the error above still fired, but the reassuring line beneath
+        # it contradicted the error, which is worse than no line at all.
+        seen_workers = workers.group(1) if workers else "?"
+        print(f"  ok  concurrency:      --workers {seen_workers} "
+              f"--threads {threads.group(1)}, pool_size {pool_size} "
+              f"(= threads + 1 for the re-engagement loop)")
+
+
+def _read_pool_size() -> int | None:
+    """Read the pool_size literal out of app.py without importing it.
+
+    Importing app.py needs OPENAI_API_KEY, a database and every heavy dependency;
+    this check must run in a bare CI job.
+    """
+    app_py = REPO_ROOT / "app.py"
+    if not app_py.is_file():
+        return None
+    match = re.search(r"^\s*'pool_size':\s*(\d+)", app_py.read_text(encoding="utf-8"), re.M)
+    return int(match.group(1)) if match else None
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
     errors: list[str] = []
@@ -59,6 +156,7 @@ def main() -> int:
             errors.append("Procfile has no `web:` process -- Heroku would boot nothing.")
         else:
             print(f"  ok  Procfile web:     {processes['web']}")
+            _check_web_concurrency(processes["web"], errors)
 
         if "release" in processes:
             print(f"  ok  Procfile release: {processes['release']}")

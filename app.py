@@ -236,39 +236,78 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # line and it is silently ignored, which looks exactly like it working.
 #
 # Left unset, SQLAlchemy defaults to pool_size=5 + max_overflow=10, so ONE web
-# process may open 15 connections. Heroku Postgres essential-0 allows 20 for the
-# whole role (verified: `heroku pg:info -a proposal-evaluation`, "Connections:
-# 1/20"). One dyno was entitled to 75% of the database, and it was reachable
-# rather than theoretical, because every background scoring thread pinned a
-# connection for the entire OpenAI call.
+# process may open 15 connections.
 #
-# The budget, per process, ceiling 5 + 3 = 8:
-#     4  gunicorn request threads (Procfile: --workers 1 --threads 4)
-#     1  the _start_reengagement_thread() loop (outbox drains + hourly emails)
-#     2  concurrent scorings (_EVAL_SLOTS)
-#     1  spare for the short-lived background threads: the email and
-#        funnel-event threads, the two plan workers' DB phases (_PLAN_SLOTS),
-#        and the services-alert thread a finished plan can spawn
+# ── THE CEILING CHANGED ON 2026-08-04. RE-READ BEFORE TRUSTING OLD NUMBERS ────
 #
-# That last line is a shared term, not a per-thread allowance, and it holds
-# because of WHEN those threads want a connection rather than how many there
-# are. A plan worker takes one twice — to claim the row and to write the result
-# — with the 60–90s OpenAI call outside any app context in between; the same
-# shape the scoring split uses. If pool waits ever appear in the logs,
-# PLAN_CONCURRENCY is the first knob to turn down.
+# This database was essential-0 with a 20-connection role limit, and the whole
+# budget below used to be a fight over those 20. It is now standard-0 with 200
+# (verified: `heroku pg:info -a proposal-evaluation`, add-on
+# `wig-portal-db-standard`, "Connections: 16/200"). The old arithmetic is kept
+# in git history, not here, because reasoning forward from a dead constraint is
+# how the wrong number gets chosen — the previous version of this comment argued
+# at length that raising max_overflow to 4 would "spend the psql reserve", which
+# was correct against 20 and is meaningless against 200.
 #
-# Note what the plan work SUBTRACTED here. It used to run in the request, where
-# Flask-Login's user_loader had already checked out a connection and nothing
-# committed until after the AI call — so each generation held one of these eight
-# for a minute and a half, on a request thread that was also one of the four.
-# Moving it out removed a 90-second hold and added a millisecond one.
+# The budget, per process, ceiling 17 + 8 = 25:
+#    16  gunicorn request threads (Procfile: --workers 1 --threads 16)
+#     1  the _start_reengagement_thread() loop (outbox drains + hourly emails).
+#        A permanent resident, so it belongs in pool_size rather than overflow:
+#        parked in overflow it would buy a fresh connection every 2-minute tick,
+#        and opening one is the expensive operation, not using one.
+#    ---
+#    17  pool_size
+#     8  max_overflow — _EVAL_SLOTS (2) and _PLAN_SLOTS (2) at their brief DB
+#        phases, plus the short-lived email, funnel-event and services-alert
+#        threads. A shared term, not a per-thread allowance: it holds because of
+#        WHEN those threads want a connection, not how many exist. A plan worker
+#        takes one twice — to claim the row and to write the result — with the
+#        60-90s OpenAI call outside any app context in between.
 #
-# Against the 20-connection ceiling: a deploy briefly overlaps two web dynos
-# (2 x 8 = 16) while the release dyno runs migrate.py (~2), leaving ~2 for
-# `heroku pg:psql`. Raising --workers, --threads, _EVAL_SLOTS or PLAN_CONCURRENCY
-# means raising nothing here — it means re-doing this arithmetic first. Raising
-# max_overflow to 4 is the tempting wrong move: 2 x 9 + 2 is exactly 20, which
-# spends the psql reserve during a deploy, which is when psql is wanted.
+# Against the 200-connection ceiling, worst case:
+#     25  web, steady state (1 dyno x 1 worker x 25)
+#    +25  a deploy briefly overlaps two web dynos
+#     +2  the release dyno running migrate.py
+#     +2  reserve for `heroku pg:psql` / `pg:ps`
+#     +9  Postgres background workers (measured; may or may not count against
+#         the role limit — budgeted in conservatively either way)
+#    ---
+#    ~63 of 200, leaving ~137 spare.
+#
+# ── pool_size AND --threads MUST MOVE TOGETHER ────────────────────────────────
+#
+# Raising --threads, _EVAL_SLOTS or PLAN_CONCURRENCY means re-doing this
+# arithmetic, not nudging a number. ci/check_deploy_config.py now asserts
+# `--threads == pool_size - 1` so the two cannot drift apart silently; if you
+# change the relationship deliberately, change that check in the same commit.
+#
+# WHY THIS IS AN OUTAGE AND NOT A SLOWDOWN, if threads outrun the pool. Seven
+# routes still call OpenAI synchronously on the request thread (/api/coach-chat
+# app.py:5157, /api/coach-feedback 5261, the coaching quickstart 5731,
+# /api/coaching/chat 6351, /api/coaching/research 6702,
+# /api/marketing/pitch-eval 6839, the admin one-pager 10863). All are behind
+# auth, so Flask-Login's user_loader has already checked out a connection, and
+# these read-only routes never commit — the connection is pinned for the whole
+# call. AI_REQUEST_TIMEOUT_SECONDS is 25 and pool_timeout is 20, so 25 > 20:
+# enough concurrent coaching requests hold every connection past the deadline
+# and the next one raises sqlalchemy.exc.TimeoutError. That is raised inside
+# user_loader, BEFORE the view body, so a route's own `except` never catches it
+# and it lands on the 500 handler — meaning the blast radius is every
+# authenticated route, not just the AI ones. /healthz draws from the same pool,
+# so it reports db='error' while the database sits idle. At --threads 4 this was
+# structurally impossible: four threads cannot pin more than four connections.
+#
+# If these two ever have to ship apart, ship the POOL FIRST. Pool-first is
+# harmless; threads-first is the failure above.
+#
+# ── WHAT 16 THREADS DOES AND DOES NOT BUY ─────────────────────────────────────
+#
+# It buys 16 concurrent I/O WAITS — OpenAI, SMTP, Postgres — which is what this
+# app spends its time on. It does NOT buy 16x report throughput: xhtml2pdf and
+# reportlab are pure Python and hold the GIL, and 16 concurrent renders measured
+# 18.4s against 4.4s for four, i.e. perfectly serialized. If report throughput
+# is ever the goal, threads are the wrong lever and only more PROCESSES help —
+# which is a week of work, not a config change. See the note above _check_rate_limit.
 #
 # pool_pre_ping is the fix for the errors after a Postgres maintenance restart:
 # without it the pool hands out connections the server has already closed and
@@ -315,8 +354,8 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 # TypeError on them, and every ci/ harness plus local dev runs on sqlite:///.
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
     app.config['SQLALCHEMY_ENGINE_OPTIONS'].update({
-        'pool_size': 5,
-        'max_overflow': 3,
+        'pool_size': 17,
+        'max_overflow': 8,
         # Well inside gunicorn's --timeout 120: a saturated pool must fail the
         # request, not hold the worker until the platform SIGKILLs it.
         'pool_timeout': 20,
@@ -2277,6 +2316,20 @@ PDF_MAX_OBJECTS = 20_000
 #
 # Keep this at least two below the thread count in the Procfile. If --threads
 # changes, change this in the same commit.
+#
+# 2026-08-04: --threads went 4 -> 16 and this DELIBERATELY STAYED AT 2. The rule
+# above is satisfied either way, so this is a decision rather than an oversight,
+# and the reason is memory, not throughput. Parsing is the one place this app
+# holds a whole document in RAM at once, and the note below records that pypdf is
+# unbounded in both time and memory on a hostile file. The dyno is 512MB; 16
+# concurrent parses of a 16MB upload (MAX_CONTENT_LENGTH) is not a bound anyone
+# has measured, and boot alone is ~140MB.
+#
+# It also costs less than it looks. Raising threads bought 16 concurrent I/O
+# WAITS — OpenAI, SMTP, Postgres — which is what this app actually queues on.
+# PDF parsing is pure-Python and holds the GIL, so extra slots would serialize
+# anyway: 16 concurrent renders measured 18.4s against 4.4s for four. Raising
+# this trades a real memory risk for throughput the GIL will not deliver.
 _UPLOAD_PARSE_SLOTS = threading.BoundedSemaphore(2)
 
 
@@ -7988,35 +8041,63 @@ def _turnstile_ok(token, remote_ip=None):
     return True
 
 
+# One lock for every bucket. Contention is irrelevant — the critical section is
+# a dict lookup and a list filter — and one lock keeps the invariant impossible
+# to get wrong when a new bucket is added.
+#
+# WHY THIS EXISTS, since the code read fine for months. The body below is an
+# unlocked read-modify-write across four statements (get, filter, append, store)
+# and gunicorn has run `--threads 4` since March, so two requests really could
+# interleave: both read the same `hits`, both append, and the second write
+# discards the first — an under-count, i.e. the limiter silently allowing more
+# than it says.
+#
+# The sharper half is the eviction scan. It iterates `store.items()` in a
+# Python-level comprehension while another thread can insert at the tail of this
+# function, which raises `RuntimeError: dictionary changed size during iteration`
+# — unhandled, so a 500. That path is only reachable once a bucket holds
+# _RATE_BUCKET_MAX_KEYS (10,000) distinct keys, which is to say during exactly
+# the flood the limiter exists to survive, on /author/register, which is the page
+# every campaign link points at and the form a bot walked through in July.
+#
+# Raising --threads 4 -> 16 makes both roughly four times likelier, which is why
+# this ships in the same commit rather than after it. analytics_collect.py:837
+# already got this right for the beacon bucket, with a comment noting that
+# --threads 4 means "two beacons really can mutate this dict at the same time";
+# the eleven buckets in this file never got the same treatment.
+_RATE_LOCK = threading.Lock()
+
+
 def _check_rate_limit(ip, max_requests=10, window=3600, bucket=None):
     """Return True if the request is within rate limits."""
     now = time.time()
     store = _submit_rate if bucket is None else bucket
 
-    # Only when the dict is full AND this request would add to it, so the
-    # steady state costs one lookup and a flood pays the scan once per ~1000
-    # new keys rather than on every request.
-    if len(store) >= _RATE_BUCKET_MAX_KEYS and ip not in store:
-        for stale in [k for k, v in store.items()
-                      if now - _last_hit(v) >= window]:
-            del store[stale]
-
-        # Still full means the keys really are fresh -- a flood of them. Drop
-        # the oldest tenth in one pass. Evicting the least recently seen fails
-        # in the forgiving direction: an old offender gets to start over,
-        # rather than a new visitor being turned away.
-        if len(store) >= _RATE_BUCKET_MAX_KEYS:
-            victims = sorted(store, key=lambda k: _last_hit(store[k]))
-            for stale in victims[:max(1, _RATE_BUCKET_MAX_KEYS // 10)]:
+    with _RATE_LOCK:
+        # Only when the dict is full AND this request would add to it, so the
+        # steady state costs one lookup and a flood pays the scan once per ~1000
+        # new keys rather than on every request.
+        if len(store) >= _RATE_BUCKET_MAX_KEYS and ip not in store:
+            for stale in [k for k, v in store.items()
+                          if now - _last_hit(v) >= window]:
                 del store[stale]
 
-    hits = store.get(ip, [])
-    hits = [t for t in hits if now - t < window]
-    if len(hits) >= max_requests:
-        return False
-    hits.append(now)
-    store[ip] = hits
-    return True
+            # Still full means the keys really are fresh -- a flood of them. Drop
+            # the oldest tenth in one pass. Evicting the least recently seen fails
+            # in the forgiving direction: an old offender gets to start over,
+            # rather than a new visitor being turned away.
+            if len(store) >= _RATE_BUCKET_MAX_KEYS:
+                victims = sorted(store, key=lambda k: _last_hit(store[k]))
+                for stale in victims[:max(1, _RATE_BUCKET_MAX_KEYS // 10)]:
+                    del store[stale]
+
+        hits = store.get(ip, [])
+        hits = [t for t in hits if now - t < window]
+        if len(hits) >= max_requests:
+            return False
+        hits.append(now)
+        store[ip] = hits
+        return True
 
 
 def _cors_headers(response):

@@ -89,14 +89,22 @@ def main():
             visit_id, old, host, utm_source, utm_medium, utm_campaign = row
             before[old or '(null)'] += 1
 
-            # A NULL referrer_host does NOT mean "no referrer". referrer_host()
-            # refuses any non-http(s) scheme and stores NULL, while classify()
-            # has no scheme gate and happily used the host — so an
+            # With no stored referrer_host there is nothing to reclassify FROM,
+            # and both reasons a row can be in that state mean "leave it".
+            #
+            # channel IS NULL: never captured. The channel is assigned on a
+            # visit's FIRST PAGEVIEW, so an engagement beacon arriving before any
+            # pageview is stored with no channel. Recomputing gives 'direct',
+            # which converts "never captured" into the positive claim "arrived
+            # with no referrer" — not a repair.
+            #
+            # channel set but not derivable from the utm fields: referrer_host()
+            # refuses any non-http(s) scheme and stores NULL while classify() has
+            # no scheme gate and used the host, so an
             # `android-app://com.google.android.gm/` referrer is stored as
-            # (referrer_host=NULL, channel='organic search'). Recomputing that
-            # from the columns yields 'direct' and DESTROYS a label instead of
-            # correcting one. The input is gone; leave these alone.
-            if host is None and old not in (None, 'direct', 'campaign'):
+            # (referrer_host=NULL, channel='organic search'). Recomputing yields
+            # 'direct' and DESTROYS a correct label. The input is gone.
+            if host is None and (old is None or old not in ('direct', 'campaign')):
                 skipped_null += 1
                 after[old or '(null)'] += 1
                 continue
@@ -130,8 +138,9 @@ def main():
         print(f'{len(updates)} would change' if args.dry_run
               else f'{len(updates)} to update')
         if skipped_null:
-            print(f'{skipped_null} left alone (non-http referrer, host not '
-                  f'stored — recomputing would destroy the label)')
+            print(f'{skipped_null} left alone (no stored host: never classified, '
+                  f'or a non-http referrer — recomputing would invent or '
+                  f'destroy a label, not repair one)')
         if truncated:
             print(f'{truncated} had a referrer_host at the 120-char clamp; '
                   f'their reclassification may be degraded')

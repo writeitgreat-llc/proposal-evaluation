@@ -130,6 +130,20 @@ jobs:
       - name: Sentry cannot ship personal data
         run: python ci/check_sentry_scrub.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # reason as the steps around it. Pure text scanning, finishes instantly.
+      #
+      # The companion to the responsive audit further down, and it exists for
+      # what that audit CANNOT see: the audit measures pages it can reach, and
+      # it cannot reach /admin, because team login is 2FA-mandatory and driving
+      # TOTP in CI is a flake source we chose not to take on. `.bulk-bar` on the
+      # admin dashboard sat at `top: 60px` for months -- behind the header at
+      # every width -- and no runtime check in this repo would ever have looked
+      # at it. This one reads the rule instead of the rendering, so it covers
+      # every page including the ones nothing can log into.
+      - name: No sticky element hard-codes the header height
+        run: python ci/check_sticky_offsets.py
+
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 

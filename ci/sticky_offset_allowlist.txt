@@ -1,0 +1,12 @@
+# Files allowed to hard-code a `top` on a `position: sticky` element.
+#
+# Format:  <repo-relative path>   # why this one is not pinned to the page header
+#
+# Only add a path here if the element genuinely pins to something other than the
+# site header -- a sticky row inside its own scrolling container, for example.
+# If it pins below the header, the fix is `top: var(--header-h)`, not an entry
+# here: the header is 57px on a public phone page, 105px on the author
+# dashboard and 237px on the admin dashboard at 320px, so no literal is right
+# at every width. See ci/check_sticky_offsets.py.
+#
+# Empty on purpose. Everything in this repo now uses var(--header-h).

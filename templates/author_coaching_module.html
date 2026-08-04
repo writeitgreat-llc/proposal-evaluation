@@ -203,7 +203,12 @@
 .chat-sidebar {
     background: white; border: 1.5px solid var(--gray-200); border-radius: var(--radius);
     display: flex; flex-direction: column; overflow: hidden;
-    position: sticky; top: 90px; max-height: calc(100vh - 110px);
+    /* Pinned relative to the live header height, not a literal. `top: 90px` was
+       written for a 73px desktop header; on a phone the author header is 105px,
+       so the top 15px of the coaching chat sat behind it. --header-h is kept
+       current by templates/base.html -- see the note on it in style.css. */
+    position: sticky; top: calc(var(--header-h) + 1rem);
+    max-height: calc(100vh - var(--header-h) - 2rem);
 }
 .chat-sidebar-header {
     padding: 0.875rem 1rem; border-bottom: 1px solid var(--gray-200);
@@ -454,8 +459,13 @@
 .pb-insert-btn:hover { background: var(--primary); color: white; }
 
 /* Publisher Character widget */
+/* Same header-relative pin as .chat-sidebar above -- this column REPLACES that
+   sidebar's own sticky behaviour on module 7 (see the rule below, which makes
+   the nested sidebar static), so it inherits the same problem and needs the
+   same fix. */
 .m7-right-col { display: flex; flex-direction: column; gap: 0.75rem;
-    position: sticky; top: 90px; max-height: calc(100vh - 110px); overflow-y: auto; }
+    position: sticky; top: calc(var(--header-h) + 1rem);
+    max-height: calc(100vh - var(--header-h) - 2rem); overflow-y: auto; }
 .m7-right-col .chat-sidebar { position: static; max-height: none; flex: 1; min-height: 280px; }
 .publisher-widget { background: white; border: 1.5px solid var(--gray-200);
     border-radius: var(--radius); overflow: hidden; }

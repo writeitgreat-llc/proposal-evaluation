@@ -97,6 +97,30 @@
         </div>
     </footer>
 
+    {# ── Publish the header's real height as --header-h ─────────────────────
+       The header reserves its own space for whatever sits after it in flow, but
+       a `position: sticky` element pins against the VIEWPORT, so it needs to
+       know how tall the header actually is. That number is not a constant: it
+       depends on the viewport width and on which nav the signed-in role gets.
+       Both places that used to hard-code it were wrong -- `.bulk-bar` at 60px
+       and the coaching module's chat sidebar at 90px both pinned underneath it.
+
+       A ResizeObserver rather than a resize listener: the header changes height
+       when its nav REWRAPS, which a font finishing loading can cause with no
+       resize event at all. Observing the element catches every cause.
+       ---------------------------------------------------------------------- #}
+    <script>
+    (function () {
+        var header = document.querySelector('header');
+        if (!header) return;
+        var publish = function () {
+            document.documentElement.style.setProperty('--header-h', header.offsetHeight + 'px');
+        };
+        publish();
+        if (window.ResizeObserver) new ResizeObserver(publish).observe(header);
+    })();
+    </script>
+
     {# ── Dismissible flash banners ──────────────────────────────────────────
        Adds the close button here, once, instead of in the markup that renders
        the banners. There is no single place that markup lives: base.html emits

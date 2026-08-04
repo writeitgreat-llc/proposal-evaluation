@@ -39,6 +39,8 @@ page × viewport land in `_report/`. CI uploads it as an artifact.
 | `overflow` | a named element crosses the viewport edge, even when an ancestor clips it and `scrollWidth` looks clean |
 | `nav-unreachable` | a nav link sits outside the viewport (this is "Logout bled off screen") |
 | `header-overlaps-main` | `<main>` starts above the bottom of the header |
+| `sticky-under-header` | a `position: sticky` element pins above the header's bottom, so the header covers it |
+| `module-unreachable` | coaching enrolment did not take, so the module page — and the only sticky element the audit can see — went unmeasured |
 | `flash-missing` | the post-register banner did not render, so every flash assertion below would pass vacuously |
 | `flash-covered` | a flashed banner starts underneath the header |
 | `flash-not-dismissible` / `flash-close-too-small` / `flash-close-misplaced` | the dismiss button is absent, under 24px, or outside its banner |
@@ -72,13 +74,20 @@ prevent, and it would look like a passing build.
 
 ## Known gaps
 
-- **The team-member nav is not driven.** It is the widest one in the app (eight
-  links) and it is the most likely thing to grow next. It is not covered here
-  because team login is 2FA-mandatory, and a TOTP dance in CI is a flake source.
-  The author nav exercises the same wrap-and-reserve behaviour, and the sticky
-  header makes the height self-correcting rather than a number someone has to
-  keep in sync — so the eight-link case is protected structurally rather than by
-  measurement. If you want it measured, seed an `AdminUser` with a known
+- **The team-member nav and the admin dashboard are not driven.** That nav is the
+  widest in the app (ten links for a full admin) and the most likely thing to
+  grow next. It is not covered here because team login is 2FA-mandatory and a
+  TOTP dance in CI is a flake source. The author nav exercises the same
+  wrap-and-reserve behaviour, and the sticky header makes the height
+  self-correcting rather than a number anyone maintains, so the ten-link case is
+  protected structurally rather than by measurement.
+
+  The one thing that gap genuinely lost — a hard-coded sticky offset on a page
+  nothing can log into — is covered instead by `ci/check_sticky_offsets.py`,
+  which reads the rule rather than the rendering. That is what caught
+  `.bulk-bar { top: 60px }`.
+
+  If you do want the admin pages measured: seed an `AdminUser` with a known
   `totp_secret` and feed `pyotp.TOTP(secret).now()` into `/admin/verify-2fa`.
 - **Chromium only.** The repo's authors are mostly on iPhone; WebKit-on-Linux
   has its own font metrics and is a source of signal rather than a merge gate.

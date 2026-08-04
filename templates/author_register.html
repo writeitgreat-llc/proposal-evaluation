@@ -5,6 +5,11 @@
 {% block title %}Create Account - Write It Great{% endblock %}
 
 {% block extra_css %}
+/* Honeypot. Parked off-screen to the LEFT specifically: a box pushed off the
+   right edge widens the document and gives every page a horizontal scrollbar
+   on mobile, whereas in a left-to-right layout a negative-left box does not. */
+.hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.cf-turnstile { margin: 0 0 1rem; }
 .register-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 64px); }
 @media (max-width: 768px) { .register-layout { grid-template-columns: 1fr; } }
 
@@ -120,8 +125,44 @@
                 <label for="confirm_password">Confirm Password</label>
                 <input type="password" id="confirm_password" name="confirm_password" required placeholder="••••••••" minlength="8">
             </div>
+            {# Honeypot. Off-screen rather than display:none, because the bot
+               this is aimed at fills every input it can find and a field it
+               cannot find is no trap at all. Named _gotcha, deliberately NOT
+               website/url/phone: password managers populate off-screen fields
+               with those names, and a filled trap silently discards a real
+               author. aria-hidden + tabindex="-1" keep it away from screen
+               readers and the tab order. #}
+            <div class="hp-field" aria-hidden="true">
+                <label for="reg-gotcha">Leave this field empty</label>
+                <input id="reg-gotcha" name="_gotcha" type="text" tabindex="-1" autocomplete="off">
+            </div>
+
+            {% if turnstile_site_key %}
+            {# Cloudflare's human check, INSIDE the form rather than as a
+               full-page challenge in front of it. The page therefore always
+               renders — which matters because this is where every campaign
+               link lands, and a page-level challenge showed a real visitor a
+               blank screen on 4 Aug. Rendered only when the key is configured,
+               so a local checkout and CI submit this form normally. #}
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light"></div>
+            {% endif %}
             <button type="submit" class="btn btn-primary login-btn">Create Account — It's Free</button>
         </form>
+        {% if turnstile_site_key %}
+        {# Loaded after the form on purpose. If Cloudflare's script is slow or
+           blocked the form is already on screen and usable, which is the whole
+           advantage this has over a page-level challenge.
+
+           NO integrity="sha384-..." here, and that is deliberate rather than an
+           oversight. Subresource Integrity pins a script to one exact byte
+           sequence; Cloudflare ships this file continuously and publishes no
+           stable hash for it, so a pin would start rejecting the script on
+           their next release and take account creation down with it. The usual
+           reason for SRI — a third-party CDN you do not trust — also does not
+           apply, since the check is worthless unless Cloudflare is honest
+           anyway: they both serve this script and adjudicate its answer. #}
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        {% endif %}
         <p style="text-align: center; margin-top: 1.5rem; font-size: 0.875rem; color: var(--gray-500);">
             Already have an account? <a href="{{ url_for('author_login') }}" style="color: var(--primary); font-weight: 600;">Log in</a>
         </p>

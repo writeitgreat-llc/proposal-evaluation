@@ -128,13 +128,32 @@ function measurePage(opts) {
 
   /* Every element that crosses either vertical edge of the viewport. Reported
    * by selector, because "the document is 40px too wide" tells nobody what to
-   * fix. Skips anything invisible or deliberately parked off-screen: the
-   * register form's honeypot lives at left:-9999px on purpose. */
+   * fix.
+   *
+   * Skips whole `position: fixed` SUBTREES, not just the fixed element itself.
+   * Off-canvas panels are parked outside the viewport on purpose and their
+   * children inherit that position while being statically positioned — so
+   * checking only the element's own `position` reports every child of a closed
+   * drawer as bleed. The coaching module's knowledge-base drawer (fixed, at
+   * right: -420px until opened) produced eight such false positives at every
+   * width. Fixed elements are also out of flow and cannot widen the document,
+   * so nothing here is lost by skipping them wholesale. */
+  const fixedRoots = [];
+  document.querySelectorAll('body *').forEach(function (el) {
+    if (window.getComputedStyle(el).position === 'fixed') fixedRoots.push(el);
+  });
+  function insideFixed(el) {
+    for (let i = 0; i < fixedRoots.length; i++) {
+      if (fixedRoots[i] === el || fixedRoots[i].contains(el)) return true;
+    }
+    return false;
+  }
+
   const overflowing = [];
   document.querySelectorAll('body *').forEach(function (el) {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
-    if (style.position === 'fixed') return;          // overlays/banners are not page flow
+    if (insideFixed(el)) return;
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
     if (r.left < -tol && r.right < 0) return;        // fully parked off-screen (honeypot)
@@ -160,6 +179,40 @@ function measurePage(opts) {
       });
     }
   });
+
+  /* Sticky elements pinned underneath the header.
+     The header reserves its height for normal flow, but a `position: sticky`
+     element pins against the VIEWPORT, so it has to be told how tall the header
+     is -- and every literal anyone wrote for that has been wrong at some width.
+     This finds them generically instead of one grep at a time: it is what would
+     have caught `.bulk-bar { top: 60px }` and the coaching chat sidebar's
+     `top: 90px` without anyone going looking.
+
+     Skips the header itself, anything not pinned to the top (`top: auto`), and
+     anything inside its own scroll container -- a sticky element there pins
+     against that container, and the page header is irrelevant to it. */
+  const stickyUnderHeader = [];
+  if (headerRect) {
+    document.querySelectorAll('body *').forEach(function (el) {
+      if (el === header || (header && header.contains(el))) return;
+      const style = window.getComputedStyle(el);
+      if (style.position !== 'sticky') return;
+      if (style.top === 'auto') return;
+      const top = parseFloat(style.top);
+      if (isNaN(top)) return;
+      for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+        const oy = window.getComputedStyle(n).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return;
+      }
+      if (top < headerRect.height - tol) {
+        stickyUnderHeader.push({
+          selector: describe(el),
+          stickyTop: Math.round(top),
+          headerHeight: Math.round(headerRect.height),
+        });
+      }
+    });
+  }
 
   /* Flash banners: are they clear of the header, and can they be dismissed? */
   const flashes = [];
@@ -187,6 +240,7 @@ function measurePage(opts) {
     mainTop: mainRect ? Math.round(mainRect.top) : null,
     overflowing: overflowing,
     navOutOfBounds: navOutOfBounds,
+    stickyUnderHeader: stickyUnderHeader,
     navLinkCount: document.querySelectorAll('.nav-links a').length,
     flashes: flashes,
   };
@@ -248,7 +302,19 @@ async function auditAt(page, label, viewport, opts) {
       { headerHeight: m.headerHeight, navLinkCount: m.navLinkCount });
   }
 
-  /* 5. Flash banners: visible, and dismissible.
+  /* 5. Sticky elements that pin above the header's bottom edge. Same failure as
+   *    (4) but for elements the header cannot reserve space for, and the header
+   *    winning on z-index means it shows up as silent clipping rather than as
+   *    something obviously broken. */
+  if (m.stickyUnderHeader.length) {
+    failed = true;
+    record('sticky-under-header', label, viewport,
+      `${m.stickyUnderHeader.length} sticky element(s) pin above the bottom of a ` +
+      `${m.headerHeight}px header, so the header covers them — use top: var(--header-h)`,
+      m.stickyUnderHeader);
+  }
+
+  /* 6. Flash banners: visible, and dismissible.
    *    expectFlash guards against the quietest failure this audit could have --
    *    a run where the banner never rendered at all, so every flash assertion
    *    passes vacuously and the audit reports green on the exact thing it was
@@ -321,6 +387,25 @@ async function auditAt(page, label, viewport, opts) {
     const email = `ci-responsive-${Date.now()}@example.invalid`;
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(BASE_URL + '/author/register', { waitUntil: 'load', timeout: 30000 });
+
+    /* Fail loudly and specifically if this app is running WITH Turnstile.
+       author_register.html renders the widget only when turnstile_site_key is
+       set, and a headless browser cannot solve it -- so the submit below would
+       simply never navigate and this would die on a 30-second waitForURL
+       timeout that says nothing about the cause. The keys are set in production
+       (since 4 Aug 2026); the day someone copies them into the CI environment,
+       or points --base-url at a real deployment, this message is what stops
+       that costing an afternoon. */
+    if (await page.locator('.cf-turnstile').count() > 0) {
+      throw new Error(
+        'The app under test has Turnstile enabled (.cf-turnstile is on /author/register), ' +
+        'so the audit cannot register an author and cannot measure any signed-in page. ' +
+        'Unset TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY for the app this audit runs ' +
+        'against. Do NOT work around this by auditing public pages only — the header ' +
+        'bug this exists to catch does not appear on them (see the note at the top of ' +
+        'this file).');
+    }
+
     await page.fill('input[name="name"]', 'CI Responsive Audit');
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="password"]', 'ci-audit-password');
@@ -341,7 +426,36 @@ async function auditAt(page, label, viewport, opts) {
       await auditAt(page, 'author/dashboard+flash', vp, { expectFlash: true });
     }
 
-    /* ---- 4. The rest of the signed-in interior, banner-free. ---- */
+    /* ---- 4. Enrol in coaching, so the module pages become reachable.
+     *         Worth the extra POST: the coaching module is the guided Proposal
+     *         Builder path, it is the densest layout in the app, and it carries
+     *         the only `position: sticky` element on any page this audit can
+     *         reach. Without this step the sticky check below has nothing to
+     *         look at and passes vacuously. ---- */
+    await page.goto(BASE_URL + '/author/coaching/enroll', { waitUntil: 'load', timeout: 30000 });
+    const enrolForm = await page.locator('form').count();
+    if (enrolForm > 0) {
+      const title = page.locator('input[name="book_title"]');
+      if (await title.count() > 0) await title.fill('CI Responsive Audit Book');
+      await page.click('form button[type="submit"], form input[type="submit"]');
+      await page.waitForLoadState('load');
+    }
+    const modResp = await page.goto(BASE_URL + '/author/coaching/module/1',
+      { waitUntil: 'load', timeout: 30000 });
+    const onModule = /\/author\/coaching\/module\//.test(page.url());
+    if (!onModule || (modResp && modResp.status() >= 400)) {
+      // Redirected away = not enrolled. Say so rather than quietly measuring the
+      // dashboard twice and reporting a green that covered nothing.
+      record('module-unreachable', 'author/coaching/module/1', VIEWPORTS[0],
+        `enrolment did not take — landed on ${new URL(page.url()).pathname}, so the ` +
+        `coaching module (and the only sticky element this audit can see) went unmeasured`);
+      exitCode = 1;
+    } else {
+      console.log('\nCoaching module (enrolled — carries the sticky chat sidebar):');
+      for (const vp of VIEWPORTS) await auditAt(page, 'author/coaching/module/1', vp);
+    }
+
+    /* ---- 5. The rest of the signed-in interior, banner-free. ---- */
     console.log('\nSigned-in author pages:');
     for (const p of ['/author/dashboard', '/author/coaching', '/author/marketing-platform']) {
       const resp = await page.goto(BASE_URL + p, { waitUntil: 'load', timeout: 30000 });

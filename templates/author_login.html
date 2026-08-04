@@ -22,10 +22,17 @@
    breakpoint is 769px so it exactly complements author_register.html's
    max-width:768px collapse and the two public pages break at one boundary.
 
-   Header geometry (measured, not guessed): header is 73px tall
-   (1rem padding x2 + 40px logo + 1px border) and style.css sets
-   main { padding-top: 80px }. Those two numbers drive scroll-margin-top and
-   the desktop min-height below.
+   Header geometry (measured, not guessed): on desktop the header is 73px tall
+   (1rem padding x2 + 40px logo + 1px border). It is `position: sticky` and IN
+   FLOW -- style.css no longer offsets main by hand -- so nothing here has to
+   reserve space for it, and the desktop min-height below subtracts it only to
+   make the split fill the screen exactly.
+
+   scroll-margin-top is still needed: sticky covers an anchor target the same way
+   fixed did. Note this page is public, so `current_user.is_authenticated` is
+   false and the nav renders EMPTY -- the header is one logo row at every width
+   here, which is why a single 73px figure is safe on this template and would not
+   be on a signed-in one.
    ========================================================================== */
 
 .lp-layout { background: var(--gray-50); }
@@ -142,7 +149,7 @@
 .lp-access {
     background: var(--gray-50);
     padding: 2rem 1.25rem 2.5rem;
-    scroll-margin-top: 88px; /* clears the fixed 73px header on #login jumps */
+    scroll-margin-top: 88px; /* clears the sticky 73px header on #login jumps */
 }
 .lp-access-inner { width: 100%; max-width: 420px; margin: 0 auto; }
 
@@ -212,7 +219,7 @@
     .lp-layout {
         display: grid;
         grid-template-columns: 1.05fr 0.95fr;
-        min-height: calc(100vh - 80px); /* main{padding-top:80px} */
+        min-height: calc(100vh - 73px); /* the in-flow header; nav is empty here */
     }
     .lp-hero {
         display: flex; flex-direction: column; justify-content: center;

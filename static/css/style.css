@@ -32,16 +32,34 @@ body {
     background: var(--gray-50);
     color: var(--gray-900);
     line-height: 1.6;
+    /* Full-height column so the footer sits at the bottom of a short page.
+       This is what lets `main` drop its `min-height: 100vh`, and `main` had to
+       drop it: with the header in flow (see the `header` rule below) a main that
+       claims a full viewport height of its own pushes the footer a header's
+       worth off the bottom of every page. See the `main` rule for the rest. */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 /* Header - white bg like writeitgreat.com */
 header {
     background: white;
     padding: 1rem 2rem;
-    position: fixed;
+    /* Sticky, NOT fixed, and that is load-bearing.
+       A fixed header is out of flow, so whatever sits under it has to reserve
+       its height by hand -- which `main { padding-top: 80px }` used to do. That
+       number can only ever be right for a ONE-ROW header, and this header is not
+       one row. The nav is role-dependent (4 links for an author, 8 for a team
+       member) and wraps on a phone, so on a ~390px viewport the header grew to
+       three rows and silently covered the first thing in <main>: the flash
+       banner. "Your account has been created" was unreadable on mobile.
+       Sticky keeps the pinned-to-top behaviour but leaves the header IN FLOW, so
+       its real height is always reserved -- at every width, for every role, and
+       for however many nav links this grows to next. Nothing downstream has to
+       know how tall it is any more, so nothing downstream can get it wrong. */
+    position: sticky;
     top: 0;
-    left: 0;
-    right: 0;
     z-index: 100;
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     border-bottom: 1px solid var(--gray-200);
@@ -53,6 +71,14 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    /* Wrap at EVERY width, not just under the phone breakpoint below. The nav
+       overflowed its own header rather than wrapping, and because nothing here
+       clips, it spilled past the right edge of the viewport: "Logout" was cut in
+       half and "Submit Proposal" -- the paid CTA -- was off-screen entirely.
+       A no-wrap flex row has no width it cannot outgrow, and the team-member nav
+       already carries eight links, so this is not only a phone problem. */
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
 }
 
 .logo-section {
@@ -66,7 +92,7 @@ header {
 .logo-text { font-size: 1.5rem; font-weight: 700; color: var(--gray-900); }
 .logo-tagline { font-size: 0.8rem; color: var(--gray-500); }
 
-.nav-links { display: flex; gap: 1.5rem; align-items: center; }
+.nav-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem 1.5rem; align-items: center; }
 .nav-links a {
     color: var(--gray-700);
     text-decoration: none;
@@ -83,8 +109,55 @@ header {
 }
 .nav-links .btn-accent:hover { background: var(--accent-dark); }
 
-/* Main */
-main { padding-top: 80px; min-height: 100vh; }
+/* ---- Header on a phone --------------------------------------------------
+   The logo image already reads "write it GREAT", so the wordmark beside it is
+   pure duplication -- and it was the single biggest thing in the header, wide
+   enough that flex squeezed it into three stacked lines ("Write" / "It" /
+   "Great") and dragged the whole header to ~137px tall. Dropping it is what
+   buys the nav enough room to fit.
+
+   The nav then wraps beside the logo rather than onto its own full-width row:
+   sharing row 1 with a 40px logo costs nothing, whereas a full-width nav row
+   would add the logo's height to the header for no extra capacity.
+
+   44px is the minimum comfortable touch target and is the same number
+   author_login.html sizes its controls to. It makes each wrapped nav row taller
+   than the text needs, which is the point -- these are the primary navigation
+   controls and they were previously ~24px of tappable height. Net effect on the
+   author dashboard is still a shorter header than the broken one it replaces.
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    header { padding: 0.5rem 1rem; }
+    .logo-text { display: none; }
+    .header-content { column-gap: 0.75rem; }
+    .nav-links {
+        /* `flex: 1 1 0` and not the `auto` basis it would otherwise have.
+           A flex line breaks BEFORE it shrinks: with an auto basis the nav's
+           hypothetical width is the sum of all its links (~450px), which never
+           fits beside the logo, so `flex-wrap` moved the whole nav down to a row
+           of its own and the logo's height was added to the header for nothing.
+           Measured on the author dashboard at 390px: 153px that way, 105px
+           this way. A zero basis makes the nav always fit on the logo's line and
+           then wrap its own links inside whatever width is left. */
+        flex: 1 1 0;
+        min-width: 0;
+        gap: 0 0.9rem;
+        font-size: 0.9375rem;
+    }
+    .nav-links a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+    .nav-links .btn-accent { padding: 0.4rem 0.9rem; }
+}
+
+/* Main
+   No padding-top. The header is in flow now (see the `header` rule above) and
+   reserves its own height; a hand-maintained offset here is exactly the bug
+   that hid the flash banner on mobile. `flex: 1` against the column `body`
+   above replaces the old `min-height: 100vh` and keeps the footer down. */
+main { flex: 1; }
 .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
 
 .card {
@@ -213,8 +286,65 @@ h1, h2, h3 { color: var(--gray-900); }
 .loading-subtext { font-size: 0.875rem; opacity: 0.8; margin-top: 0.5rem; }
 
 /* Messages */
-.error-message, .flash.error { background: #fee2e2; color: #991b1b; padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; border: 1px solid #fca5a5; }
-.flash.success { background: #dcfce7; color: #166534; padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; border: 1px solid #86efac; }
+/* ---- Flashed messages ---------------------------------------------------
+   `.flash` now carries the box and the category classes carry only the colour.
+   Two reasons that split matters:
+
+   1. The right-hand padding has to clear the dismiss button, and it has to do
+      so for EVERY category. The category selectors are more specific than
+      `.flash`, so a `padding: 1rem` shorthand living in them would win over
+      anything set here no matter what order the rules appear in.
+   2. app.py calls flash() without a category about twenty times, which Flask
+      files under `message`. There has never been a `.flash.message` rule, so
+      those banners have been rendering as unstyled bare text on a grey page.
+      They inherit a real banner from this rule now.
+
+   `.error-message` is NOT a flash -- index.html builds it in JS for inline form
+   errors -- so it keeps the full standalone box it has always had.
+   -------------------------------------------------------------------------- */
+.flash {
+    position: relative;
+    padding: 1rem 3rem 1rem 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+    background: white;
+    color: var(--gray-800);
+    border: 1px solid var(--gray-200);
+}
+.flash.error   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.flash.success { background: #dcfce7; color: #166534; border-color: #86efac; }
+.flash.warning { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.flash.info    { background: #e0f2fe; color: #075985; border-color: #7dd3fc; }
+
+.error-message { background: #fee2e2; color: #991b1b; padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; border: 1px solid #fca5a5; }
+
+/* Dismiss control, injected by the script at the bottom of templates/base.html.
+   Absolutely positioned rather than laid out as a flex item because the message
+   it sits beside is a bare TEXT NODE in every template that renders one, and no
+   selector can reach a text node to size it. Corner-pinning needs nothing from
+   the content, so it works the same wherever a banner is rendered. The
+   `padding-right` on `.flash` above is what keeps the text clear of it. */
+.flash-close {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    font-family: inherit;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+}
+.flash-close:hover { opacity: 1; background: rgba(0,0,0,0.06); }
+.flash-close:focus-visible { opacity: 1; outline: 2px solid currentColor; outline-offset: -2px; }
 
 /* Badges */
 .tier-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px; font-weight: 700; font-size: 0.875rem; }

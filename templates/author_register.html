@@ -10,7 +10,10 @@
    on mobile, whereas in a left-to-right layout a negative-left box does not. */
 .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 .cf-turnstile { margin: 0 0 1rem; }
-.register-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 64px); }
+/* 73px = the in-flow sticky header (1rem padding x2 + 40px logo + 1px border).
+   This page is public, so the nav renders empty and the header is a single logo
+   row at every width. */
+.register-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 73px); }
 @media (max-width: 768px) { .register-layout { grid-template-columns: 1fr; } }
 
 .register-left {

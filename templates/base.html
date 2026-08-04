@@ -66,7 +66,14 @@
             {% if messages %}
                 <div class="container" style="padding-bottom: 0;">
                     {% for category, message in messages %}
-                        <div class="flash {{ category }}">{{ message }}</div>
+                        {# role/aria-live so a screen reader announces the banner
+                           on arrival -- it is usually the result of the action
+                           the visitor just took, and it is nowhere near the
+                           control they took it with. An error is assertive
+                           because it usually means the action did not happen. #}
+                        <div class="flash {{ category }}"
+                             role="{{ 'alert' if category == 'error' else 'status' }}"
+                             aria-live="{{ 'assertive' if category == 'error' else 'polite' }}">{{ message }}</div>
                     {% endfor %}
                 </div>
             {% endif %}
@@ -89,6 +96,34 @@
             {% block footer_extra %}{% endblock %}
         </div>
     </footer>
+
+    {# ── Dismissible flash banners ──────────────────────────────────────────
+       Adds the close button here, once, instead of in the markup that renders
+       the banners. There is no single place that markup lives: base.html emits
+       the page-top banner above, and eighteen other templates call
+       get_flashed_messages() themselves to place the same `.flash` boxes inside
+       a login card or a form. Decorating whatever is on the page reaches all of
+       them and cannot fall out of sync with a template that gets added later.
+
+       Progressive enhancement on purpose -- with JS off there is no button and
+       the banner behaves exactly as it did before, which is the old behaviour,
+       not a broken one. Kept inline to match every other script in this repo;
+       this app sends no Content-Security-Policy, so there is no nonce to carry.
+       ---------------------------------------------------------------------- #}
+    <script>
+    (function () {
+        document.querySelectorAll('.flash').forEach(function (banner) {
+            if (banner.querySelector('.flash-close')) return;
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'flash-close';
+            button.setAttribute('aria-label', 'Dismiss this message');
+            button.innerHTML = '&times;';
+            button.addEventListener('click', function () { banner.remove(); });
+            banner.appendChild(button);
+        });
+    })();
+    </script>
 
     {% block extra_js %}{% endblock %}
 

@@ -53,6 +53,7 @@ Checks, in order:
      literal
   F  and that computation is still SOUND -- the window genuinely clears the
      worst case a scoring can take
+  G  the same, for PLAN_JOB_STALE_AFTER and the 90-day plan generator
 
 Two things D does not prove, stated so nobody reads more into a green tick than
 is there. It reads the DEFAULT baked into os.environ.get(), so a dyno running
@@ -83,7 +84,17 @@ from pathlib import Path
 
 # Client objects that are known to carry a timeout, because app.py builds them
 # through build_openai_client(). Adding a name here is claiming the same.
-APPROVED_CLIENTS = {"client", "background_client"}
+#
+#   client             request path, 25s, no retry
+#   background_client  proposal scoring, 300s, one retry
+#   plan_client        the 90-day plan generator, 240s, no retry
+#
+# Three clients rather than per-call timeout= arguments is deliberate: a
+# per-call timeout cannot override max_retries, so `background_client` with
+# timeout=240 would quietly cost 240 x 2 attempts plus backoff. Whenever a call
+# needs a different RETRY count it needs a different client, and that is what
+# this list is for.
+APPROVED_CLIENTS = {"client", "background_client", "plan_client"}
 
 # The factory itself -- the only place allowed to construct a client.
 FACTORY_NAME = "build_openai_client"
@@ -517,6 +528,67 @@ def main() -> int:
                     notes.append(
                         f"stuck-sweep window {declared:.0f}s clears the {true_worst:.0f}s"
                         f" worst-case scoring by {declared - true_worst:.0f}s"
+                    )
+
+        # ── G: the same invariant for the 90-day plan generator ─────────────
+        #
+        # Different job, identical failure mode. PLAN_JOB_STALE_AFTER is when a
+        # 'processing' plan is presumed dead and the author is allowed to start
+        # another; set it below what a live generation can take and a job that
+        # was merely slow gets a second one started on top of it. The blast
+        # radius is smaller than the sweep's — the worker's compare-and-swap
+        # means the loser writes nothing — but it is still a gpt-4o call the
+        # company pays for and an author watching the wrong answer.
+        plan_ns: dict[str, float] = {}
+        plan_wanted = ["AI_PLAN_TIMEOUT_SECONDS", "AI_PLAN_MAX_RETRIES",
+                       "AI_RETRY_AFTER_MAX_SECONDS", "_PLAN_SLOT_WAIT"]
+        for name in plan_wanted:
+            val = constant_seconds(app_tree, name, plan_ns)
+            if val is not None:
+                plan_ns[name] = val
+
+        plan_stuck = find_assignment(app_tree, "PLAN_JOB_STALE_AFTER")
+        plan_missing = [n for n in plan_wanted if n not in plan_ns]
+        if plan_stuck is None or plan_missing:
+            failures.append(
+                f"app.py: cannot check PLAN_JOB_STALE_AFTER"
+                f"{' (missing ' + ', '.join(plan_missing) + ')' if plan_missing else ' (it is gone)'}.\n"
+                f"    Nothing else verifies that the plan generator's stale window still\n"
+                f"    clears a legitimate generation. If something was renamed, rename it\n"
+                f"    here too — do not delete the check."
+            )
+        else:
+            plan_worst = (plan_ns["AI_PLAN_TIMEOUT_SECONDS"]
+                          * (plan_ns["AI_PLAN_MAX_RETRIES"] + 1)
+                          + plan_ns["AI_PLAN_MAX_RETRIES"] * plan_ns["AI_RETRY_AFTER_MAX_SECONDS"]
+                          + plan_ns["_PLAN_SLOT_WAIT"])
+            try:
+                plan_declared = safe_eval(plan_stuck.value, plan_ns)
+            except UnevaluableError as exc:
+                failures.append(
+                    f"app.py:{plan_stuck.lineno}: PLAN_JOB_STALE_AFTER is no longer plain"
+                    f" arithmetic this check can evaluate ({exc}).\n"
+                    f"    Keep it as arithmetic over the plan timeout constants."
+                )
+            else:
+                if plan_declared <= plan_worst:
+                    failures.append(
+                        f"app.py:{plan_stuck.lineno}: PLAN_JOB_STALE_AFTER is"
+                        f" {plan_declared:.0f}s but a plan generation can legitimately take"
+                        f" {plan_worst:.0f}s\n"
+                        f"        AI       {plan_ns['AI_PLAN_TIMEOUT_SECONDS']:.0f}s x"
+                        f" {plan_ns['AI_PLAN_MAX_RETRIES'] + 1:.0f} attempts\n"
+                        f"      + backoff  {plan_ns['AI_PLAN_MAX_RETRIES']:.0f} x"
+                        f" {plan_ns['AI_RETRY_AFTER_MAX_SECONDS']:.0f}s Retry-After\n"
+                        f"      + queueing {plan_ns['_PLAN_SLOT_WAIT']:.0f}s (_PLAN_SLOT_WAIT)\n"
+                        f"    A generation that is merely slow would be declared dead and a\n"
+                        f"    second one started over it."
+                    )
+                else:
+                    notes.append(
+                        f"plan stale window {plan_declared:.0f}s clears the"
+                        f" {plan_worst:.0f}s worst-case generation by"
+                        f" {plan_declared - plan_worst:.0f}s"
                     )
 
     # ── Report ──────────────────────────────────────────────────────────────

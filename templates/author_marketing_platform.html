@@ -1466,7 +1466,11 @@
     // Restore goals text + render any existing plan on load
     (function() {
         var goalsEl = document.getElementById('plan-goals');
-        if (goalsEl && plan90day && plan90day.goals) goalsEl.value = plan90day.goals;
+        var jobGoals = {{ plan_job_goals | tojson }};
+        /* A live job's goals win over the last plan's: the author typed them,
+           then reloaded while it was building. */
+        if (goalsEl && jobGoals) goalsEl.value = jobGoals;
+        else if (goalsEl && plan90day && plan90day.goals) goalsEl.value = plan90day.goals;
         var hasPlan = plan90day && [1, 2, 3].some(function(i) { return plan90day['month' + i]; });
         if (hasPlan) {
             var btn = document.getElementById('plan-generate-btn');
@@ -1479,16 +1483,139 @@
         window.open('{{ url_for("author_marketing_plan_pdf") }}', '_blank');
     };
 
-    window.generatePlan = function() {
+    /* ── 90-day plan generation ──────────────────────────────────────────
+       The plan takes 60-90 seconds, which is longer than Heroku's router will
+       hold a request open. It used to be generated inside the POST, so this
+       fetch ALWAYS failed at 30s and the only way anyone saw a plan was to
+       reload the page and find it already saved. The POST now starts a
+       background job and returns immediately; this polls for the result, the
+       same shape the proposal results page uses.
+
+       The starting state comes from the server (PLAN_JOB below), not from a
+       fetch on load. That matters: a job can outlive the tab that started it,
+       so the page must render already-generating rather than briefly showing a
+       clickable button over work that is in flight. */
+    var PLAN_JOB = {{ plan_job | tojson }};
+    var planPollTimer = null;
+    var planPollFails = 0;
+    var PLAN_POLL_MS = 3000;
+    var PLAN_POLL_MAX_FAILS = 5;
+    /* A ceiling on polling, not on the job. The server decides when a job is
+       dead; this only stops the browser asking forever in a tab left open. */
+    var PLAN_POLL_MAX_MS = 12 * 60 * 1000;
+
+    function hasPlanRendered() {
+        return !!(plan90day && [1, 2, 3].some(function(i) { return plan90day['month' + i]; }));
+    }
+
+    function planBusy(on, message) {
         var btn     = document.getElementById('plan-generate-btn');
-        var goalsEl = document.getElementById('plan-goals');
         var loading = document.getElementById('plan-gen-loading');
+        if (loading) {
+            loading.style.display = on ? '' : 'none';
+            if (on && message) loading.textContent = message;
+        }
+        if (btn) {
+            btn.disabled = on;
+            btn.textContent = on ? 'Generating…'
+                                 : (hasPlanRendered() ? '✨ Regenerate plan'
+                                                      : '✨ Generate my 90-day plan');
+        }
+    }
+
+    function planError(msg) {
+        var errEl = document.getElementById('plan-gen-error');
+        planBusy(false);
+        if (errEl) {
+            errEl.textContent = msg || 'Something went wrong — please try again.';
+            errEl.style.display = '';
+        }
+    }
+
+    /* Render whatever the server says exists. Called for 'done' AND for 'idle',
+       because a second tab polling after the first has finished gets 'idle'
+       with a plan attached — and must show that plan rather than an empty
+       state with a button that would start a second paid generation. */
+    function planArrived(d, opts) {
+        planBusy(false);
+        if (d.plan) {
+            plan90day = d.plan;
+            renderPlan();
+            if (opts && opts.scroll) {
+                var out = document.getElementById('plan-output');
+                if (out) out.scrollIntoView({behavior: 'smooth', block: 'start'});
+            }
+        }
+        if (typeof d.xp_total === 'number') setXP(d.xp_total);
+        /* The award rides along exactly once; acknowledging it stops the server
+           sending it again, so a later reload does not replay the toast. */
+        if (d.xp_gained > 0) {
+            showXPToast(d.xp_gained, d.unlocked_badge);
+            if (d.unlocked_badge && typeof confetti !== 'undefined') {
+                confetti({particleCount: 50, spread: 60, origin: {x: 0.5, y: 0.5}});
+            }
+        }
+        if (d.upsell) renderUpsell(d.upsell);
+        if (d.status === 'done') {
+            fetch('/api/marketing/plan-ack', {method: 'POST'}).catch(function() {});
+        }
+    }
+
+    function handlePlanState(d, opts) {
+        if (d.status === 'error') { planError(d.error); return true; }
+        if (d.ready) { planArrived(d, opts); return true; }
+        return false;                                   /* still processing */
+    }
+
+    function pollPlan(startedAt) {
+        clearInterval(planPollTimer);
+        planPollFails = 0;
+        planPollTimer = setInterval(function() {
+            if (Date.now() - startedAt > PLAN_POLL_MAX_MS) {
+                clearInterval(planPollTimer);
+                planError('This is taking longer than expected. Reload the page — '
+                          + 'if your plan finished, it will be here.');
+                return;
+            }
+            fetch('/api/marketing/plan-status')
+                .then(function(r) {
+                    /* A signed-out session answers 403 with no `ready` key.
+                       Treating that as "still working" is how a spinner runs
+                       for ten minutes; say something useful instead. */
+                    if (r.status === 401 || r.status === 403) {
+                        clearInterval(planPollTimer);
+                        planError('Your session timed out — please sign in again. '
+                                  + 'Your plan is still being built and will be here '
+                                  + 'when you get back.');
+                        return null;
+                    }
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(function(d) {
+                    if (!d) return;
+                    planPollFails = 0;
+                    if (handlePlanState(d, {scroll: true})) clearInterval(planPollTimer);
+                })
+                .catch(function() {
+                    /* One dropped poll is not a failed plan — the job is on the
+                       server. Several in a row is a real problem worth saying. */
+                    if (++planPollFails >= PLAN_POLL_MAX_FAILS) {
+                        clearInterval(planPollTimer);
+                        planError('Lost contact while building your plan. Reload the '
+                                  + 'page — if it finished, it will be here.');
+                    }
+                });
+        }, PLAN_POLL_MS);
+    }
+
+    window.generatePlan = function() {
+        var goalsEl = document.getElementById('plan-goals');
         var errEl   = document.getElementById('plan-gen-error');
         var goals   = goalsEl ? goalsEl.value.trim() : '';
 
-        if (loading) loading.style.display = '';
-        if (errEl)   errEl.style.display = 'none';
-        if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+        if (errEl) errEl.style.display = 'none';
+        planBusy(true, '⏳ Building your personalised plan… this takes about a minute.');
 
         fetch('/api/marketing/generate-plan', {
             method: 'POST',
@@ -1497,35 +1624,24 @@
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (loading) loading.style.display = 'none';
-            if (btn) { btn.disabled = false; btn.textContent = '✨ Regenerate plan'; }
-            if (d.success && d.plan) {
-                plan90day = d.plan;
-                renderPlan();
-                // XP + upsell come back from the server (it persists the plan).
-                if (typeof d.xp_total === 'number') setXP(d.xp_total);
-                if (d.xp_gained > 0) showXPToast(d.xp_gained, d.unlocked_badge);
-                if (d.unlocked_badge && typeof confetti !== 'undefined') {
-                    confetti({particleCount: 50, spread: 60, origin: {x: 0.5, y: 0.5}});
-                }
-                if (d.upsell) renderUpsell(d.upsell);
-                // Scroll the freshly rendered plan into view.
-                var out = document.getElementById('plan-output');
-                if (out) out.scrollIntoView({behavior: 'smooth', block: 'start'});
-            } else {
-                if (errEl) {
-                    errEl.textContent = (d && d.error) || 'Something went wrong — please try again.';
-                    errEl.style.display = '';
-                }
-            }
+            if (d && d.success) pollPlan(Date.now());
+            else planError(d && d.error);
         })
         .catch(function(err) {
-            if (loading) loading.style.display = 'none';
-            if (btn) { btn.disabled = false; btn.textContent = '✨ Generate my 90-day plan'; }
-            if (errEl) { errEl.textContent = 'Network error — please try again.'; errEl.style.display = ''; }
+            planError('Network error — please try again.');
             console.warn('Generate plan error:', err);
         });
     };
+
+    /* Pick up whatever was already true when this page was rendered: a job
+       still running (keep polling), one that finished while the tab was closed
+       (show it), or one that failed (say so). */
+    if (PLAN_JOB && PLAN_JOB.status === 'processing') {
+        planBusy(true, '⏳ Still building your plan… this takes about a minute.');
+        pollPlan(Date.now());
+    } else if (PLAN_JOB && PLAN_JOB.status === 'error') {
+        planError(PLAN_JOB.error);
+    }
 
     /* ── Sales Projection Calculator ── */
     function updateSalesCalc(platformTotal) {

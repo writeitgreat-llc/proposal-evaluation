@@ -246,12 +246,29 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 #     4  gunicorn request threads (Procfile: --workers 1 --threads 4)
 #     1  the _start_reengagement_thread() loop (outbox drains + hourly emails)
 #     2  concurrent scorings (_EVAL_SLOTS)
-#     1  spare for the short-lived email / funnel-event threads
+#     1  spare for the short-lived background threads: the email and
+#        funnel-event threads, the two plan workers' DB phases (_PLAN_SLOTS),
+#        and the services-alert thread a finished plan can spawn
+#
+# That last line is a shared term, not a per-thread allowance, and it holds
+# because of WHEN those threads want a connection rather than how many there
+# are. A plan worker takes one twice — to claim the row and to write the result
+# — with the 60–90s OpenAI call outside any app context in between; the same
+# shape the scoring split uses. If pool waits ever appear in the logs,
+# PLAN_CONCURRENCY is the first knob to turn down.
+#
+# Note what the plan work SUBTRACTED here. It used to run in the request, where
+# Flask-Login's user_loader had already checked out a connection and nothing
+# committed until after the AI call — so each generation held one of these eight
+# for a minute and a half, on a request thread that was also one of the four.
+# Moving it out removed a 90-second hold and added a millisecond one.
 #
 # Against the 20-connection ceiling: a deploy briefly overlaps two web dynos
 # (2 x 8 = 16) while the release dyno runs migrate.py (~2), leaving ~2 for
-# `heroku pg:psql`. Raising --workers, --threads or _EVAL_SLOTS means raising
-# nothing here — it means re-doing this arithmetic first.
+# `heroku pg:psql`. Raising --workers, --threads, _EVAL_SLOTS or PLAN_CONCURRENCY
+# means raising nothing here — it means re-doing this arithmetic first. Raising
+# max_overflow to 4 is the tempting wrong move: 2 x 9 + 2 is exactly 20, which
+# spends the psql reserve during a deploy, which is when psql is wanted.
 #
 # pool_pre_ping is the fix for the errors after a Postgres maintenance restart:
 # without it the pool hands out connections the server has already closed and
@@ -619,30 +636,31 @@ AI_DETECT_TIMEOUT_SECONDS = float(os.environ.get('AI_DETECT_TIMEOUT_SECONDS', '6
 # added there rather than absorbed into slack.
 AI_RETRY_AFTER_MAX_SECONDS = 60.0
 
-# One request-path call does not fit in 25 seconds and is not a mistake:
-# /api/marketing/generate-plan asks gpt-4o for up to 4500 tokens, which takes
-# roughly 60–90s. It already outlives the router — the author's fetch() gets an
-# H12 — but the handler persists the plan to md.plan_90day_json before returning
-# and author_marketing_platform.html renders plan_90day on page load, so the
-# author sees their plan when the page is reopened. That ugly path is the ONLY
-# way this feature currently delivers, and a 25s budget would remove it.
+# The 90-day marketing plan: gpt-4o at max_tokens=4500, which runs 60–90s.
 #
-# So: bounded, not shortened. 100s with no retry caps a thread at a minute and
-# a half instead of thirty minutes.
+# This used to be AI_SLOW_REQUEST_TIMEOUT_SECONDS=100 — a deliberately outsized
+# budget for a call sitting on the REQUEST path, where 100s meant one of four
+# gunicorn threads, and one database connection, held for a minute and a half.
+# (The connection was the part that did not show up in review: Flask-Login's
+# user_loader queries on every request, and a scoped session keeps that
+# connection until teardown. Measured: a query followed by a wait holds the
+# connection for the whole wait.) The call now runs on a background thread with
+# the same three-phase split as proposal scoring, so it holds neither.
 #
-# 100 and not 120, deliberately: the Procfile passes gunicorn `--timeout 120`,
-# and two different 120s in the same request would read as one mechanism. They
-# are not related — that flag is the arbiter's worker-liveness heartbeat, and
-# gthread's run loop calls notify() from the accept loop every second whatever
-# the request threads are doing (verified in gunicorn 21.2.0), so it never kills
-# a slow request. Keeping the numbers apart keeps that clear.
+# Off the request path the budget can be sized for the work instead of for what
+# a browser will wait for. 240s is roughly 3x the healthy run, which covers a
+# degraded OpenAI without covering a hung one.
 #
-# This is an interim bound, not a fix. The real fix is moving this call to the
-# background pattern the evaluation flow already uses — the next step on the
-# risk register — because a bounded 100s still lets four authors hold all four
-# threads for a minute and a half, and because the browser gets an H12 at 30s
-# either way and then invites a retry that starts a second call.
-AI_SLOW_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('AI_SLOW_REQUEST_TIMEOUT_SECONDS', '100'))
+# No retry, unlike the scoring budget beside it, and the reason is who is
+# waiting. A failed scoring is invisible — nobody is watching, so the SDK retry
+# is the only thing between a transient 429 and a permanently dead proposal. A
+# failed plan is the opposite: the author is on the page, polling, and gets a
+# "that did not work, try again" button within seconds. Their finger is a better
+# retry than a hidden one, and every attempt this budget allows is time added to
+# PLAN_JOB_STALE_AFTER, which is what they would have to sit through before that
+# button could safely appear.
+AI_PLAN_TIMEOUT_SECONDS = float(os.environ.get('AI_PLAN_TIMEOUT_SECONDS', '240'))
+AI_PLAN_MAX_RETRIES = int(os.environ.get('AI_PLAN_MAX_RETRIES', '0'))
 
 
 def build_openai_client(timeout=None, max_retries=None):
@@ -682,6 +700,17 @@ client = build_openai_client()
 background_client = build_openai_client(
     timeout=AI_BACKGROUND_TIMEOUT_SECONDS,
     max_retries=AI_BACKGROUND_MAX_RETRIES,
+)
+
+# The 90-day plan generator, which is background work but not scoring work: a
+# different budget and, unlike scoring, no retry. Its own object rather than a
+# timeout= argument on background_client, because max_retries cannot be
+# overridden per call — passing timeout=240 to a client built with
+# max_retries=1 would silently buy 480 seconds plus backoff, which is exactly
+# the arithmetic mistake this whole block exists to prevent.
+plan_client = build_openai_client(
+    timeout=AI_PLAN_TIMEOUT_SECONDS,
+    max_retries=AI_PLAN_MAX_RETRIES,
 )
 
 # Email configuration
@@ -1755,6 +1784,16 @@ class MarketingModuleData(db.Model):
     woodpecker_added    = db.Column(db.Boolean, default=False)  # enrolled in re-marketing campaign
     platform_mode       = db.Column(db.String(10))              # 'author' | 'creator' (None = not chosen)
     plan_90day_json     = db.Column(db.Text)                    # 90-day plan for creator mode
+    # In-flight state for the background plan generation. One JSON column rather
+    # than four scalars (status / started_at / error / award), for two reasons.
+    # It matches the six *_json columns already on this model, and — more
+    # usefully — a bare nullable TEXT has no DB-level default, so `create_all()`
+    # (what CI builds) and `_add('...', 'plan_job_json TEXT')` (what production
+    # runs) produce the SAME column. Every scalar with a default is a place
+    # those two schemas can disagree on exactly the field CI has never seen
+    # populated. NULL means "no job", which is the state every existing row is
+    # already in.
+    plan_job_json       = db.Column(db.Text)
     enrollment = db.relationship('CoachingEnrollment',
                                  backref=db.backref('marketing_data', uselist=False))
 
@@ -6859,19 +6898,15 @@ def api_marketing_pitch_eval():
     })
 
 
-@app.route('/api/marketing/generate-plan', methods=['POST'])
-def api_marketing_generate_plan():
-    """AI-generated 90-day marketing activity plan based on the author's platform and goals.
+def _build_plan_prompt(goals, platforms):
+    """Build the 90-day plan prompt. Pure string work: no request, no database.
 
-    Produces a rich, trend-informed plan, persists it, awards XP, and returns it for display.
+    Split out of the route so the background worker never reaches back into a
+    request context for anything. The route builds this and hands it over, so
+    every input the worker has is a plain value it already owns — which is what
+    lets the OpenAI call run with no application context and therefore no
+    database connection at all.
     """
-    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
-        return jsonify({'error': 'Unauthorized'}), 403
-
-    data = request.get_json() or {}
-    goals     = (data.get('goals') or '').strip()
-    platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
-
     if platforms:
         platform_lines = '\n'.join(
             f"- {p.get('name', p.get('id', '?'))}: {int(p.get('audience') or 0):,} followers/subscribers"
@@ -6948,55 +6983,476 @@ def api_marketing_generate_plan():
         '"month2":{...same shape...},"month3":{...same shape...}}'
     )
 
+    return prompt
+
+
+# ============================================================================
+# 90-DAY PLAN GENERATION (background)
+# ============================================================================
+#
+# This used to be a synchronous call inside POST /api/marketing/generate-plan.
+# It could not work, and had not since it shipped: gpt-4o at max_tokens=4500
+# runs 60-90s, Heroku's router hangs up at 30, so the author's fetch() ALWAYS
+# failed. The plan was persisted anyway, so the only way anyone ever saw one was
+# to reload the page and find it there - and the error handler meanwhile
+# re-enabled the button and invited a retry, which started a SECOND generation.
+#
+# What it cost while it ran: one of four gunicorn request threads AND one of the
+# database's twenty connections, for the full 60-90s. The connection is the part
+# that does not show up in review - Flask-Login's user_loader issues a SELECT on
+# the first touch of current_user, SQLAlchemy autobegins a transaction on it,
+# and nothing commits before the OpenAI call. Measured on these library
+# versions: checked-out connections go to 1 at the user_loader and stay there
+# through the whole call. Four authors pressing Generate was the whole site.
+#
+# Now: the route validates, claims the job and returns in milliseconds, and the
+# work happens on a daemon thread that holds no application context at all while
+# it waits on OpenAI. The page polls, like the proposal results page.
+#
+# Two rules hold the whole thing together, and both exist because getting them
+# wrong is silent rather than loud:
+#
+#   1. THE WORKER OWNS ITS CLAIM, NOT THE ROW. Every write a worker makes is
+#      conditional on the job blob still being the exact one it was started
+#      with. A worker whose claim has been superseded writes NOTHING - not the
+#      plan, not the XP, not the status. Without that, a thread the author had
+#      already given up on could land its plan on top of a newer one, and the
+#      screen and the PDF would disagree about which plan is theirs.
+#
+#   2. THE POLL NEVER DESTROYS ANYTHING. It is a GET; it reads. An earlier
+#      draft cleared the job on read to deliver the XP toast exactly once, and
+#      that had the author's second tab told there was no plan at all - one
+#      click from starting a second paid generation over the top of the first.
+#      The toast is now gated by a delivered flag, and the plan is returned
+#      whenever one exists, whatever the job says.
+
+# Identifies THIS process. The Procfile pins --workers 1, so a job blob carrying
+# a different boot id provably has no worker behind it: the process that started
+# it is gone. That turns the common failure - a deploy killing the thread
+# mid-generation - from an eight-minute wait for the stale window into an
+# immediate, honest "that was interrupted, try again".
+BOOT_ID = uuid.uuid4().hex
+
+# How long after a restart a foreign boot id is still given the benefit of the
+# doubt. A deploy briefly overlaps two web dynos (see the connection-pool
+# comment), so for a moment a live job really can belong to another process.
+PLAN_BOOT_GRACE = timedelta(seconds=90)
+
+# Two at a time, matching _EVAL_SLOTS.
+#
+# The connection budget above allots this process 8 connections and names every
+# holder; these workers are added to the "short-lived background threads" term
+# there rather than given one of their own, and that is a claim worth being able
+# to check: a plan worker holds a connection for two short bursts (claim the
+# row, write the result) with the 60-90s OpenAI call outside any app context in
+# between. What this change removes is a 90-second connection hold on a REQUEST
+# thread; what it adds is a millisecond one on a background thread.
+#
+# Two rather than one because one would be a capacity regression: today four
+# authors can generate at once (badly for the site, but they each get a plan),
+# and a single slot with a queue behind it would turn the third simultaneous
+# author of a campaign morning into an error. If pool waits ever show up in the
+# logs, this is the knob to turn down.
+_PLAN_SLOTS = threading.BoundedSemaphore(
+    max(1, int(os.environ.get('PLAN_CONCURRENCY') or 2)))
+
+# How long a queued generation waits for a slot before giving up and saying so.
+# Unlike the scoring queue there is no sweep to hand it to: somebody is on the
+# page waiting, so the honest end for a job that cannot start is an error they
+# can act on, not a silence they have to guess at.
+_PLAN_SLOT_WAIT = 180
+
+# When a 'processing' job is presumed dead, so the author can start another.
+#
+# Computed from the budget rather than chosen, for the same reason as
+# EVAL_STUCK_AFTER: set it below what a live job can legitimately take and it
+# stops being recovery and becomes duplication.
+#
+# The slack term is 180s, matching EVAL_STUCK_SLACK, and it is not decorative.
+# The number it protects is not a wall clock: openai turns `timeout=240` into an
+# httpx per-operation budget, so a response that dribbles can outlive 240s of
+# real time without ever tripping a read timeout. Rule 1 above is what makes
+# that survivable rather than merely unlikely - a worker that comes back late
+# finds its claim gone and writes nothing.
+PLAN_JOB_STALE_AFTER = timedelta(
+    seconds=(AI_PLAN_TIMEOUT_SECONDS * (AI_PLAN_MAX_RETRIES + 1)
+             + AI_PLAN_MAX_RETRIES * AI_RETRY_AFTER_MAX_SECONDS
+             + _PLAN_SLOT_WAIT)
+) + timedelta(seconds=180)
+
+PLAN_BUSY_MESSAGE = ('The plan builder is busy right now. Please try again in a '
+                     'minute - nothing was lost.')
+PLAN_FAILED_MESSAGE = 'Could not generate plan. Please try again.'
+PLAN_INTERRUPTED_MESSAGE = ('That was interrupted before it finished. Please '
+                            'try again - nothing was lost.')
+
+
+def _plan_job(md):
+    """Parse the in-flight job blob off a row. None means no job."""
+    if not md or not md.plan_job_json:
+        return None
     try:
-        # The one request-path call that does not fit the 25s budget: 4500
-        # gpt-4o tokens take 60–90s. Overriding the timeout here (max_retries
-        # stays 0, from the client) caps it at two minutes instead of thirty.
-        # Why it is not simply shortened to 25s — the author only ever sees this
-        # plan via the persist-then-reload path — is explained where
-        # AI_SLOW_REQUEST_TIMEOUT_SECONDS is defined.
-        resp = client.chat.completions.create(
-            model='gpt-4o',
-            messages=[{'role': 'user', 'content': prompt}],
-            response_format={'type': 'json_object'},
-            temperature=0.75,
-            max_tokens=4500,
-            timeout=AI_SLOW_REQUEST_TIMEOUT_SECONDS,
-        )
-        plan = json.loads(resp.choices[0].message.content)
-    except Exception as e:
-        # The one call in the request path allowed a two-minute budget, so this
-        # is also where a gunicorn thread gets held longest — worth knowing how
-        # often it ends this way rather than in a plan.
-        capture_failure('ai.marketing_plan', f"Generate plan error: {e}")
-        return jsonify({'success': False, 'error': 'Could not generate plan. Please try again.'}), 500
+        job = json.loads(md.plan_job_json)
+    except (ValueError, TypeError):
+        return None
+    return job if isinstance(job, dict) else None
 
-    plan['goals'] = goals
-    plan['generated_at'] = datetime.utcnow().strftime('%B %d, %Y')
 
-    # Persist + award XP (first generated plan unlocks the plan milestone).
+def _plan_job_running(job, now=None):
+    """Is a worker still expected to be working on this job?
+
+    Fails CLOSED. Every "I cannot tell" answer here means "yes, still running",
+    because the two answers do not cost the same: a wrong "running" makes an
+    author wait, and a wrong "not running" starts a second paid generation. The
+    stuck sweep on the scoring side reasons the same way and says so at length.
+    """
+    if not job or job.get('status') != 'processing':
+        return False
+    now = now or datetime.utcnow()
+
+    started = job.get('started_at')
+    try:
+        began = datetime.fromisoformat(started) if started else None
+    except (ValueError, TypeError):
+        began = None
+    if began is None:
+        return True            # malformed: assume a worker is out there
+
+    age = now - began
+    if age >= PLAN_JOB_STALE_AFTER:
+        return False
+
+    # A job from a previous boot of this process has no thread behind it. Give
+    # the deploy overlap a moment before believing that.
+    if job.get('boot_id') and job['boot_id'] != BOOT_ID and age > PLAN_BOOT_GRACE:
+        return False
+    return True
+
+
+def _swap_plan_job(md_id, expected_raw, new_raw, **also):
+    """Compare-and-swap the job blob, and anything that must land with it.
+
+    A conditional UPDATE with a rowcount check, like _claim_stuck_proposal, and
+    for the same reason: two tabs pressing Generate in the same instant both
+    read "nothing running", and a read-then-write would let both start one.
+
+    The predicate names the whole previous blob rather than a status field, so
+    it also catches the case where the job was replaced by a DIFFERENT job in
+    between - which is exactly how a superseded worker is stopped from writing
+    its plan over a newer one. `also` rides along in the same statement so the
+    plan and the status that describes it can never disagree.
+    """
+    q = db.session.query(MarketingModuleData).filter(MarketingModuleData.id == md_id)
+    if expected_raw is None:
+        q = q.filter(MarketingModuleData.plan_job_json.is_(None))
+    else:
+        q = q.filter(MarketingModuleData.plan_job_json == expected_raw)
+    values = dict(also)
+    values['plan_job_json'] = new_raw
+    updated = q.update(values, synchronize_session=False)
+    db.session.commit()
+    return updated == 1
+
+
+def _plan_job_blob(job_id, status, **extra):
+    blob = {'job_id': job_id, 'status': status}
+    blob.update(extra)
+    return json.dumps(blob)
+
+
+def _fail_plan_job(app_obj, md_id, claimed_raw, job_id, message):
+    """Record a failed job - but only if this worker still owns the claim."""
+    with app_obj.app_context():
+        try:
+            _swap_plan_job(md_id, claimed_raw,
+                           _plan_job_blob(job_id, 'error', error=message))
+        except Exception as e:
+            db.session.rollback()
+            capture_failure('ai.marketing_plan_status',
+                            f'Could not record plan job outcome for {md_id}: {e}')
+
+
+def _run_plan_generation(app_obj, author_id, md_id, job_id, claimed_raw, goals, prompt):
+    """Generate one 90-day plan. Runs on a daemon thread, never in a request."""
+    # The slot is taken before any app context, so a queued thread holds no
+    # session and no connection - it is asleep, holding nothing. Same ordering
+    # as process_evaluation_background, and for the same reason.
+    if not _PLAN_SLOTS.acquire(timeout=_PLAN_SLOT_WAIT):
+        _fail_plan_job(app_obj, md_id, claimed_raw, job_id, PLAN_BUSY_MESSAGE)
+        return
+    try:
+        # ── Phase 1: the slow part, holding NOTHING ──────────────────────────
+        # No app context, so no session, so no database connection. This is the
+        # whole point of the change, and it is why the app context below is
+        # opened after the call rather than around it.
+        plan = None
+        failure = None
+        try:
+            resp = plan_client.chat.completions.create(
+                model='gpt-4o',
+                messages=[{'role': 'user', 'content': prompt}],
+                response_format={'type': 'json_object'},
+                temperature=0.75,
+                max_tokens=4500,
+            )
+            plan = json.loads(resp.choices[0].message.content)
+        except Exception as e:
+            failure = e
+
+        if failure is not None:
+            with app_obj.app_context():
+                capture_failure('ai.marketing_plan', f'Generate plan error: {failure}')
+            _fail_plan_job(app_obj, md_id, claimed_raw, job_id, PLAN_FAILED_MESSAGE)
+            return
+
+        plan['goals'] = goals
+        plan['generated_at'] = datetime.utcnow().strftime('%B %d, %Y')
+
+        # ── Phase 2: write the result, if the claim still stands ─────────────
+        alert_author_id = None
+        persist_failed = False
+        with app_obj.app_context():
+            try:
+                md = MarketingModuleData.query.get(md_id)
+                if not md:
+                    return
+
+                # XP is awarded once ever, keyed on the actions dict, so a
+                # regenerate cannot award it twice.
+                actions = json.loads(md.xp_actions_json or '{}')
+                old_xp = md.xp_total or 0
+                new_xp, xp_gained, actions_json = old_xp, 0, md.xp_actions_json
+                if 'plan_90day' not in actions:
+                    actions['plan_90day'] = True
+                    xp_gained = MARKETING_XP_ACTIONS.get('plan_90day', 250)
+                    new_xp = old_xp + xp_gained
+                    actions_json = json.dumps(actions)
+
+                # The lead recompute is inlined rather than calling
+                # _refresh_services_lead, because that helper sets
+                # services_alert_sent and dispatches the team email in the same
+                # breath - before this commit. If the commit then failed, the
+                # rollback would un-set the flag an email had already been sent
+                # under, and the team would get the same lead twice. Compute
+                # here, commit, then alert.
+                score, fit = _compute_platform_score(md)
+                upsell = _services_upsell_payload(fit, _marketing_reach(md),
+                                                  md.platform_mode or 'author')
+                should_alert = (fit in ('hot', 'warm') and not md.services_alert_sent)
+
+                done = _plan_job_blob(
+                    job_id, 'done',
+                    award={'xp_gained': xp_gained,
+                           'unlocked_badge': (_marketing_check_badge(old_xp, new_xp)
+                                              if xp_gained else None),
+                           'upsell': upsell},
+                    award_delivered=False,
+                )
+                # One statement, one predicate: either this worker still owns
+                # the job and everything lands together, or it owns nothing and
+                # writes nothing.
+                won = _swap_plan_job(
+                    md_id, claimed_raw, done,
+                    plan_90day_json=json.dumps(plan),
+                    xp_total=new_xp,
+                    xp_actions_json=actions_json,
+                    platform_score=score,
+                    services_fit=fit,
+                    services_alert_sent=True if should_alert else md.services_alert_sent,
+                    updated_at=datetime.utcnow(),
+                )
+                if not won:
+                    print(f'Plan job {job_id}: claim superseded, discarding result')
+                    return
+                if should_alert:
+                    alert_author_id = author_id
+            except Exception as e:
+                db.session.rollback()
+                capture_failure('ai.marketing_plan_persist',
+                                f'Plan generated but not saved for author {author_id}: {e}')
+                persist_failed = True
+
+        # Outside the context above on purpose: nesting a second app context
+        # inside the first would give this one thread two sessions and two
+        # pooled connections at once, at the moment the pool is the likeliest
+        # thing to be wrong.
+        if persist_failed:
+            _fail_plan_job(app_obj, md_id, claimed_raw, job_id, PLAN_FAILED_MESSAGE)
+        elif alert_author_id is not None:
+            threading.Thread(target=_send_services_alert_async,
+                             args=(alert_author_id, md_id, 'qualified'),
+                             daemon=True).start()
+    finally:
+        _PLAN_SLOTS.release()
+
+
+# Per-author, per-hour cap on STARTING a generation. Every start is a gpt-4o
+# call at max_tokens=4500, and this route had no limit at all - a signed-in
+# author holding the button was an uncapped bill. Checked after the claim, so a
+# press that starts nothing (a second tab, a lost race) does not spend one.
+PLAN_GEN_PER_HOUR = 10
+_plan_gen_rate = {}
+
+# The poll is cheap but not free - it costs the user_loader SELECT plus one row
+# read, against four request threads. At one poll per 3s this is far above what
+# a page can produce; it is here so a stuck script cannot become a load source.
+PLAN_POLL_PER_HOUR = 600
+_plan_poll_rate = {}
+
+
+def _author_marketing_data(author_id):
+    """The author's standalone marketing row, chosen deterministically.
+
+    order_by(id) rather than a bare first(): nothing stops two rows existing for
+    one author (enrollment_id is NULL on all of them, so the unique constraint
+    does not apply), and an unordered first() is free to return a different one
+    to each caller - which would have the page, the poll and the PDF disagreeing
+    about whose plan is whose.
+    """
+    return (MarketingModuleData.query
+            .filter(MarketingModuleData.author_id == author_id,
+                    MarketingModuleData.enrollment_id.is_(None))
+            .order_by(MarketingModuleData.id.asc())
+            .first())
+
+
+def _plan_status_payload(md, deliver_award=True):
+    """What the page and the poll both say about the plan. One shape, one place.
+
+    Always carries the plan when one exists, whatever the job says. That is the
+    fix for the two-tab bug: a second tab must never be told "no plan, press
+    here" about a plan the author already has.
+    """
+    plan = None
+    if md and md.plan_90day_json:
+        try:
+            plan = json.loads(md.plan_90day_json)
+        except (ValueError, TypeError):
+            plan = None
+
+    job = _plan_job(md)
+    payload = {'ready': True, 'status': 'idle', 'plan': plan,
+               'xp_total': md.xp_total if md else 0}
+    if not job:
+        return payload
+
+    payload['job_id'] = job.get('job_id')
+    status = job.get('status')
+
+    if status == 'processing':
+        if _plan_job_running(job):
+            payload.update({'ready': False, 'status': 'processing'})
+        else:
+            payload.update({'status': 'error',
+                            'error': PLAN_INTERRUPTED_MESSAGE})
+        return payload
+
+    if status == 'error':
+        payload.update({'status': 'error', 'error': job.get('error') or PLAN_FAILED_MESSAGE})
+        return payload
+
+    payload['status'] = 'done'
+    if deliver_award and not job.get('award_delivered'):
+        award = job.get('award') or {}
+        payload.update({'xp_gained': award.get('xp_gained', 0),
+                        'unlocked_badge': award.get('unlocked_badge'),
+                        'upsell': award.get('upsell')})
+    return payload
+
+
+@app.route('/api/marketing/generate-plan', methods=['POST'])
+def api_marketing_generate_plan():
+    """Start a 90-day plan generation. Returns immediately; the page polls.
+
+    Deliberately does NOT wait for the plan. See the section comment above for
+    what waiting used to cost.
+    """
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json() or {}
+    goals = (data.get('goals') or '').strip()
+    platforms = data.get('platforms', [])  # [{id, name, icon, audience}]
+
     md = _get_or_create_marketing_data_standalone(current_user.id)
-    md.plan_90day_json = json.dumps(plan)
-    actions = json.loads(md.xp_actions_json or '{}')
-    old_xp = md.xp_total or 0
-    xp_gained = 0
-    if 'plan_90day' not in actions:
-        actions['plan_90day'] = True
-        xp_gained = MARKETING_XP_ACTIONS.get('plan_90day', 250)
-        md.xp_total = old_xp + xp_gained
-        md.xp_actions_json = json.dumps(actions)
-    md.updated_at = datetime.utcnow()
-    upsell = _refresh_services_lead(md, current_user)
     db.session.commit()
 
-    return jsonify({
-        'success': True,
-        'plan': plan,
-        'xp_total': md.xp_total,
-        'xp_gained': xp_gained,
-        'unlocked_badge': _marketing_check_badge(old_xp, md.xp_total) if xp_gained else None,
-        'upsell': upsell,
-    })
+    existing_raw = md.plan_job_json
+    if _plan_job_running(_plan_job(md)):
+        # Already running - a second tab, or a reload that re-pressed the
+        # button. Report it as started so the caller just polls the live job,
+        # and do not spend a rate-limit allowance on a press that started
+        # nothing.
+        return jsonify({'success': True, 'status': 'processing',
+                        'status_url': url_for('api_marketing_plan_status')}), 202
+
+    job_id = uuid.uuid4().hex
+    claimed_raw = _plan_job_blob(job_id, 'processing',
+                                 started_at=datetime.utcnow().isoformat(),
+                                 boot_id=BOOT_ID,
+                                 goals=goals)
+    if not _swap_plan_job(md.id, existing_raw, claimed_raw):
+        # Lost the race to another request in the same instant; that one owns
+        # the job now and this caller can poll it just the same.
+        return jsonify({'success': True, 'status': 'processing',
+                        'status_url': url_for('api_marketing_plan_status')}), 202
+
+    if not _check_rate_limit(current_user.id, max_requests=PLAN_GEN_PER_HOUR,
+                             window=3600, bucket=_plan_gen_rate):
+        # Hand the claim back rather than leaving a job nobody will ever run.
+        _swap_plan_job(md.id, claimed_raw, None)
+        return jsonify({'success': False, 'status': 'error',
+                        'error': 'You have generated several plans recently. '
+                                 'Please wait a little while before trying again.'}), 429
+
+    threading.Thread(
+        target=_run_plan_generation,
+        args=(app, current_user.id, md.id, job_id, claimed_raw, goals,
+              _build_plan_prompt(goals, platforms)),
+        daemon=True,
+    ).start()
+
+    return jsonify({'success': True, 'status': 'processing', 'job_id': job_id,
+                    'status_url': url_for('api_marketing_plan_status')}), 202
+
+
+@app.route('/api/marketing/plan-status')
+def api_marketing_plan_status():
+    """Poll a plan generation. Mirrors /api/status/<id> for proposal scoring.
+
+    READ ONLY. It never clears the job and never mutates the row - see rule 2 in
+    the section comment. The XP toast is fired at most once because the payload
+    stops carrying the award after the first delivery, which is recorded by a
+    separate acknowledgement rather than by destroying the job.
+    """
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+    if not _check_rate_limit(current_user.id, max_requests=PLAN_POLL_PER_HOUR,
+                             window=3600, bucket=_plan_poll_rate):
+        return jsonify({'error': 'Too many requests'}), 429
+
+    return jsonify(_plan_status_payload(_author_marketing_data(current_user.id)))
+
+
+@app.route('/api/marketing/plan-ack', methods=['POST'])
+def api_marketing_plan_ack():
+    """Acknowledge a finished job so its XP toast is not shown again.
+
+    A POST, not a side effect of the GET, so that a browser prefetch or an
+    <img src> cannot silently swallow an author's award.
+    """
+    if not current_user.is_authenticated or not getattr(current_user, 'is_author', False):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    md = _author_marketing_data(current_user.id)
+    job = _plan_job(md)
+    if not job or job.get('status') != 'done' or job.get('award_delivered'):
+        return jsonify({'success': True})
+
+    acked = dict(job)
+    acked['award_delivered'] = True
+    _swap_plan_job(md.id, md.plan_job_json, json.dumps(acked))
+    return jsonify({'success': True})
 
 
 @app.route('/author/marketing-platform/plan.pdf')
@@ -7995,10 +8451,7 @@ def author_logout():
 @author_login_required
 def author_marketing_platform():
     """Standalone Marketing Platform Builder — accessible without coaching enrollment."""
-    md = (MarketingModuleData.query
-          .filter(MarketingModuleData.author_id == current_user.id,
-                  MarketingModuleData.enrollment_id.is_(None))
-          .first())
+    md = _author_marketing_data(current_user.id)
 
     xp_now = md.xp_total if md else 0
     xp_pct = min(100, round(xp_now / MARKETING_XP_MAX * 100))
@@ -8008,6 +8461,13 @@ def author_marketing_platform():
     pitch_feedback = json.loads(md.pitch_feedback_json) if md and md.pitch_feedback_json else None
     platform_mode = md.platform_mode if md else None
     plan_90day = json.loads(md.plan_90day_json) if md and md.plan_90day_json else {}
+    # Decided here rather than by a fetch on every page load. The page is
+    # rendered already-generating when a job is live, so the button is never
+    # briefly clickable while work is in flight — which is how a second
+    # generation used to get started. It also means an author-mode visitor, who
+    # cannot even see the plan card, costs no extra request.
+    plan_job = _plan_status_payload(md, deliver_award=False)
+    plan_job_goals = (_plan_job(md) or {}).get('goals') or ''
 
     milestones = [{'xp': t, 'badge': b, 'name': n,
                    'pct': round(t / MARKETING_XP_MAX * 100),
@@ -8031,6 +8491,8 @@ def author_marketing_platform():
         comp_titles=comp_titles,
         pitch_text=pitch_text,
         pitch_feedback=pitch_feedback,
+        plan_job=plan_job,
+        plan_job_goals=plan_job_goals,
         upsell=upsell,
         services_call_url=SERVICES_CALL_URL,
         platform_mode=platform_mode,
@@ -10883,6 +11345,9 @@ def run_migrations(strict=True):
     _add('marketing_module_data', 'woodpecker_added BOOLEAN DEFAULT FALSE')
     _add('marketing_module_data', "platform_mode VARCHAR(10)")
     _add('marketing_module_data', 'plan_90day_json TEXT')
+    # No DEFAULT, deliberately — see the column definition on the model. NULL is
+    # "no plan job", which is what every pre-existing row means.
+    _add('marketing_module_data', 'plan_job_json TEXT')
     # Make enrollment_id nullable (Postgres only; SQLite allows NULL regardless).
     #
     # This one is the single best argument for the ledger in the whole file. It

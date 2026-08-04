@@ -335,6 +335,60 @@ if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
         },
     })
 
+    # ── connect_timeout IS FOR WEB DYNOS ONLY ────────────────────────────────
+    #
+    # It broke a deploy on 2026-08-04. Release v207 (deploy dab33bd, 10:47)
+    # aborted with
+    #
+    #   MIGRATION FAILED: ddl:create_all: (psycopg2.OperationalError) connection
+    #   to server at "casrkuuedp6an1...", port 5432 failed: timeout expired
+    #   === RELEASE ABORTED: MIGRATION FAILED ===
+    #
+    # and #142 was opened purely to redeploy an already-merged main. Nothing was
+    # wrong with the migration or the schema. The database simply took longer
+    # than 10s to hand out a connection that once, and the ceiling above turned a
+    # slow connect into a failed release.
+    #
+    # This is the identical fault the marketing site hit at ITS release v62 and
+    # fixed in PRs #46/#47 — see the long note in that repo's config.py. The
+    # comment a few lines up already reasons about exactly this risk for
+    # statement_timeout ("this same config is imported by migrate.py during the
+    # release phase, so a ceiling here would abort a long migration and fail the
+    # deploy") and then stops one key short of the one that actually did it.
+    #
+    # So: the release phase, Scheduler jobs and `heroku run` get libpq's default,
+    # which is what every green release before this ran on. A migration that
+    # genuinely cannot reach the database still fails — it just fails on the
+    # database's terms rather than on a number somebody guessed.
+    #
+    # WHY WEB KEEPS ONE, when the marketing site removed it everywhere. Different
+    # database, different risk. This app runs ONE process with FOUR threads, so a
+    # connection attempt that hangs holds a quarter of the site; the marketing
+    # site's dyno had no such ceiling to hit. tcp_user_timeout above does NOT
+    # cover this case — it acts on established sockets, and establishment is
+    # precisely what stalls here.
+    #
+    # THE 10 IS NOT VALIDATED, and should not be treated as if it were. It
+    # predates any measurement of this host. What is measured, 2026-08-04: ten
+    # consecutive connects in 0.05-0.23s, and one stall past 10s (the release
+    # above), so the true worst case is unknown and above the ceiling. Before
+    # trusting it, sample from the live dyno across a few days and set it above
+    # the observed maximum — or move this database off the shared tier, which is
+    # what removed the problem for the marketing site rather than bounding it.
+    if not os.environ.get('DYNO', '').startswith('web.'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS']['connect_args'].pop(
+            'connect_timeout', None)
+
+    # application_name lands in pg_stat_activity, so `heroku pg:ps` can say WHICH
+    # kind of process is holding a connection. It read 'authors-portal-web' on
+    # every process including the release phase, which is misleading in exactly
+    # the incident it exists to help with — the 10:47 abort above showed up as a
+    # "web" connection. Derive it from DYNO the same way observability.py derives
+    # its process_type tag.
+    _dyno = (os.environ.get('DYNO') or '').split('.', 1)[0].lower()
+    app.config['SQLALCHEMY_ENGINE_OPTIONS']['connect_args']['application_name'] = (
+        f'authors-portal-{_dyno}' if _dyno else 'authors-portal-local')
+
 # ── APP_BASE_URL — must be defined before cookie config (used as the HTTPS signal)
 # Set APP_URL (or APP_BASE_URL) in Heroku Config Vars:
 #   APP_URL = https://authors.writeitgreat.com

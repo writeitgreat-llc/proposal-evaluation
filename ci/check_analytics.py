@@ -328,7 +328,11 @@ def main() -> int:
         check(f"{label} is NOT flagged as a bot", ac.is_bot(ua) is False)
 
     # ----------------------------------------------------------------------
-    print("\nCloudflare header trust (must stay OFF until the proxy is real)")
+    # The proxy IS real now and TRUST_CLOUDFLARE_IP=1 is set in production, so
+    # the question has moved: not "is the switch off" but "does the switch
+    # alone grant trust". It must not -- the herokuapp origin answers outside
+    # Cloudflare. ci/check_edge_trust.py is the fuller guard.
+    print("\nCloudflare header trust (the switch alone must never be enough)")
     check("CF-Connecting-IP is not trusted by default", ac.trusts_cloudflare() is False,
           "an untrusted deployment that believes this header gives every client "
           "an unlimited throttle allowance for the price of one header")
@@ -342,7 +346,18 @@ def main() -> int:
         with flask_app.test_request_context(
                 "/e", headers={"CF-Connecting-IP": "198.51.100.5"},
                 environ_base={"REMOTE_ADDR": PROBE_IP}):
-            check("CF-Connecting-IP IS used once explicitly trusted",
+            check("a forged CF-Connecting-IP is STILL ignored when the request "
+                  "did not arrive via a Cloudflare edge, even with "
+                  "TRUST_CLOUDFLARE_IP=1",
+                  ac.client_ip() == PROBE_IP,
+                  "this is the herokuapp-origin bypass: believing the header "
+                  "here gives a caller a fresh identity per request")
+        with flask_app.test_request_context(
+                "/e", headers={"CF-Connecting-IP": "198.51.100.5"},
+                # A real Cloudflare edge, observed in production 2026-08-04.
+                environ_base={"REMOTE_ADDR": "162.158.110.183"}):
+            check("CF-Connecting-IP IS used when the request provably came "
+                  "through Cloudflare",
                   ac.client_ip() == "198.51.100.5", str(ac.client_ip()))
     finally:
         os.environ.pop("TRUST_CLOUDFLARE_IP", None)

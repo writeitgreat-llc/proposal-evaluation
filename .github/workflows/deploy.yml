@@ -40,22 +40,28 @@ env:
   HEROKU_APP_NAME: proposal-evaluation
   # The app we actually deploy to. This is the URL that PROVES this deploy
   # worked, so it is the primary smoke target.
-  APP_URL: https://proposal-evaluation-20d7e1515843.herokuapp.com/
+  #
+  # /healthz, not /, and that path is load-bearing. GET / on the origin now
+  # 301s to authors.writeitgreat.com (app.py, _redirect_bypass_origin) to stop
+  # Google indexing a second copy of the site. ci/smoke_deploy.sh passes
+  # `curl -L`, so pointing this at / would still go green -- by following the
+  # redirect and measuring the edge, which is the exact thing this target
+  # exists NOT to measure. Both smoke steps would then test the same path and
+  # a Cloudflare outage would fail both with no way to tell which broke.
+  #
+  # /healthz is exempt from that redirect (edge_trust.BYPASS_EXEMPT_EXACT)
+  # precisely so origin-only probing keeps working, and it is a strictly better
+  # boot check than / anyway: it round-trips the database.
+  APP_URL: https://proposal-evaluation-20d7e1515843.herokuapp.com/healthz
   # What authors actually visit.
   #
-  # !! UNRESOLVED, CONFIRM WITH ANDY BEFORE TRUSTING THIS PIPELINE !!
-  # `heroku domains -a proposal-evaluation` lists NO custom domains, yet
-  # authors.writeitgreat.com resolves to a herokudns.com target. It is not on
-  # any of the four apps Ray can see (proposal-evaluation, writeitgreat-website,
-  # uplevelbooks, wig-dashboard), so a fifth Heroku app -- in an account Ray
-  # cannot list -- may be what authors.writeitgreat.com actually serves.
-  # Both URLs currently return byte-identical pages, which is consistent with
-  # either "same app" or "same code deployed twice".
-  #
-  # If it IS a second app, deploying here will not update what users see, and
-  # the PUBLIC_URL smoke below would stay green while doing nothing. Resolve it
-  # with:  heroku domains:add authors.writeitgreat.com -a proposal-evaluation
-  # (or by pointing this workflow at whichever app owns the domain).
+  # RESOLVED 2026-07-31 (this block used to carry a "!! UNRESOLVED, may be a
+  # fifth Heroku app !!" warning -- it was wrong, and it told anyone reading it
+  # not to trust this pipeline). authors.writeitgreat.com IS a custom domain on
+  # THIS app, CNAME'd to
+  # molecular-mandrill-tf33ef4jp15w48r2zm06lz31.herokudns.com. There is no
+  # fifth app. Deploying here does update what authors see, and the smoke below
+  # is meaningful.
   PUBLIC_URL: https://authors.writeitgreat.com/
 
 jobs:

@@ -223,6 +223,46 @@ app = Flask(__name__)
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# ── The un-proxied Heroku origin ──────────────────────────────────────────────
+# `proposal-evaluation-20d7e1515843.herokuapp.com` serves this same app without
+# passing through Cloudflare (verified 2026-08-04: Server: Heroku, no cf-ray).
+# Heroku offers no origin firewall on this plan, so that address cannot be
+# closed — it is made useless instead, in two halves.
+#
+# The SECURITY half is edge_trust.py, wired into analytics_collect.client_ip():
+# CF-Connecting-IP is now believed only when the appended X-Forwarded-For hop
+# is a real Cloudflare edge. That is what stops a caller on this origin minting
+# a fresh identity per request and walking through the sign-up limits, the
+# /social-strategy limits and the beacon throttle.
+#
+# The half below is the visible one: an ordinary browser landing on the origin
+# is sent to the real domain, so Google stops indexing a second copy of an
+# author-facing site. A redirect is advice a bot can decline, which is exactly
+# why it is not the security half.
+#
+# GET/HEAD only. A redirected POST is a lost submission, and OPTIONS must pass
+# through untouched or the CORS preflight on /api/submit breaks. A form POST
+# that arrives here — a stale tab, a bookmark — still submits, and is now
+# throttled on its real address instead of one it chose for itself.
+import edge_trust  # noqa: E402
+
+
+@app.before_request
+def _redirect_bypass_origin():
+    if request.method not in ('GET', 'HEAD'):
+        return None
+    if not edge_trust.is_bypass_host(request.host):
+        return None
+    if edge_trust.is_exempt_path(request.path):
+        return None
+    target = edge_trust.canonical_base() + request.path
+    if request.query_string:
+        # Keep campaign parameters intact: a utm-tagged link that somehow
+        # points at the origin must still attribute correctly once it lands,
+        # or the redirect quietly costs a source.
+        target += '?' + request.query_string.decode('latin-1')
+    return redirect(target, code=301)
+
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///proposals.db')
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
@@ -7651,11 +7691,18 @@ def api_evaluate():
         # the per-visitor value, but it reads CF-Connecting-IP, which is only
         # authoritative for traffic that actually transited Cloudflare -- and
         # the dyno's own *.herokuapp.com origin still answers directly
-        # (verified 2026-07-30). Keyed on that alone, anyone could POST to the
-        # origin claiming a named author's IP and burn *their* allowance,
+        # (re-verified 2026-08-04). Keyed on that alone, anyone could POST to
+        # the origin claiming a named author's IP and burn *their* allowance,
         # turning this throttle into a way to lock one author out. Pairing it
         # with the unforgeable peer means a direct-to-origin caller can only
         # ever fill buckets under their own peer address.
+        #
+        # As of 2026-08-04 edge_trust.py also makes client_ip() itself refuse
+        # to read CF-Connecting-IP off the edge, so on the origin the caller
+        # key degenerates to (peer, peer) rather than (peer, anything-they-
+        # like). The pairing is kept anyway: it is what makes this correct
+        # independently of that gate, and belt-and-braces on the one route
+        # that parses an uploaded document is the right trade.
         peer_ip = request.remote_addr or 'unknown'
         caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
         if (not _check_rate_limit(peer_ip, max_requests=120, window=3600,
@@ -8076,12 +8123,16 @@ def api_submit():
     #
     # That is only authoritative for traffic which actually transited
     # Cloudflare, and the dyno's own *.herokuapp.com origin still answers
-    # directly (verified 2026-07-30) -- a request sent there can set
-    # CF-Connecting-IP to anything, so this key is forgeable on that path. It
-    # is not the control that matters here: the X-API-Key check above already
-    # gates this endpoint, and only the Wix caller holds the key. /api/evaluate
-    # is anonymous and cannot lean on that, which is why it pairs this value
-    # with the unforgeable peer address instead -- see the comment there.
+    # directly (re-verified 2026-08-04) -- which is the address the Wix caller
+    # legitimately uses. Until 2026-08-04 a request sent there could set
+    # CF-Connecting-IP to anything and this key was forgeable; edge_trust.py
+    # closed that, so off the Cloudflare edge client_ip() now returns the
+    # caller's real peer address and this limit counts honestly on both paths.
+    #
+    # It was never the control that matters here in any case: the X-API-Key
+    # check above already gates this endpoint and only the Wix caller holds the
+    # key. /api/evaluate is anonymous and cannot lean on that, which is why it
+    # pairs this value with the peer address as well -- see the comment there.
     caller_ip = analytics_collect.client_ip() or 'unknown'
     if not _check_rate_limit(caller_ip):
         return _json({'success': False, 'error': 'Too many submissions. Please try again later.'}, 429)

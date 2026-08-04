@@ -55,7 +55,7 @@ import threading
 import time
 
 # Bump on ANY change to this file, then copy to the other two repos.
-CONFIG_VERSION = "2"
+CONFIG_VERSION = "3"
 
 _DEFAULT_MAX_PER_HOUR = 15
 _DEFAULT_MAX_PER_FINGERPRINT_PER_HOUR = 3
@@ -310,6 +310,53 @@ def _release():
     return None
 
 
+# Heroku names every dyno "<process type>.<instance>" and puts it in DYNO:
+# "web.1", "scheduler.1234", "release.1234", "run.1234". Nothing else sets that
+# variable, which is what lets "no DYNO" mean "not on Heroku" rather than "some
+# dyno we failed to recognise".
+#
+# Anything that is not a short, plain, lowercase identifier collapses to
+# "unknown" instead of being passed through. Sentry indexes tag values, so a
+# junk value is worse than a known-nothing one: it becomes a permanent entry in
+# the tag list of the very filter this exists to make trustworthy.
+_PROCESS_TYPE = re.compile(r"^[a-z0-9_-]{1,32}$")
+
+
+def process_type() -> str:
+    """What KIND of process is reporting -- the value of the `process_type` tag.
+
+    On 2026-08-03 a one-off diagnostic run through `heroku run` against the
+    marketing site had a typo in it, crashed, and -- because anything that
+    imports the app also starts Sentry -- reported itself as an unhandled
+    production error. The alert said the marketing site had failed. It had not.
+    That is WIG-WEBSITE-4, and it cost a slice of a 5,000/month pool shared
+    org-wide and a 9:28pm false alarm. A few more of those and the alerts get
+    ignored, which is how an alarm system actually dies.
+
+    The values, and what each one means when you see it on an issue:
+
+      web        a real visitor hit a real route
+      scheduler  a Heroku Scheduler job -- STILL WORTH WAKING UP FOR
+      release    the release phase, i.e. a migration; a failure here blocks the
+                 deploy of an already-merged main, so also worth an alert
+      run        a human running a script by hand -- the only genuinely noisy
+                 one, and the reason this tag exists
+      local      no DYNO at all, so a laptop or a CI runner
+
+    Deliberately a TAG and not a filter. Nothing here drops, samples or
+    re-levels an event. A scheduled job that starts failing at 3am is precisely
+    what monitoring is for, and code that quietly suppressed it would be a
+    worse bug than the false alarm it fixed. Narrowing to
+    `!process_type:run` is a decision to take in the Sentry UI, where it is
+    visible, reversible, and does not cost three pull requests.
+    """
+    dyno = (os.environ.get("DYNO") or "").strip()
+    if not dyno:
+        return "local"
+    name = dyno.split(".", 1)[0].lower()
+    return name if _PROCESS_TYPE.match(name) else "unknown"
+
+
 def _disabled_integrations():
     """Integrations that must never auto-enable.
 
@@ -409,4 +456,16 @@ def init_sentry(app_slug: str, capture_logs_at=None) -> bool:
     )
     sentry_sdk.set_tag("app", app_slug)
     sentry_sdk.set_tag("sentry_config", CONFIG_VERSION)
+    # Read once, here, because DYNO is fixed for the life of the process.
+    #
+    # These three land on the ISOLATION scope, which is a ContextVar whose
+    # default is None -- so a bare thread would build itself a fresh, EMPTY
+    # scope and report with no tags at all. What saves it is ThreadingIntegration
+    # being left enabled: it copies the scope into each thread at start. The
+    # marketing site's form-delivery courier and its lockout-alert sender are
+    # both daemon threads, so this is load-bearing rather than theoretical.
+    # Verified on 2.66.1 by capturing from a main thread, a forked isolation
+    # scope and a bare threading.Thread; all three carried the tags. If anyone
+    # ever adds ThreadingIntegration to _disabled_integrations(), that stops.
+    sentry_sdk.set_tag("process_type", process_type())
     return True

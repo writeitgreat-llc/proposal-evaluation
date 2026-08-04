@@ -470,6 +470,17 @@ place. `ci/check_sentry_scrub.py` (a step in `proposal-ci`) proves it still
 scrubs; `CONFIG_VERSION` in that file is the only cross-repo drift detector
 there is, and it rides on every event as the `sentry_config` tag.
 
+Every event also carries a **`process_type`** tag naming the kind of process
+that produced it, derived from Heroku's `DYNO` variable: `web` (a real visitor),
+`scheduler`, `release` (the migration phase), `run` (a human running a script by
+hand), or `local` off Heroku entirely. It exists because a one-off
+`heroku run` script that crashes imports the app, therefore starts Sentry, and
+therefore reports itself as an unhandled production error — an alert saying the
+site is down when it is not. Nothing is suppressed: a *scheduled* job failing at
+3am is exactly what this is all for. If you want a quieter inbox, add
+`!process_type:run` to the alert rule in the Sentry UI, where it is visible and
+reversible, rather than in code that ships to three repos.
+
 | Var | Default | What it does |
 |---|---|---|
 | `SENTRY_DSN` | unset | **The on switch.** Unset, `init_sentry()` returns `False` having done nothing — no client, no traffic, nothing to leak. That is why CI, `ci/smoke_app.py` and laptops are silent. |

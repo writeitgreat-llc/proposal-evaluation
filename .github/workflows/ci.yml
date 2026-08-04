@@ -29,7 +29,10 @@ jobs:
   proposal-ci:
     name: proposal-ci
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 25, not 20: the responsive audit at the end of this job adds an npm
+    # install, a Chromium download on a cold cache, an app boot and ~30s of
+    # browser work. Free minutes on a public repo, but not free wall clock.
+    timeout-minutes: 25
 
     # Production is Postgres; every other check here runs on SQLite. That gap
     # used to be harmless, but the migration runner now has a real Postgres-only
@@ -156,6 +159,88 @@ jobs:
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
         run: python ci/check_migrations.py
+
+      # ======================================================================
+      # RESPONSIVE / MOBILE AUDIT
+      #
+      # Steps inside proposal-ci, deliberately not a job of their own -- same
+      # reason as every other step here: proposal-ci is the required status
+      # check, and a new job would be a new status context that gates nothing
+      # until someone re-runs ci/setup_branch_protection.sh AND adds the name
+      # to deploy.yml's BLOCKING_CHECKS.
+      #
+      # This is the check that would have caught the 4 Aug 2026 mobile header:
+      # a nav that ran off the right edge of the phone, taking the paid CTA with
+      # it, and a header three rows tall that covered the "your account has been
+      # created" banner. Nothing in CI saw it, because nothing in CI had a
+      # viewport OR a logged-in session -- smoke_app.py drives test_client over
+      # public routes, and base.html renders the nav only for a signed-in user.
+      # ci/responsive/README.md has the full account. The audit REGISTERS an
+      # author through the real form for exactly that reason; a version of it
+      # limited to public pages is a false green.
+      #
+      # Actions minutes are free on this repo (it is public), so the ~2 minutes
+      # this adds costs nothing but wall clock.
+      # ======================================================================
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('ci/responsive/package.json') }}
+
+      - name: Install audit dependencies
+        working-directory: ci/responsive
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Start the app for the audit
+        env:
+          # Four slashes = absolute path. Flask-SQLAlchemy 3.x resolves a
+          # relative sqlite:/// path against app.instance_path, which would put
+          # the release step and the serving process on different databases if
+          # the working directory ever differed.
+          DATABASE_URL: sqlite:////tmp/wig_responsive.db
+          # No Turnstile keys, so turnstile_enabled() is false and the audit's
+          # registration goes through without a challenge (app.py:7424). Do not
+          # add real keys here -- this repo is public and its logs are too.
+          APP_BASE_URL: http://127.0.0.1:5000
+        run: |
+          rm -f /tmp/wig_responsive.db
+          # The literal Heroku release phase, so the schema the audit runs
+          # against is built the way production's is.
+          python migrate.py
+          # Same entrypoint as the Procfile.
+          gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --threads 4 \
+            --access-logfile - --error-logfile - > /tmp/audit-server.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:5000/author/login > /dev/null 2>&1; then
+              echo "app is up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::app did not come up within 40s"
+          cat /tmp/audit-server.log
+          exit 1
+
+      - name: Responsive audit (phone, tablet and desktop, signed in and out)
+        run: node ci/responsive/audit.js --base-url http://127.0.0.1:5000
+
+      - name: Upload audit report and failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-report
+          path: |
+            ci/responsive/_report
+            /tmp/audit-server.log
+          retention-days: 14
+          if-no-files-found: warn
 
       # Non-blocking. app.py does `import requests as http_requests` but
       # requests is NOT in requirements.txt -- today it only installs because

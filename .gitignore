@@ -19,6 +19,12 @@ instance/
 .venv/
 venv/
 
+# Responsive audit working files. node_modules/ is also a hard-fail junk pattern
+# in ci/check_no_junk.py, so this is belt and braces; _report/ holds the JSON
+# report and the failure screenshots, which CI uploads as an artifact instead.
+ci/responsive/node_modules/
+ci/responsive/_report/
+
 # env files -- this repo is PUBLIC on GitHub; a committed .env is leaked forever
 .env
 .env.*

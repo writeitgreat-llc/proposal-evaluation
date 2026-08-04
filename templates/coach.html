@@ -3,8 +3,19 @@
 
 {% block extra_css %}
 /* ── Layout ─────────────────────────────────────────── */
+/* `height: 100%` here is load-bearing, not decoration. style.css makes body a
+   column flex container with main as a `flex: 1` child; this line is what gives
+   that column a DEFINITE height, which is what lets the transcript below scroll
+   inside .coach-shell instead of stretching the page. Drop it and the chat
+   grows the document. */
 html, body { height: 100%; }
-main { display: flex; flex-direction: column; height: calc(100vh - 80px); }
+/* The header is in flow and sticky now, so there is no fixed offset to subtract:
+   main already fills whatever the header and footer leave. It only needs to
+   become a column itself so .coach-shell can flex inside it, plus min-height:0
+   so it may shrink below its content. The old `height: calc(100vh - 80px)`
+   hard-coded a header height that was only ever right on desktop, and ignored
+   the footer -- which is why this page used to scroll a little. */
+main { display: flex; flex-direction: column; min-height: 0; }
 
 .coach-shell {
     display: flex;

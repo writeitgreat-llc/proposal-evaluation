@@ -1,0 +1,13 @@
+{
+  "name": "wig-proposal-responsive-audit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mobile / responsive regression checks for authors.writeitgreat.com",
+  "scripts": {
+    "audit": "node audit.js",
+    "audit:soft": "node audit.js --soft"
+  },
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

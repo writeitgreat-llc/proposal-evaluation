@@ -97,6 +97,8 @@ from urllib.parse import urlparse, urlsplit
 import requests as http_requests
 from flask import Blueprint, current_app, jsonify, make_response, request
 
+import edge_trust
+
 # The acquisition-channel rules. VENDORED — analytics_channel_rules.py is
 # byte-identical in this repo and in writeitgreat-llc/website, because both
 # sites' answers land in the same wig-dashboard tables and "which channel
@@ -282,21 +284,26 @@ def visitor_hash(key, site, ip=None, user_agent=None, stable_id=None, now=None):
 
 
 def trusts_cloudflare() -> bool:
-    """Whether `CF-Connecting-IP` on this deployment can be believed.
+    """Whether this DEPLOYMENT is configured to believe `CF-Connecting-IP`.
 
-    OFF by default, and that default is the security-relevant part. When
-    Cloudflare is in front of the app it overwrites this header on every
-    request, so it is authoritative. When Cloudflare is *not* in front — which
-    is the case today — the header is just something any client can type, and
-    trusting it unconditionally would hand every visitor an unlimited allowance
-    on the beacon throttle simply by varying a header, and let them forge or
-    fragment their own visitor_hash at will.
+    OFF by default. Set `TRUST_CLOUDFLARE_IP=1` as part of the DNS cutover, in
+    the same change as the proxy going live — not before. It is set on
+    `proposal-evaluation` today.
 
-    Set `TRUST_CLOUDFLARE_IP=1` as part of the DNS cutover, in the same change
-    as the proxy going live — not before.
+    **This is no longer the whole test, and must not be used as one.** It says
+    "a proxy exists in front of this app", which is a fact about the
+    deployment. It says nothing about whether the request in your hand came
+    through that proxy — and one did not have to, because
+    `proposal-evaluation-20d7e1515843.herokuapp.com` answers with this same app
+    outside Cloudflare. Believing the header there handed a caller a fresh
+    identity per request: an unlimited allowance on the sign-up limits, the
+    lead-magnet limits and the beacon throttle, plus a forgeable visitor_hash.
+
+    The per-request half of the question lives in edge_trust.py, which proves
+    arrival from the unforgeable appended `X-Forwarded-For` hop. Both halves
+    must hold; see :func:`client_ip`.
     """
-    return os.environ.get('TRUST_CLOUDFLARE_IP', '').strip().lower() in (
-        '1', 'true', 'yes', 'on')
+    return edge_trust.trusts_cloudflare_header()
 
 
 def client_ip():
@@ -317,11 +324,33 @@ def client_ip():
     throttle never fires and every pageview counts as a new visitor. Both
     failures are silent and both flatter the numbers, which is why this is
     gated rather than watched for.
+
+    Two gates, in order:
+
+    1. `TRUST_CLOUDFLARE_IP` — is there a proxy in front of this deployment at
+       all? A no-deploy kill-switch.
+    2. `edge_trust.arrived_via_cloudflare()` — did *this* request come through
+       it? Proven from the appended `X-Forwarded-For` hop, which Heroku's
+       router writes and a caller cannot reach.
+
+    Gate 2 is what closes the herokuapp origin. Without it the header was
+    believed on a path where nothing overwrites it, so every control keyed on
+    this value could be sidestepped by typing a different address per request.
+
+    The fallback is deliberately `remote_addr` and not something cleverer. On a
+    genuine Cloudflare request that reaches it (a range change, say) it is the
+    edge address: shared and rotating, so it over-counts visitors and
+    under-throttles. On a direct-to-origin request it is the caller's real
+    address — exactly the key you want. Wrong in the harmless direction on the
+    path we control, right on the path we do not.
     """
     if trusts_cloudflare():
-        cf = request.headers.get('CF-Connecting-IP')
-        if cf:
-            return cf.strip()[:64] or None
+        if edge_trust.arrived_via_cloudflare():
+            cf = request.headers.get('CF-Connecting-IP')
+            if cf:
+                return cf.strip()[:64] or None
+        else:
+            edge_trust.note_possible_range_drift()
     return request.remote_addr
 
 

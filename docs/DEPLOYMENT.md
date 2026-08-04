@@ -9,7 +9,7 @@ rules are the same.
 | Repo | `writeitgreat-llc/website` (private) | `writeitgreat-llc/proposal-evaluation` (public) |
 | Heroku app | `writeitgreat-website` | `proposal-evaluation` |
 | Heroku default branch | `main` (verified) | auto-detected at deploy time |
-| Deployed URL | https://writeitgreat-website-be6985a92063.herokuapp.com/ | https://proposal-evaluation-20d7e1515843.herokuapp.com/ |
+| Deployed URL (origin; bypasses Cloudflare, browser GETs 301 to the public URL — see below) | https://writeitgreat-website-be6985a92063.herokuapp.com/ | https://proposal-evaluation-20d7e1515843.herokuapp.com/ |
 | Public URL | https://writeitgreat.com | https://authors.writeitgreat.com |
 | CI check names | `Intake regression suite`, `Engine parity and template integrity`, `App boots on Python 3.11` | `proposal-ci` |
 | Python | 3.11.11 (`runtime.txt`) | 3.11.7 (`runtime.txt`) |
@@ -17,35 +17,82 @@ rules are the same.
 
 ---
 
-## ⚠️ Open question: which app serves authors.writeitgreat.com?
+## authors.writeitgreat.com — settled, 2026-07-31
 
-**Confirm this with Andy before trusting the proposal-tool pipeline.**
+This section used to warn that a *fifth Heroku app* might serve
+`authors.writeitgreat.com`, and told readers not to trust this pipeline until
+somebody confirmed it with Andy. **That was wrong.** The domain is a custom
+domain on *this* app, CNAME'd to
+`molecular-mandrill-tf33ef4jp15w48r2zm06lz31.herokudns.com`. There is no fifth
+app, merging a PR does update what authors see, and both smoke targets are
+meaningful. Kept rather than deleted because the wrong version was quoted in
+several places and it is worth being able to see it retracted.
 
-`heroku domains -a proposal-evaluation` lists **no custom domains**, yet
-`authors.writeitgreat.com` resolves to a `herokudns.com` target
-(`molecular-mandrill-tf33ef4jp15w48r2zm06lz31.herokudns.com`). That domain is
-not attached to any of the four apps visible to `ray@writeitgreat.com`
-(`proposal-evaluation`, `writeitgreat-website`, `uplevelbooks`,
-`wig-dashboard`), which suggests a fifth Heroku app in an account we cannot
-list.
+---
 
-Both URLs currently serve byte-identical pages, which is consistent with either
-"same app, domain listing hidden from collaborators" or "the same code deployed
-twice to two different apps".
+## ⚠️ The herokuapp origin bypasses Cloudflare — and always will
 
-If it is a second app, **merging a PR will not update what authors see**. The
-deploy workflow therefore smokes *both* URLs: the `herokuapp.com` one is the
-real gate (it proves the app we pushed to is healthy); the custom domain is a
-secondary check.
+`authors.writeitgreat.com` reaches this app through Cloudflare.
+`https://proposal-evaluation-20d7e1515843.herokuapp.com/` reaches the **same
+app** directly — verified 2026-08-04: `Server: Heroku`, no `cf-ray`.
 
-Resolve it with either:
+**That origin is permanent.** Heroku offers no origin firewall on this plan, so
+it cannot be locked to Cloudflare. Anything enforced *at the edge* — WAF rules,
+Cloudflare rate limiting, bot filtering, Turnstile's page-level challenge —
+genuinely does not apply there, and never will. Do not describe an edge rule as
+covering this app without saying "except on the origin".
 
-```bash
-heroku domains:add authors.writeitgreat.com -a proposal-evaluation
+**What is no longer true (fixed 2026-08-04).** `CF-Connecting-IP` used to be
+forgeable there. `TRUST_CLOUDFLARE_IP=1` is set on this app, and that switch
+alone used to grant trust — so on the origin a caller could type a different
+address on every request and never be counted by any per-visitor control:
+the sign-up limits added after the July 2026 bot, the `/social-strategy`
+lead-magnet limits, `/api/submit`'s limiter, `visitor_hash`.
+
+`edge_trust.py` now requires proof of arrival. Heroku's router **appends** the
+address that opened the connection to it, so anything a caller writes into
+`X-Forwarded-For` is pushed left and the last value is out of reach.
+`ProxyFix(x_for=1)` reads that last value. Measured on production 2026-08-04:
+
+```
+fwd="203.0.113.99, 73.100.144.66"       # forged first, real caller appended
+fwd="168.119.246.194, 162.158.110.183"  # real visitor, Cloudflare edge appended
 ```
 
-or by pointing `HEROKU_APP_NAME` in `.github/workflows/deploy.yml` at whichever
-app actually owns the domain. Delete this section once it is settled.
+If that appended hop is inside Cloudflare's published ranges the request
+provably transited the edge and the header is believed; otherwise it is ignored
+and the limit keys on the caller's real address.
+
+**The Host header is NOT the test, and must never become it.** Heroku routes on
+Host and both hostnames map to this app, so a caller can connect straight to
+Heroku and send `Host: authors.writeitgreat.com`.
+`analytics_collect.site_name()` already stopped reading Host for exactly this
+reason. Host is used only to choose the redirect below, where being wrong costs
+nothing.
+
+**Ordinary visits are redirected.** GET/HEAD on the origin 301s to
+`https://authors.writeitgreat.com` + path + query — every campaign link points
+at `/author/register`, so the query string is preserved deliberately.
+
+**Machine callers deliberately keep working on the origin**
+(`edge_trust.BYPASS_EXEMPT_EXACT` / `BYPASS_EXEMPT_PREFIXES`):
+
+| Path | Why it must not be redirected |
+|---|---|
+| `/healthz` | An external probe watches it *there on purpose*, to tell "the dyno is down" from "the edge is down". Redirected, it would measure Cloudflare and stay green through an origin outage. `deploy.yml`'s `APP_URL` is this path for the same reason, and `ci/check_edge_trust.py` asserts the two stay in step. |
+| `/api/*` | The Wix caller POSTs `/api/submit` with an `X-API-Key` and polls `/api/status/<id>` with a GET. A cross-host redirect breaks the CORS preflight and, in most HTTP clients, drops the credential header. |
+| `/.well-known/*` | A broken certificate renewal is an expensive way to find out the exception was needed. |
+
+POSTs and OPTIONS are never redirected, so a stale tab still submits — now
+limited on its real address.
+
+**If Cloudflare changes its IP ranges** the vendored list goes stale and
+traffic through a new edge stops being trusted: limits quietly stop firing and
+visitor counts quietly inflate. A degradation, not an outage, failing toward
+"limit less" rather than locking authors out. The canary is a log line
+containing `cloudflare-range-drift`. Refresh from
+`https://www.cloudflare.com/ips-v4` (and `-v6`) and bump `RANGES_FETCHED` here
+**and in `website/app/edge_trust.py`**, which carries the same list.
 
 ---
 

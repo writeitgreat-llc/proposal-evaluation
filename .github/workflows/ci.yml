@@ -158,6 +158,22 @@ jobs:
       - name: Analytics collector, consent, and privacy invariants
         run: python ci/check_analytics.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # required-check-name coupling as the migrations step below.
+      #
+      # proposal-evaluation-20d7e1515843.herokuapp.com serves this app outside
+      # Cloudflare, so CF-Connecting-IP was forgeable there and every control
+      # keyed on it -- the post-bot sign-up limits, the /social-strategy
+      # lead-magnet limits, /api/submit's limiter, visitor_hash -- could be
+      # sidestepped by typing a different address per request. This asserts the
+      # header is believed only when the appended X-Forwarded-For hop is a real
+      # Cloudflare edge, that ordinary visits 301 to authors.writeitgreat.com,
+      # and -- the part that protects the deploy -- that the machine paths are
+      # still exempt: the Wix caller polls /api/status, the origin-only uptime
+      # probe watches /healthz, and deploy.yml's smoke target is one of them.
+      - name: The herokuapp origin cannot forge a visitor, and machine callers still reach it
+        run: python ci/check_edge_trust.py
+
       # A STEP inside proposal-ci, deliberately not a job of its own: proposal-ci
       # is the required status check, and a new job would be a new status context
       # that gates nothing until someone re-runs ci/setup_branch_protection.sh

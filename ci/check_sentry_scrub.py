@@ -265,8 +265,8 @@ def main() -> int:
         os.environ["DYNO"] = original_dyno
 
     # --- 8. cross-repo drift ------------------------------------------------
-    check(observability.CONFIG_VERSION == "3",
-          f"CONFIG_VERSION is {observability.CONFIG_VERSION!r}, expected '3'. If you changed "
+    check(observability.CONFIG_VERSION == "4",
+          f"CONFIG_VERSION is {observability.CONFIG_VERSION!r}, expected '4'. If you changed "
           "observability.py on purpose, bump it here AND copy the file to the "
           "other two repos -- no CI job can see across them.")
 

@@ -629,9 +629,23 @@ hand), or `local` off Heroku entirely. It exists because a one-off
 `heroku run` script that crashes imports the app, therefore starts Sentry, and
 therefore reports itself as an unhandled production error — an alert saying the
 site is down when it is not. Nothing is suppressed: a *scheduled* job failing at
-3am is exactly what this is all for. If you want a quieter inbox, add
-`!process_type:run` to the alert rule in the Sentry UI, where it is visible and
-reversible, rather than in code that ships to three repos.
+3am is exactly what this is all for. If you want a quieter inbox, narrow it on
+the alert rule in the Sentry UI, where it is visible and reversible, rather than
+in code that ships to three repos.
+
+Do not go looking for a search box. A Sentry **issue alert rule** accepts no
+query string anywhere — `!process_type:run` is Issues-*search* syntax from a
+different screen, and these notes used to print it as if you could paste it into
+a rule. The real path, confirmed in the UI on 2026-08-04 and already applied to
+the live `wig-website` rule:
+
+> **Alerts → the rule → Edit → the `IF` block →** change the `Any event`
+> dropdown to **"The event's tags match {key} {match} {value}"**, then key
+> `process_type`, match `does not equal`, value `run`.
+
+⚠️ The `wig-authors` rule has never been opened and may carry the same drift
+found on `wig-website` — priority-based triggers rather than every-new-issue,
+and default recipients rather than an explicit address.
 
 | Var | Default | What it does |
 |---|---|---|

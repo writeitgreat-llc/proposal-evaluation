@@ -3,6 +3,47 @@ Flask-SQLAlchemy==3.1.1
 Flask-Login==0.6.3
 openai==1.68.2
 httpx==0.28.1
+# Held at 0.2.16 ON PURPOSE, and NOT bumped to 0.2.17. Investigated 2026-08-05.
+#
+# PYSEC-2026-2056 is a ReDoS in getColor()'s `rgb_re` and pip-audit reports it
+# with "no fix released". That is accurate: 0.2.17 exists and ships the SAME
+# regex, byte for byte, so bumping buys nothing here. Rendering every author's
+# PDF through a newer version for no security gain is a worse trade than
+# staying put with the risk written down.
+#
+# The flaw is real and measured, on this machine, against the pinned version:
+#
+#     "rgb(" + "1" * 50   ( 54 chars)  ->    0.24 s
+#     "rgb(" + "1" * 100  (104 chars)  ->   12.56 s
+#     "rgb(" + "1" * 150  (154 chars)  ->  > 45 s   (killed)
+#
+# Two things make that worse than the numbers suggest. It is super-polynomial,
+# so a hundred-odd characters is already minutes. And it runs inside CPython's
+# C regex engine, which does not yield to signals -- a SIGALRM-based timeout
+# cannot interrupt it, so nothing short of gunicorn's --timeout 120 reclaims the
+# thread, and this app has 16 of them.
+#
+# IT IS NOT REACHABLE HERE, and that is what the pin rests on. getColor() only
+# sees values the CSS parser accepts as colours. Every PDF template
+# (report_pdf.html, one_pager_pdf.html, social_strategy_pdf.html,
+# marketing_plan_pdf.html) is free of `|safe`, `Markup(` and `autoescape`, and
+# none of them interpolates data into a style attribute, so Jinja's autoescape
+# turns an author's quotes and angle brackets into entities before xhtml2pdf
+# parses anything.
+#
+# Verified by rendering rather than by reading. The 154-char payload was fed
+# through generate_pdf_report() as author name, book title, proposal text,
+# verdict, strengths, weaknesses and recommendations, in three shapes:
+#
+#     <div style="color: rgb(111...">   -> rendered in 0.046 s
+#     <font color="rgb(111...">         -> rendered in 0.029 s
+#     bare text  rgb(111...             -> rendered in 0.027 s
+#
+# If any of those had reached the regex the render would have taken >45 s.
+#
+# WHAT WOULD MAKE THIS LIVE: adding `|safe`, `Markup()` or `{% autoescape false %}`
+# to a PDF template, or building a style attribute from stored data. If you are
+# about to do any of that, this is the reason not to.
 xhtml2pdf==0.2.16
 python-docx==1.1.0
 pypdf==6.14.2

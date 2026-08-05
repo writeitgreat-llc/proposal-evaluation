@@ -27,6 +27,16 @@
 #     MODERATE  xhtml2pdf     0.2.16  PYSEC-2026-2056  NO FIX RELEASED
 #     LOW       Flask         3.0.0   PYSEC-2026-2151  fix: 3.1.3
 #
+# The xhtml2pdf one was investigated on 2026-08-05 rather than left as a line in
+# a report. Summary: the ReDoS is real (154 characters costs over 45 seconds of
+# uninterruptible CPU), 0.2.17 ships the identical regex so there is nothing to
+# bump to, and it is NOT REACHABLE here because Jinja autoescapes author text
+# before xhtml2pdf parses it -- proved by rendering the payload through all
+# three PDF generators and timing them. The full measurements, and the change
+# that would make it live, are in the comment above the pin in requirements.txt.
+# It is deliberately NOT baselined: it is below the HIGH gate, so it prints on
+# every run, which is where a finding with no fix belongs.
+#
 # The file is kept rather than deleted so the path CI passes to --baseline
 # still resolves and the format above survives for whoever needs it next. An
 # empty baseline and a missing one behave identically to ci/pip_audit_gate.py;

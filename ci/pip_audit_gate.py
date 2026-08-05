@@ -2,9 +2,10 @@
 """
 pip_audit_gate.py -- turn pip-audit output into a gate a small team can live with.
 
-Raw `pip-audit && exit $?` is unusable here: both repos have known advisories
-against their current pins right now, so a bare pip-audit fails every build on
-day one and gets switched off within a week. This wrapper instead:
+Raw `pip-audit && exit $?` is unusable on a repo that has any accepted advisory:
+one finding fails every build until someone bumps a pin, on branches that never
+touched dependencies, and the gate gets switched off within a week. This wrapper
+instead:
 
   * runs pip-audit and enriches every finding with a real severity from OSV
     (pip-audit's own JSON has no severity field);
@@ -13,16 +14,26 @@ day one and gets switched off within a week. This wrapper instead:
     visible in the job summary;
   * treats the baseline (ci/vuln_baseline.txt) as a dated, justified list of
     accepted risks -- not a mute button. Entries carry an `expires:` date and
-    are reported once they pass it.
+    are reported once they pass it;
+  * reports baseline entries that match NOTHING in the current audit. A dead
+    entry means the pin was fixed and nobody deleted the excuse; it then sits
+    there looking like an accepted risk and hiding the next real one.
 
 Net effect: today's known advisories do not block the deploy, but the moment a
 new HIGH lands -- in a direct pin or anything it drags in -- the build stops.
+
+This file is vendored BYTE-IDENTICALLY into all three repos (website,
+proposal-evaluation, wig-dashboard). No CI job can compare the copies, so if you
+change it here, copy it to the other two in the same round and check with `md5`.
+
+As of 2026-08-05 every one of the three baselines is EMPTY, and all three
+workflows pass --enforce-expiry.
 
 Usage:
     python ci/pip_audit_gate.py --requirements requirements.txt
     python ci/pip_audit_gate.py --input audit.json      # reuse an existing report
     python ci/pip_audit_gate.py --fail-on CRITICAL      # loosen
-    python ci/pip_audit_gate.py --enforce-expiry        # expired baseline = failure
+    python ci/pip_audit_gate.py --enforce-expiry        # expired OR dead baseline = failure
 
 Exit codes: 0 = pass, 1 = un-baselined finding at/above threshold, 2 = tool error.
 """
@@ -227,7 +238,7 @@ def main() -> int:
     ap.add_argument("--fail-on", default="HIGH",
                     choices=["LOW", "MODERATE", "MEDIUM", "HIGH", "CRITICAL", "NEVER"])
     ap.add_argument("--enforce-expiry", action="store_true",
-                    help="an expired baseline entry fails the build")
+                    help="an expired OR dead baseline entry fails the build")
     ap.add_argument("--offline", action="store_true",
                     help="skip OSV severity lookup (everything becomes UNKNOWN)")
     ap.add_argument("--timeout", type=float, default=15.0)
@@ -252,12 +263,17 @@ def main() -> int:
     threshold = SEVERITY_ORDER.get(args.fail_on, 99) if args.fail_on != "NEVER" else 99
 
     blocking, accepted, informational, expired = [], [], [], []
+    # Which baseline ids actually matched something this run. Anything left over
+    # is a dead entry -- see the `dead` computation below.
+    matched_ids = set()
     for f in sorted(findings, key=lambda x: (-SEVERITY_ORDER.get(x["severity"], 0),
                                              x["package"], x["id"])):
-        entry = baseline.get(f["id"]) or next(
-            (baseline[a] for a in f["aliases"] if a in baseline), None)
+        entry_id = f["id"] if f["id"] in baseline else next(
+            (a for a in f["aliases"] if a in baseline), None)
+        entry = baseline.get(entry_id) if entry_id else None
         at_threshold = SEVERITY_ORDER.get(f["severity"], 0) >= threshold
         if entry:
+            matched_ids.add(entry_id)
             f["note"] = entry["note"]
             accepted.append(f)
             if entry["expires"] and entry["expires"] < today:
@@ -268,6 +284,14 @@ def main() -> int:
         else:
             informational.append(f)
 
+    # Baseline entries that matched NOTHING. Almost always means the pin was
+    # bumped and the excuse outlived the problem. That is not cosmetic: an
+    # accepted-risk list padded with dead ids is where a live one hides, and it
+    # is exactly how seven Pillow entries survived their own fix by two weeks in
+    # proposal-evaluation. The npm side of this repo already deletes dead
+    # waivers (see frontend/scripts/audit-deps.mjs); this is the Python half.
+    dead = sorted(set(baseline) - matched_ids)
+
     header = "dependency audit" + (" -- " + args.label if args.label else "")
     print("=== %s ===" % header)
     print("findings total        : %d" % len(findings))
@@ -275,6 +299,8 @@ def main() -> int:
     print("accepted (baselined)  : %d  (%d past their review date)"
           % (len(accepted), len(expired)))
     print("informational         : %d" % len(informational))
+    print("baseline entries      : %d  (%d matched nothing this run)"
+          % (len(baseline), len(dead)))
     print()
 
     def table(rows, marker):
@@ -296,6 +322,14 @@ def main() -> int:
         for f in expired:
             print("  STALE %s (%s %s) accepted until %s"
                   % (f["id"], f["package"], f["version"], f["expired_on"]))
+        print()
+    if dead:
+        print("--- baseline entries that matched nothing (delete them) ---")
+        for ident in dead:
+            print("  DEAD  %s -- %s" % (ident, baseline[ident]["note"]))
+        print("  Nothing in this audit matches these ids. Either the pin was")
+        print("  fixed and the entry outlived it, or the id is a typo -- both")
+        print("  mean the line should go. A padded baseline hides a live one.")
         print()
     if accepted:
         print("--- accepted risk (baselined) ---")
@@ -328,6 +362,13 @@ def main() -> int:
 
     if expired and args.enforce_expiry:
         print("Baseline entries are past their review date and --enforce-expiry is set.")
+        return 1
+
+    if dead and args.enforce_expiry:
+        print("Baseline entries match nothing in this audit and --enforce-expiry is set.")
+        print("Delete them from %s. If you believe the advisory is still live, the id"
+              % args.baseline)
+        print("is wrong -- check it against the ids pip-audit actually reports above.")
         return 1
 
     print("OK: no un-baselined findings at or above %s." % args.fail_on)

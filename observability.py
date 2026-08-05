@@ -55,7 +55,10 @@ import threading
 import time
 
 # Bump on ANY change to this file, then copy to the other two repos.
-CONFIG_VERSION = "3"
+# 4 (2026-08-05): corrected the process_type() docstring, which described
+# narrowing an alert with `!process_type:run` -- Issues-search syntax that a
+# Sentry issue alert rule has no field for. No behaviour change.
+CONFIG_VERSION = "4"
 
 _DEFAULT_MAX_PER_HOUR = 15
 _DEFAULT_MAX_PER_FINGERPRINT_PER_HOUR = 3
@@ -346,9 +349,20 @@ def process_type() -> str:
     Deliberately a TAG and not a filter. Nothing here drops, samples or
     re-levels an event. A scheduled job that starts failing at 3am is precisely
     what monitoring is for, and code that quietly suppressed it would be a
-    worse bug than the false alarm it fixed. Narrowing to
-    `!process_type:run` is a decision to take in the Sentry UI, where it is
-    visible, reversible, and does not cost three pull requests.
+    worse bug than the false alarm it fixed. Narrowing is a decision to take in
+    the Sentry UI, where it is visible, reversible, and does not cost three
+    pull requests.
+
+    Do NOT go looking for a search box. A Sentry *issue alert rule* accepts no
+    query string anywhere. This comment used to say "narrowing to
+    `!process_type:run`", which is Issues-**search** syntax from a different
+    screen -- following it literally sends you hunting for a field that does not
+    exist on the rule editor. The real path, confirmed in the UI on 2026-08-04
+    and applied to the live `wig-website` rule:
+
+        Alerts -> the rule -> Edit -> the IF block -> change the "Any event"
+        dropdown to "The event's tags match {key} {match} {value}", then
+        key `process_type`, match `does not equal`, value `run`.
     """
     dyno = (os.environ.get("DYNO") or "").strip()
     if not dyno:

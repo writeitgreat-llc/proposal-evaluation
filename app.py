@@ -264,6 +264,71 @@ def _redirect_bypass_origin():
     return redirect(target, code=301)
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# ── Refuse the SQLite fallback on a dyno ──────────────────────────────────────
+# The fallback on the next line is right for a laptop and a silent disaster on
+# Heroku, because it does not FAIL — it succeeds, against a brand-new empty
+# SQLite file on a disk that is wiped at the next restart. Not hypothetical: on
+# 2026-08-04 the Postgres add-on was detached and re-attached, the detach re-ran
+# the release phase with DATABASE_URL gone, and migrate.py built a complete
+# schema on the release dyno's throwaway disk, printed
+# "[strict=on, backend=sqlite] ... Migration complete." and exited 0. Heroku
+# still records that release as successful and rollback-eligible.
+#
+# Every net downstream agrees with it, which is why the check has to be HERE and
+# not somewhere later and smarter:
+#   * migrate.py's strict abort catches a database that answers NO. With the
+#     variable absent nothing ever asks Postgres, so there is no connection to
+#     fail.
+#   * schema_drift() then reports every model column present, because
+#     db.create_all() built them all a second earlier. Its own docstring says
+#     the drift it hunts is invisible on an empty database; this manufactures
+#     exactly that condition.
+#   * /healthz runs SELECT 1, which SQLite answers happily, so the deploy smoke
+#     test and the uptime monitor stay green.
+#   * nothing raises, so nothing reaches Sentry either.
+# And the web dyno is then neither up nor cleanly down: a few static pages
+# render, every sign-in 500s, and anyone still holding a session cookie gets a
+# 500 on EVERY page including the public ones, because Flask-Login's user_loader
+# queries `author` before the view body runs. Measured, both shapes.
+#
+# WHY THE SIGNAL IS DYNO AND NOT _is_production. DYNO is set by the PLATFORM on
+# web, release and `heroku run` dynos, and by nothing else, so it cannot be
+# forgotten on a new app, dropped by a fork, or typed in the wrong case. It is
+# also the signal _migrate_on_boot() already uses, and this outage is made by
+# those two disagreeing — boot migration steps aside "because the release phase
+# owns the schema" while the fallback hands the process a file the release phase
+# never touched. One predicate used twice cannot disagree with itself.
+# _is_production is derived from APP_BASE_URL, a config var WE set — the same
+# class of thing as the variable that just went missing — and it is not defined
+# until ~285 lines below this one. If Heroku ever stopped setting DYNO this
+# guard fails OPEN, back to today's behaviour rather than an outage we invented.
+#
+# PRESENCE ONLY HERE, scheme-agnostic on purpose. The live DATABASE_URL still
+# uses Heroku's legacy postgres:// (rewritten two lines down), so a guard
+# demanding postgresql:// would block the very next deploy. SQLite is also
+# legitimate on a dyno in CI: ci/check_migrations.py deliberately pairs
+# DYNO=web.1 with a sqlite:/// URL to test the boot gate. The accident shape is
+# the ABSENT key, and that is all this line judges.
+#
+# The escape hatch is the variable itself — set DATABASE_URL explicitly, even to
+# a sqlite:/// path, and this says nothing. A sqlite:/// value therefore
+# satisfies this check; what stops a RELEASE going out on one is the separate
+# backend assertion in migrate.py.
+if os.environ.get('DYNO') and not os.environ.get('DATABASE_URL', '').strip():
+    raise RuntimeError(
+        f"DATABASE_URL is not set on dyno {os.environ['DYNO']}. Refusing to start. "
+        "Falling back to a local SQLite file would give this process an EMPTY "
+        "database — no authors, no proposals, no admins — that /healthz, the "
+        "release phase and the deploy gate would all call healthy. Nothing has "
+        "been changed and no data has been lost; this process never opened a "
+        "database. Most likely the Postgres add-on is no longer attached as "
+        "DATABASE. Check with `heroku addons -a proposal-evaluation` and "
+        "`heroku config -a proposal-evaluation | grep DATABASE_URL`, then "
+        "re-attach it: `heroku addons:attach <add-on-name-from-that-list> "
+        "-a proposal-evaluation --as DATABASE`."
+    )
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///proposals.db')
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
     app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql://', 1)

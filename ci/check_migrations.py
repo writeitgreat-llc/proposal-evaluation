@@ -274,6 +274,20 @@ def _scenario_boot_gate() -> int:
     return 0
 
 
+def _scenario_import_app() -> int:
+    """Import app.py and say so. Deliberately never touches the database.
+
+    Two of its callers run with NO DATABASE_URL, where the fallback is a
+    relative sqlite:/// path that Flask-SQLAlchemy 3.x resolves against
+    app.instance_path -- so connecting would create (or read) instance/
+    proposals.db inside whatever checkout this is running in, including a
+    developer's. Whether the import happened at all is the whole assertion.
+    """
+    import app  # noqa: F401
+    print("IMPORTED_OK")
+    return 0
+
+
 def _scenario_battery() -> int:
     """Idempotence, ledger verification, and the strict/non-strict split."""
     import collections
@@ -635,6 +649,7 @@ def _scenario_independent_drift() -> int:
 
 SCENARIOS = {
     "boot-gate": _scenario_boot_gate,
+    "import-app": _scenario_import_app,
     "battery": _scenario_battery,
     "strict-split": _scenario_strict_split,
     "poison-only": _scenario_poison_only,
@@ -945,10 +960,116 @@ def gate_checks() -> None:
           "otherwise the escape hatch strands the schema with nothing able to repair it")
 
 
+def db_url_guard_checks() -> None:
+    """A dyno must never fall back to the local SQLite file.
+
+    That fallback is right for a laptop and catastrophic on a dyno because it
+    SUCCEEDS: it builds a complete, EMPTY schema that migrate.py blesses, that
+    schema_drift() sees nothing wrong with, and that /healthz calls "ok". A
+    release recorded as successful did exactly that on 2026-08-04, when the
+    database attachment was briefly detached.
+
+    BASE_ENV carries no DATABASE_URL, so "no DATABASE_URL" below means genuinely
+    ABSENT -- the same shape a detached add-on produces -- rather than a value
+    someone remembered to clear.
+
+    Half of these prove the guard fires. The other half matter just as much: a
+    guard that fires on a laptop, or on a healthy release, gets reverted within
+    a week. ("On a dyno WITH DATABASE_URL, the import still works" is already
+    asserted by the first check in gate_checks() above, so it is not repeated.)
+    """
+    print("\nDATABASE_URL guard:")
+
+    # Every dyno type, not just web.1. Narrowing app.py's predicate to
+    # DYNO.startswith('web.') is a plausible tidy-up that would leave the
+    # release phase and `heroku run` back on the blank file, and a check
+    # hardcoded to web.1 would stay green through it.
+    for dyno in ("web.1", "release.1234", "run.5678"):
+        rc, out = run_child("import-app", {"DYNO": dyno}, expect_rc=1)
+        check(f"on dyno {dyno} with no DATABASE_URL, importing app.py refuses to start",
+              rc != 0 and "IMPORTED_OK" not in out and "DATABASE_URL is not set" in out,
+              f"rc={rc} -- it fell back to a blank SQLite file instead, which is the "
+              f"whole failure this guards")
+    check("and the refusal says how to fix it", "addons:attach" in out,
+          "the message is read at 3am in `heroku logs --tail`; keep it actionable")
+
+    # MIGRATE_ON_BOOT=0 only so this does not run create_all() against whatever
+    # instance/proposals.db a developer happens to have. The import is the test.
+    rc, out = run_child("import-app", {"MIGRATE_ON_BOOT": "0"}, expect_rc=0)
+    check("off a dyno with no DATABASE_URL, app.py still imports (local dev)",
+          rc == 0 and "IMPORTED_OK" in out,
+          f"rc={rc} -- `python app.py` on a laptop must keep working with "
+          f"nothing configured")
+
+    # The release phase makes the same call BEFORE importing app, so that this
+    # one exit stays closed when the migration bypass is open. If the check ever
+    # moves after the import it lands in _abort(), and this goes red.
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, "DYNO": "release.1", "MIGRATIONS_STRICT": "0"},
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120,
+    )
+    out = proc.stdout + proc.stderr
+    check("the release phase aborts with no DATABASE_URL, even at MIGRATIONS_STRICT=0",
+          proc.returncode != 0 and "RELEASE ABORTED: DATABASE_URL IS NOT SET" in out,
+          f"rc={proc.returncode} -- exit 0 here promotes a slug whose dynos have "
+          f"nothing to talk to, while the old ones are already gone")
+
+    # The other half of the same fault: the variable is SET, but to SQLite. That
+    # migrates a file on the release dyno's throwaway disk and exits 0 today.
+    url, _ = sqlite_url()
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, "DYNO": "release.1", "DATABASE_URL": url,
+             "MIGRATIONS_STRICT": "0"},
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120,
+    )
+    out = proc.stdout + proc.stderr
+    check("the release phase refuses to migrate SQLite on a dyno",
+          proc.returncode != 0 and "NOT A POSTGRES DATABASE" in out,
+          f"rc={proc.returncode} -- a green release against a throwaway file is "
+          f"the 2026-08-04 fault with the variable present instead of absent")
+
+    # And the line that could block a good deploy. Off a dyno -- the shape
+    # ci.yml's responsive audit uses -- a sqlite release must still complete, or
+    # the guard has broken the deploys it was added to protect.
+    url, _ = sqlite_url()
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, "DATABASE_URL": url},
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=300,
+    )
+    out = proc.stdout + proc.stderr
+    if proc.returncode != 0:
+        print(out[-2000:], file=sys.stderr)
+    check("off a dyno, a sqlite release still completes (ci.yml's audit does this)",
+          proc.returncode == 0 and "Migration complete." in out,
+          f"rc={proc.returncode} -- the guard is blocking the deploys it was "
+          f"added to protect")
+
+    # The live DATABASE_URL still uses Heroku's legacy postgres:// scheme, which
+    # app.py rewrites. A backend assertion written against the RAW value would
+    # pass CI and abort the very next real deploy, so prove the rewrite is
+    # applied first: this must get PAST the scheme test and fail later, on the
+    # connection to a host that does not exist.
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, "DYNO": "release.1",
+             "DATABASE_URL": "postgres://u:p@127.0.0.1:1/nonexistent-db-for-ci"},
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120,
+    )
+    out = proc.stdout + proc.stderr
+    check("a legacy postgres:// URL passes the backend test (it is what prod sends)",
+          "NOT A POSTGRES DATABASE" not in out,
+          "the scheme test ran before the postgres:// -> postgresql:// rewrite, "
+          "which would abort the next real deploy")
+
+
 def main() -> int:
     print("=== MIGRATION SAFETY CHECK ===")
     static_checks()
     gate_checks()
+    db_url_guard_checks()
 
     sha, why_not = base_commit()
     tree = ""

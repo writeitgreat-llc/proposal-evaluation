@@ -874,11 +874,14 @@ def main() -> int:
                   f"replay: {proc.stderr.strip()[-300:]}")
             tree = ""
         else:
+            # filter="data" is not optional and has no fallback. It refuses
+            # absolute paths, `..` traversal, links out of the tree and device
+            # files, and it has been in every Python since 3.11.4 -- runtime.txt
+            # pins 3.11.7 and CI installs 3.11.x, so there is nothing here to be
+            # tolerant of. An unfiltered extractall would also fail the bandit
+            # gate (B202), which is the correct reaction to writing one.
             with tarfile.open(tar_path) as tf:
-                try:
-                    tf.extractall(tree, filter="data")
-                except TypeError:      # filter= arrived mid-3.11; not all patches have it
-                    tf.extractall(tree)
+                tf.extractall(tree, filter="data")
             os.remove(tar_path)
     else:
         print(f"\n  NOTE  UPGRADE REPLAY SKIPPED -- {why_not}\n"

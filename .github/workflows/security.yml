@@ -171,14 +171,28 @@ jobs:
         run: python -m pip install --quiet "pip-audit==${PIP_AUDIT_VERSION}"
 
       # Fails on any HIGH/CRITICAL not listed in ci/vuln_baseline.txt.
-      # The baseline currently holds 16 entries, all of them fixed by bumping
-      # three pins (gunicorn, Werkzeug, Pillow). Read the header of that file.
+      # The baseline is now EMPTY: the three pins it existed to excuse
+      # (Pillow 2026-07-21, gunicorn + Werkzeug 2026-08-05) are all bumped.
+      #
+      # --enforce-expiry is what makes the `expires:` dates mean anything.
+      # Without it the gate printed a "baseline entries past their review date"
+      # section and then exited 0, so a dated exception could sit forever --
+      # which is exactly what happened: Pillow was fixed on 2026-07-21 and its
+      # seven now-dead entries were still in the file on 2026-08-05, and
+      # gunicorn's request-smuggling pair was excused for weeks after 22.0.0
+      # shipped. Nothing else would ever have forced those bumps; the Monday
+      # cron re-reported the same accepted findings and stayed green.
+      #
+      # Safe to turn on here precisely BECAUSE the baseline is empty -- it can
+      # fire on nothing today, and it blocks the next entry that outlives its
+      # own review date. If you add an entry, give it a date you mean.
       - name: pip-audit
         run: |
           python ci/pip_audit_gate.py \
             --requirements requirements.txt \
             --baseline ci/vuln_baseline.txt \
             --fail-on HIGH \
+            --enforce-expiry \
             --label proposal-evaluation
 
   # ---------------------------------------------------------------------

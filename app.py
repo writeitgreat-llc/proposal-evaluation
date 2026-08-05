@@ -279,18 +279,33 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 #
 # Why it is written down rather than left to the library: Werkzeug 3.0 had no
 # such limit (None), and Werkzeug 3.1 introduced a 500,000-byte default. The
-# 2026-08-05 bump from 3.0.1 to 3.1.8 therefore silently narrowed this app from
-# "16MB of form text" to "500KB", with no line of ours changing. That is a
-# reasonable default and we are not fighting it — but a limit that moves when a
-# dependency moves is a limit nobody owns, so here is ours, slightly looser than
-# upstream's and still two orders of magnitude below what a real form sends.
+# 2026-08-05 bump from 3.0.1 to 3.1.8 therefore tightened this app with no line
+# of ours changing — a 600KB urlencoded POST to the public /social-strategy form
+# went from 200 to 413. That is a reasonable default and we are not fighting it,
+# but a limit that moves when a dependency moves is a limit nobody owns, so here
+# is ours: slightly looser than upstream's, and still far above anything a real
+# form on this site sends.
 #
 # The number: every textarea in templates/ is a short-answer field (problem,
 # reader, why_you, bio, admin_notes, marketing_strategy). The largest realistic
-# submission is a few KB. 1MB is generous headroom; 16 request threads (Procfile
-# `--threads 16`) can therefore buffer at most 16MB of form text between them on
-# a 512MB dyno. Before the bump the same arithmetic allowed 256MB, which is the
-# resource exhaustion PYSEC-2026-3417 describes.
+# submission is a few KB, so 1MB is generous headroom.
+#
+# WHAT THIS DOES AND DOES NOT BOUND — the two content types differ, and it is
+# not obvious from the name. Measured, both directions:
+#
+#   urlencoded : the cap applies to the WHOLE body. 14 fields x 900KB -> 413.
+#   multipart  : the cap applies PER FIELD. 14 fields x 900KB -> 200, and
+#                12.9MB of form text is parsed into memory.
+#
+# So this pin bounds ONE oversized field, which is the shape a paste makes and
+# the shape worth refusing. It does NOT bound a multipart total: that is still
+# capped only by MAX_CONTENT_LENGTH, so 16 request threads (Procfile
+# `--threads 16`) can still hold ~256MB of form text between them on a 512MB
+# dyno. That ceiling is unchanged by the 3.1 bump — it was 256MB before and it
+# is 256MB after, verified by firing 16 concurrent maximum-size multipart
+# bodies at both pin sets and watching resident memory land in the same place.
+# Do not read this class as a fix for that; it is not, and PYSEC-2026-3417 is
+# about the parser bypassing its own limit rather than about this total.
 #
 # THE TRAP: `app.config['MAX_FORM_MEMORY_SIZE']` does NOT work here. That config
 # key landed in Flask 3.1; this app pins Flask 3.0.0, which never reads it, so

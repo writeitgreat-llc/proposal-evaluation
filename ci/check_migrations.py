@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the three properties run_migrations() is required to have.
+"""Prove the four properties run_migrations() is required to have.
 
 Each one is a production incident this repo has already had, and each one is the
 kind that a passing test suite would not otherwise notice:
@@ -13,6 +13,28 @@ kind that a passing test suite would not otherwise notice:
      issue ZERO DDL. Counted at the driver, not inferred from log output.
   3. THE LEDGER IS VERIFIED, NOT TRUSTED. A ledger row claiming a column that
      is not in the database must be detected and the operation re-applied.
+  4. A COLUMN WITH NO MIGRATION AT ALL IS CAUGHT. Properties 1-3 are statements
+     about the operations somebody remembered to write. The mistake none of them
+     sees is a db.Column added to a model with no matching `_add()`: on an empty
+     database create_all() builds it from the model and everything looks perfect,
+     while on the live database the table already exists and the column is simply
+     never created. That is the incident fix_schema.py was written for, and until
+     schema_drift() existed nothing in this repo could tell you about it.
+
+Property 4 is checked TWICE, on purpose, because the two answer different
+questions:
+
+  * `drop-column` proves the mechanism -- take a column that has no `_add()`,
+     remove it from the database, and assert `migrate.py` exits NON-ZERO.
+  * THE UPGRADE REPLAY proves the actual pull request. It builds a database from
+     the models as they exist on the BASE commit -- which is what production has
+     -- then runs THIS branch's `migrate.py` against it, exactly as Heroku will.
+     A column added to a model without its `_add()` fails here, in the PR, rather
+     than by aborting a release after the merge. It is also the only place the
+     new ALTER TABLE statements are ever really executed: against a fresh
+     database every `_add()` finds its column already made by create_all() and
+     adopts it without issuing any DDL at all, so a malformed column definition
+     sails through every other check here.
 
 Plus the wiring those properties rest on: importing app.py must not touch the
 schema on a dyno, `_add()` keys must be unique, and the Procfile must still have
@@ -24,9 +46,16 @@ than it looks: the Postgres branch is the one production uses, and it contains
 all the code SQLite never executes (information_schema snapshot, SET LOCAL
 lock_timeout, SQLSTATE 55P03 handling, pg_index verification).
 
+The replay needs the base commit present in .git, so CI checks out with
+`fetch-depth: 0` and passes the base sha in SCHEMA_REPLAY_BASE. Without either
+it falls back to HEAD~1, and if that is not resolvable it says so loudly and
+skips -- a skipped replay is a loss of EARLINESS, not of protection, because
+run_migrations() makes the same check against the real database at release time.
+
 Usage:
     python ci/check_migrations.py
     MIGRATION_TEST_DATABASE_URL=postgresql://... python ci/check_migrations.py
+    SCHEMA_REPLAY_BASE=<sha> python ci/check_migrations.py
 """
 
 from __future__ import annotations
@@ -34,8 +63,10 @@ from __future__ import annotations
 import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import uuid
 from pathlib import Path
@@ -53,6 +84,18 @@ BASE_ENV = {
 }
 
 failures: list[str] = []
+
+
+def _warn(message: str) -> None:
+    """A GitHub annotation, so a SKIPPED check is visible without reading a log.
+
+    Every path that turns the upgrade replay off still exits 0, deliberately —
+    a broken base commit or a shallow clone is not this pull request's fault and
+    must not block it. But a check that silently stops checking is the exact
+    shape of the bug this file exists to catch, so the skip has to surface
+    somewhere a human actually looks.
+    """
+    print(f"::warning title=Schema drift check::{message}")
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -112,6 +155,17 @@ def static_checks() -> None:
     # A floor, not an equality: adding a column should not fail this check. It
     # exists to catch a suite that silently stops seeing the calls at all.
     check("_add() call sites still discoverable (>= 60)", len(keys) >= 60, f"found {len(keys)}")
+
+    # The forgotten-migration scenarios remove UNMIGRATED_COLUMN and assert the
+    # release aborts. The day somebody gives that column an `_add()`, the
+    # migration runner puts it straight back and those scenarios quietly start
+    # proving nothing at all -- while still passing. Pin it here instead.
+    unmigrated_key = f"col:{UNMIGRATED_COLUMN[0]}.{UNMIGRATED_COLUMN[1]}"
+    check(f"{unmigrated_key} still has no _add(), so the drift scenarios still test something",
+          unmigrated_key not in keys,
+          f"{UNMIGRATED_COLUMN[0]}.{UNMIGRATED_COLUMN[1]} now has a migration, so dropping "
+          f"it no longer simulates a forgotten one -- point UNMIGRATED_COLUMN at another "
+          f"model column that has no _add()")
 
     src = APP_PY.read_text(encoding="utf-8")
 
@@ -326,11 +380,205 @@ def _scenario_poison_only() -> int:
     return 0
 
 
+# The column the forgotten-migration scenarios remove. It must be one with NO
+# `_add()`, or run_migrations() would simply put it back and prove nothing --
+# which is the whole difference between "an operation failed" and "there is no
+# operation". static_checks() asserts it stays that way.
+UNMIGRATED_COLUMN = ("proposal", "book_title")
+
+
+def _scenario_forget_add() -> int:
+    """Simulate the one mistake the operation list cannot see.
+
+    Bring the schema up, then drop a column that no `_add()` covers. The
+    database is now exactly what production looks like when somebody adds a
+    db.Column and writes no migration for it: every table present, every
+    migration applied, one column short of what the code expects.
+    """
+    from sqlalchemy import text
+    import app as application
+    db = application.db
+    table, column = UNMIGRATED_COLUMN
+    with application.app.app_context():
+        db.create_all()
+        application.run_migrations(strict=True)
+        with db.engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+        print(f"DROPPED={table}.{column}")
+        print(f"DRIFT={application.schema_drift()}")
+    return 0
+
+
+def _scenario_drift_tolerates_extras() -> int:
+    """A column the database has and no model declares must NOT fail a release.
+
+    Production carries four of these today (author_module_progress.approved_at,
+    .reminder_sent_at, .started_at, homework_submission.reviewed_at). If the
+    check were symmetric, deleting a model column -- ordinary cleanup -- would
+    block every deploy until somebody hand-dropped it from the live table, and
+    the check would be switched off within a week.
+    """
+    from sqlalchemy import text
+    import app as application
+    db = application.db
+    with application.app.app_context():
+        db.create_all()
+        application.run_migrations(strict=True)
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE proposal ADD COLUMN ci_legacy_leftover TEXT"))
+        application.run_migrations(strict=True)      # must not raise
+        print(f"EXTRAS_TOLERATED=1 DRIFT={application.schema_drift()}")
+    return 0
+
+
+def _sample_value(column):
+    """Something legal to put in a NOT NULL column, chosen by type."""
+    import datetime
+    import uuid as _uuid
+
+    kind = column.type.__class__.__name__.upper()
+    if column.foreign_keys:
+        # sorted_tables puts parents first and ids start at 1, so 1 resolves.
+        return 1
+    if "BOOL" in kind:
+        return False
+    if "INT" in kind:
+        return 1
+    if any(k in kind for k in ("FLOAT", "NUMERIC", "DECIMAL", "REAL")):
+        return 0
+    if "DATETIME" in kind or "TIMESTAMP" in kind:
+        return datetime.datetime(2020, 1, 1)
+    if kind == "DATE":
+        return datetime.date(2020, 1, 1)
+    if "BINARY" in kind or "BLOB" in kind or "BYTEA" in kind:
+        return b"x"
+    if "JSON" in kind:
+        return {}
+    value = f"ci-{column.table.name[:12]}-{_uuid.uuid4().hex[:8]}"
+    length = getattr(column.type, "length", None)
+    return value[:length] if length else value
+
+
+def _seed_one_row_per_table(application) -> int:
+    """Put a row in every table before the replay upgrades it.
+
+    THE POINT: `ALTER TABLE t ADD COLUMN c TEXT NOT NULL` SUCCEEDS on an empty
+    table and fails on a populated one with `contains null values`. Production's
+    author and proposal tables are not empty. An empty replay database would
+    hand back a confident all-clear on the single most likely way a new column
+    breaks a live table -- the one it is here to catch.
+
+    Best-effort by design. A table that will not seed is skipped and counted,
+    never fatal: a partly-seeded replay is weaker than a fully-seeded one and
+    still far stronger than an empty one, and a seeding quirk in some corner
+    table must not be able to fail an unrelated pull request.
+    """
+    db = application.db
+    seeded, skipped = 0, []
+    for table in db.metadata.sorted_tables:
+        values = {}
+        for column in table.columns:
+            # Let the database assign a serial primary key -- but ONLY an
+            # integer one. SQLAlchemy leaves autoincrement at "auto" on every
+            # column, so testing that alone silently skips a string primary key
+            # (consumed_sso_token.jti) and the whole row fails on NOT NULL.
+            if (column.primary_key and column.autoincrement in (True, "auto")
+                    and "INT" in column.type.__class__.__name__.upper()):
+                continue
+            if column.nullable or column.default is not None or column.server_default is not None:
+                continue
+            values[column.name] = _sample_value(column)
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(table.insert().values(**values))
+            seeded += 1
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"{table.name}({type(exc).__name__})")
+    print(f"SEEDED={seeded} SKIPPED={len(skipped)} {';'.join(skipped[:8])}")
+    return seeded
+
+
+def _scenario_missing_index_is_not_fatal() -> int:
+    """A declared index that the database lacks must NOT stop a release.
+
+    Production has four of these right now, every one a column added by `_add()`
+    — which emits ADD COLUMN and nothing else. If this were fatal it would block
+    every deploy from the day it shipped, and the honest response to that is not
+    to soften it later but to never make it fatal in the first place. Columns
+    and constraints get different treatment on purpose, and this asserts the
+    difference rather than trusting a comment about it.
+    """
+    from sqlalchemy import text
+    import app as application
+    db = application.db
+    with application.app.app_context():
+        db.create_all()
+        application.run_migrations(strict=True)
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP INDEX ix_proposal_results_token"))
+        gaps = application.schema_constraint_gaps()
+        print(f"GAPS={gaps}")
+        application.run_migrations(strict=True)      # must not raise
+        print("GAP_DID_NOT_BLOCK=1")
+    return 0
+
+
+def _scenario_build_base_schema() -> int:
+    """Build the schema from the tree this runs in, and put a row in every table.
+
+    Runs inside the exported base tree, so `application` here is the BASE
+    commit's app.py. Deliberately tolerant of an older signature: the point is
+    to reproduce the schema the base commit ships, not to assert anything
+    about it.
+    """
+    import app as application
+    with application.app.app_context():
+        application.db.create_all()
+        try:
+            application.run_migrations(strict=True)
+        except TypeError:
+            application.run_migrations()
+        _seed_one_row_per_table(application)
+    print("BASE_SCHEMA_BUILT")
+    return 0
+
+
+def _scenario_independent_drift() -> int:
+    """Diff the models against the live catalog WITHOUT calling schema_drift().
+
+    Re-implemented here on purpose. If this CI gate called the same helper the
+    release phase uses, then deleting that helper would delete the gate too, and
+    the build would go green on the one change that removes the guarantee. It
+    also reads the catalog a different way -- SQLAlchemy's inspector goes to
+    pg_catalog, while schema_drift() reads information_schema -- so the two
+    disagree if the app's role can only see part of its own schema.
+    """
+    from sqlalchemy import inspect as _insp
+    import app as application
+
+    with application.app.app_context():
+        insp = _insp(application.db.engine)
+        live = {(t, c["name"]) for t in insp.get_table_names() for c in insp.get_columns(t)}
+        missing = sorted(
+            f"{t.name}.{c.name}"
+            for t in application.db.metadata.sorted_tables
+            for c in t.columns
+            if (t.name, c.name) not in live
+        )
+    print(f"INDEPENDENT_DRIFT={missing}")
+    return 0
+
+
 SCENARIOS = {
     "boot-gate": _scenario_boot_gate,
     "battery": _scenario_battery,
     "strict-split": _scenario_strict_split,
     "poison-only": _scenario_poison_only,
+    "forget-add": _scenario_forget_add,
+    "drift-extras": _scenario_drift_tolerates_extras,
+    "build-base-schema": _scenario_build_base_schema,
+    "independent-drift": _scenario_independent_drift,
+    "missing-index": _scenario_missing_index_is_not_fatal,
 }
 
 
@@ -403,6 +651,174 @@ def db_checks(backend: str, base_url: str) -> None:
           proc.returncode == 0, f"exited {proc.returncode}")
 
 
+def drift_checks(backend: str, base_url: str) -> None:
+    """Property 4: a model column with no migration at all must stop the release."""
+    print(f"\nForgotten-migration checks ({backend}):")
+
+    def fresh() -> str:
+        return sqlite_url()[0] if backend == "sqlite" else fresh_pg(base_url)
+
+    table, column = UNMIGRATED_COLUMN
+
+    env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
+    rc, out = run_child("forget-add", env, expect_rc=0)
+    check(f"[{backend}] built a database missing an unmigrated column", rc == 0, out[-600:] if rc else "")
+    check(f"[{backend}] schema_drift() names {table}.{column}",
+          f"'{table}.{column}'" in out,
+          f"the drift check did not notice a column the models declare -- "
+          f"output was {out[-300:]!r}")
+
+    # The contract Heroku reacts to. run_migrations() has no operation for this
+    # column, so nothing here can repair it -- the only correct outcome is to
+    # refuse to promote the slug.
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, **env}, capture_output=True, text=True,
+        cwd=str(REPO_ROOT), timeout=300,
+    )
+    combined = proc.stdout + proc.stderr
+    check(f"[{backend}] migrate.py EXITS NON-ZERO for a column with no migration",
+          proc.returncode != 0,
+          f"exited {proc.returncode} -- a schema the code cannot run on would ship, "
+          f"and every request touching {table} would 500")
+    check(f"[{backend}] and the aborted release names the column",
+          f"{table}.{column}" in combined,
+          "an abort that does not say which column is a puzzle, not a message")
+
+    # Asymmetry. Without this the check would block ordinary model cleanup --
+    # and it is also the rollback property: an older, NARROWER slug meeting the
+    # wider database it left behind must still release.
+    env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
+    rc, out = run_child("drift-extras", env, expect_rc=0)
+    check(f"[{backend}] a column the database has and no model declares is NOT a failure",
+          rc == 0 and "EXTRAS_TOLERATED=1" in out,
+          "production carries four of these; failing on them would make every "
+          "model cleanup a blocked deploy, and would break `releases:rollback`")
+
+    # Columns are fatal, constraints are not. Production has four missing
+    # index/FK declarations today, so getting this backwards blocks every deploy.
+    env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
+    rc, out = run_child("missing-index", env, expect_rc=0)
+    check(f"[{backend}] a declared index the database lacks is REPORTED",
+          "results_token" in out and "GAPS=[]" not in out,
+          f"schema_constraint_gaps() did not notice a dropped index -- got {out[-300:]!r}")
+    check(f"[{backend}] and reporting it does NOT fail the release",
+          rc == 0 and "GAP_DID_NOT_BLOCK=1" in out,
+          "production has four of these; making them fatal blocks every deploy, "
+          "and building them here would take a lock on a live table")
+
+
+# ===========================================================================
+# The upgrade replay -- the only check that runs against a database it did not
+# build from the current models
+# ===========================================================================
+
+def base_commit() -> tuple[str, str]:
+    """(sha, note). sha is '' when there is nothing usable to replay from."""
+    requested = os.environ.get("SCHEMA_REPLAY_BASE", "").strip()
+    # github.event.before is all-zeros on a branch's first push, and the
+    # pull_request base sha is empty on a `push` run. Both mean "no base".
+    if requested and set(requested) == {"0"}:
+        requested = ""
+    # It arrives from a workflow expression, so refuse anything that is not a
+    # bare hex sha. Nothing plausible sets it to a git option, but the cost of
+    # being sure is one regex and the alternative is passing an attacker-shaped
+    # string to `git` as an argument.
+    if requested and not re.fullmatch(r"[0-9a-fA-F]{7,64}", requested):
+        return "", (f"SCHEMA_REPLAY_BASE={requested!r} is not a commit sha, so it was "
+                    f"not passed to git")
+
+    candidates = [requested] if requested else ["HEAD~1"]
+    for ref in candidates:
+        proc = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                              capture_output=True, text=True, cwd=str(REPO_ROOT))
+        if proc.returncode == 0:
+            return proc.stdout.strip(), ""
+        detail = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "not found"
+        return "", (f"base commit {ref!r} is not in this clone ({detail}). On CI that "
+                    f"means actions/checkout needs `fetch-depth: 0`.")
+    return "", "no base commit to replay from"
+
+
+def replay_checks(backend: str, base_url: str, tree: str, sha: str) -> None:
+    """Apply THIS branch's release phase to the schema the BASE commit produces.
+
+    This is the shape of every real deploy: an existing database, built by the
+    code that is running now, meeting the code that is about to. Nothing else in
+    this file gets within reach of it -- every other scenario starts from
+    create_all() against the models under test, which cannot be missing anything
+    by construction.
+    """
+    print(f"\nUpgrade replay ({backend}, base {sha[:12]}):")
+
+    url = sqlite_url()[0] if backend == "sqlite" else fresh_pg(base_url)
+
+    # Build the OLD schema from the OLD models. REPO_ROOT and PYTHONPATH both
+    # point at the worktree so the scenario dispatcher imports the base tree's
+    # app.py and not the one under test -- getting this wrong would silently
+    # make the replay compare the branch with itself and always pass.
+    proc = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--scenario", "build-base-schema"],
+        env={**BASE_ENV, "REPO_ROOT": tree, "PYTHONPATH": tree,
+             "DATABASE_URL": url, "MIGRATE_ON_BOOT": "0"},
+        capture_output=True, text=True, cwd=tree, timeout=300,
+    )
+    base_out = proc.stdout + proc.stderr
+    if proc.returncode != 0 or "BASE_SCHEMA_BUILT" not in base_out:
+        # The base commit failing to build its own schema says nothing about
+        # this branch -- it is main's problem, or a dependency this PR adds that
+        # the old tree cannot import. Loud note, not a failure.
+        tail = base_out.strip().splitlines()[-3:]
+        print(f"  NOTE  the base tree could not build its own schema, so there is "
+              f"nothing to replay against:\n        " + "\n        ".join(tail))
+        _warn(f"upgrade replay skipped on {backend}: the base commit {sha[:12]} could "
+              f"not build its own schema, so this PR was not compared against the "
+              f"schema it will meet. The release-phase check still guards it.")
+        return
+
+    seeded = re.search(r"SEEDED=(\d+) SKIPPED=(\d+)(.*)", base_out)
+    if seeded:
+        # Say it out loud. An ADD COLUMN NOT NULL passes on an empty table and
+        # fails on a populated one, so how many tables carry a row is the
+        # difference between a real rehearsal and a reassuring one.
+        note = f"  note  seeded {seeded.group(1)} table(s), {seeded.group(2)} skipped"
+        if seeded.group(2) != "0":
+            note += (f" -- an ADD COLUMN NOT NULL against {seeded.group(3).strip()} "
+                     f"is not rehearsed")
+        print(note)
+
+    # Now the real release command, unmodified, against that database.
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "migrate.py")],
+        env={**BASE_ENV, "DATABASE_URL": url},
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=300,
+    )
+    out = proc.stdout + proc.stderr
+    if proc.returncode != 0:
+        print(out[-3000:], file=sys.stderr)
+    check(f"[{backend}] this branch's migrate.py upgrades the base schema cleanly",
+          proc.returncode == 0,
+          "THIS IS THE DEPLOY. Whatever failed here would abort the release after "
+          "merge, with main already containing it")
+
+    applied = re.search(r"(\d+) applied now", out)
+    if applied:
+        print(f"  note  the replay applied {applied.group(1)} operation(s) for real -- "
+              f"the only place in this file that ever executes them")
+
+    # Then read the RESULT, with this script's own comparison rather than
+    # app.schema_drift() and rather than a string from run_migrations()'s
+    # output. Both of those would make the gate an echo of the thing it is
+    # gating: delete schema_drift(), or rename its print, and the check goes on
+    # passing while asserting nothing.
+    rc, drift_out = run_child("independent-drift",
+                              {"DATABASE_URL": url, "MIGRATE_ON_BOOT": "0"}, expect_rc=0)
+    found = re.search(r"INDEPENDENT_DRIFT=(\[.*\])", drift_out)
+    check(f"[{backend}] the upgraded schema has every column the models declare",
+          rc == 0 and found is not None and found.group(1) == "[]",
+          f"missing after the upgrade: {found.group(1) if found else drift_out[-300:]}")
+
+
 def gate_checks() -> None:
     """The boot gate, which everything else depends on."""
     print("\nBoot gate:")
@@ -440,20 +856,62 @@ def main() -> int:
     static_checks()
     gate_checks()
 
-    db_checks("sqlite", "")
-
-    pg = os.environ.get("MIGRATION_TEST_DATABASE_URL", "").strip()
-    if pg:
-        try:
-            db_checks("postgresql", pg)
-        finally:
-            drop_pg_schemas()
+    sha, why_not = base_commit()
+    tree = ""
+    if sha:
+        # `git archive`, NOT `git worktree add`. A worktree registers state under
+        # .git/worktrees that only an explicit `worktree remove` clears, so any
+        # run killed between the two leaks an entry into the developer's real
+        # repository -- there are five such leaks in this clone right now, from
+        # other tooling. An archive is a plain directory: nothing to unregister,
+        # and a killed run leaves a temp dir the OS reaps.
+        tree = tempfile.mkdtemp(prefix="wig-migreplay-")
+        tar_path = os.path.join(tree, "_base.tar")
+        proc = subprocess.run(["git", "archive", "--format=tar", "-o", tar_path, sha],
+                              capture_output=True, text=True, cwd=str(REPO_ROOT))
+        if proc.returncode != 0:
+            print(f"\n  NOTE  could not export base commit {sha[:12]} for the upgrade "
+                  f"replay: {proc.stderr.strip()[-300:]}")
+            tree = ""
+        else:
+            # filter="data" is not optional and has no fallback. It refuses
+            # absolute paths, `..` traversal, links out of the tree and device
+            # files, and it has been in every Python since 3.11.4 -- runtime.txt
+            # pins 3.11.7 and CI installs 3.11.x, so there is nothing here to be
+            # tolerant of. An unfiltered extractall would also fail the bandit
+            # gate (B202), which is the correct reaction to writing one.
+            with tarfile.open(tar_path) as tf:
+                tf.extractall(tree, filter="data")
+            os.remove(tar_path)
     else:
-        # Not a failure -- but say it loudly. The Postgres branch is the one
-        # production runs, and it is the half SQLite never executes.
-        print("\n  NOTE  MIGRATION_TEST_DATABASE_URL is not set, so the PostgreSQL "
-              "branch\n        (information_schema snapshot, SET LOCAL lock_timeout, "
-              "SQLSTATE 55P03,\n        pg_index verification) was NOT exercised.")
+        print(f"\n  NOTE  UPGRADE REPLAY SKIPPED -- {why_not}\n"
+              f"        Nothing here compared this branch against the schema it will "
+              f"actually meet.\n"
+              f"        run_migrations() still makes the same check against the real "
+              f"database at release\n        time, so this is a loss of earliness, not "
+              f"of protection.")
+        _warn(f"upgrade replay skipped: {why_not}")
+
+    try:
+        db_checks("sqlite", "")
+        drift_checks("sqlite", "")
+        if tree:
+            replay_checks("sqlite", "", tree, sha)
+
+        pg = os.environ.get("MIGRATION_TEST_DATABASE_URL", "").strip()
+        if pg:
+            try:
+                db_checks("postgresql", pg)
+                drift_checks("postgresql", pg)
+                if tree:
+                    replay_checks("postgresql", pg, tree, sha)
+            finally:
+                drop_pg_schemas()
+        else:
+            _no_postgres_note()
+    finally:
+        if tree:
+            shutil.rmtree(tree, ignore_errors=True)
 
     if failures:
         print("\n=== MIGRATION SAFETY CHECK FAILED ===", file=sys.stderr)
@@ -462,6 +920,16 @@ def main() -> int:
         return 1
     print("\n=== MIGRATION SAFETY CHECK OK ===")
     return 0
+
+
+def _no_postgres_note() -> None:
+    # Not a failure -- but say it loudly. The Postgres branch is the one
+    # production runs, and it is the half SQLite never executes.
+    print("\n  NOTE  MIGRATION_TEST_DATABASE_URL is not set, so the PostgreSQL "
+          "branch\n        (information_schema snapshot, SET LOCAL lock_timeout, "
+          "SQLSTATE 55P03,\n        pg_index verification) was NOT exercised, and "
+          "neither was the\n        upgrade replay against Postgres -- which is the "
+          "only place a new\n        ALTER TABLE is ever really executed.")
 
 
 if __name__ == "__main__":

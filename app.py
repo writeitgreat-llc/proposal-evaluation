@@ -11130,7 +11130,14 @@ def admin_knowledge_base_download(doc_id):
 # run_migrations() below, and `release: python migrate.py` (Procfile) is what
 # applies them.
 #
-# Two rules, both of which exist because they were once broken:
+# ADDING A COLUMN IS TWO STEPS. Add the db.Column to the model, AND add an
+# `_add('table', 'column TYPE')` below. create_all() means "make every table in
+# the metadata exist" — it cannot add a column to a table that already exists,
+# so step one alone is perfect on every empty database and a no-op on the live
+# one. schema_drift() is what now refuses to let that reach production, and
+# ci/check_migrations.py's upgrade replay is what catches it in the PR first.
+#
+# Three rules, all of which exist because they were once broken:
 #
 #   1. A failed operation MUST abort the release. It used to print and carry
 #      on, so a column that never applied shipped anyway and 500'd for authors
@@ -11145,6 +11152,11 @@ def admin_knowledge_base_download(doc_id):
 #      SELECT for 8s. With `--workers 1 --threads 4` that is the whole site.
 #      Commit d99887f ("reduce to 1 worker") is this failure, already survived
 #      once.
+#   3. The finished schema MUST be checked against the models, not just against
+#      this list. Rules 1 and 2 are both statements about operations that were
+#      written down; neither has anything to say about one that never was. That
+#      is the same 2026 incident as rule 1, from the other end — and the half
+#      the ledger and strict mode did not close.
 
 MIGRATION_LEDGER = 'schema_migrations'
 
@@ -11182,10 +11194,152 @@ def _migrations_strict(requested):
     return requested
 
 
+def _live_columns():
+    """Every (table, column) the database actually has, in one query.
+
+    Module scope rather than a closure inside run_migrations(), because
+    schema_drift() needs the same answer and the two must not be able to drift
+    apart on the subtlety in the middle of it: `current_schema()`. An
+    unfiltered information_schema query matches same-named columns in other
+    schemas, and both callers would then be wrong in the same silent direction
+    — reporting a column that is not there as present.
+
+    Reading the catalog takes no table locks. Replaying no-op ALTERs to find
+    the same thing out does.
+    """
+    from sqlalchemy import text, inspect as _insp
+
+    if 'postgresql' in str(db.engine.url):
+        with db.engine.connect() as conn:
+            return {
+                (r[0], r[1]) for r in conn.execute(text(
+                    'SELECT table_name, column_name FROM information_schema.columns '
+                    'WHERE table_schema = current_schema()'
+                ))
+            }
+    _i = _insp(db.engine)
+    return {(t, c['name']) for t in _i.get_table_names() for c in _i.get_columns(t)}
+
+
+def schema_drift(present=None):
+    """Columns the models declare that the database does not actually have.
+
+    This is the one check the operation list above cannot make about itself.
+    run_migrations() proves that every operation IT KNOWS ABOUT applied; it has
+    nothing whatever to say about a column somebody added to a db.Model and
+    never wrote an `_add()` for. That omission is invisible on every empty
+    database — db.create_all() builds each table from the models, so CI and a
+    laptop both look perfect — and fatal on the live one, where the table
+    already exists, create_all() leaves it alone, and the column is simply
+    never created.
+
+    This is not hypothetical and it is not one incident. git dates it exactly:
+    `coaching_enrollment.book_title` entered the model on 2026-02-05 (735f0af)
+    and did not get an `_add()` until 2026-03-19 (bb24b62, "Fix coaching
+    enrollment 500"). SIX WEEKS, during which every check was green and the
+    page 500'd for real authors. Two firefights sit inside that gap — 1680dde
+    on 10 March ("Fix missing column migrations for coaching tables deployed
+    from v1 schema") and 9a7c2e0 on 18 March — and fix_schema.py was written on
+    18 March (d698d04) to repair exactly the five coaching_enrollment columns
+    by hand. That the fix took six weeks and three commits to arrive is the
+    argument for this function: nothing was watching, so nothing said.
+
+    Deliberately ONE-DIRECTIONAL. A column the database has and no model
+    declares is a dropped column: normal, harmless, and production carries four
+    of them today (author_module_progress.approved_at, .reminder_sent_at,
+    .started_at, homework_submission.reviewed_at). Failing on those would turn
+    every model cleanup into a blocked deploy, and nobody would keep the check.
+
+    It compares NAMES ONLY, not types, widths, defaults or nullability — the
+    same contract `col:` ledger keys have, and for the same reason: a name is
+    something both backends report identically and neither one lies about.
+
+    Returns a sorted list of 'table.column'. Empty means the database is at
+    least as wide as the code expects.
+    """
+    if present is None:
+        present = _live_columns()
+    return sorted(
+        f'{table.name}.{column.name}'
+        for table in db.metadata.sorted_tables
+        for column in table.columns
+        if (table.name, column.name) not in present
+    )
+
+
+def schema_constraint_gaps():
+    """Indexes, unique constraints and foreign keys the models declare and the
+    database does not have.
+
+    REPORTED, NEVER FATAL — and that asymmetry with schema_drift() is the whole
+    design, not an oversight. A missing COLUMN 500s every request that touches
+    the table, so refusing to ship is kind. A missing INDEX is slower, and a
+    missing FOREIGN KEY is unenforced referential integrity; both are real, and
+    neither is a reason to refuse to deploy something unrelated.
+
+    They also cannot be fixed on the way past. Production has four of these
+    today, every one a column that arrived through `_add()` — which emits
+    ADD COLUMN and nothing else, so an `index=True` or `unique=True` or
+    `ForeignKey()` on a column added after its table was created has never once
+    reached the database:
+
+        social_strategy.share_token     index + unique
+        proposal.content_hash           index
+        proposal.author_id              foreign key -> author.id
+        marketing_module_data.author_id foreign key -> author.id
+
+    Making this fatal would therefore block every deploy from the moment it
+    shipped. Building the indexes here would be worse: a CREATE INDEX on
+    `proposal` during the release phase takes a lock on a live table, which is
+    the exact hazard the ledger exists to avoid. They want CONCURRENTLY, in
+    their own change, on a quiet day.
+
+    So this prints. The point is that the class stops being invisible.
+    """
+    from sqlalchemy import inspect as _insp
+
+    insp = _insp(db.engine)
+    live_tables = set(insp.get_table_names())
+    gaps = []
+    for table in db.metadata.sorted_tables:
+        if table.name not in live_tables:
+            continue      # schema_drift() already has plenty to say about this
+        indexed, unique_sets, fk_columns = set(), set(), set()
+        for ix in insp.get_indexes(table.name):
+            cols = tuple(ix.get('column_names') or ())
+            if cols:
+                indexed.add(cols[0])
+                if ix.get('unique'):
+                    unique_sets.add(cols)
+        for uc in insp.get_unique_constraints(table.name):
+            cols = tuple(uc.get('column_names') or ())
+            if cols:
+                unique_sets.add(cols)
+                indexed.add(cols[0])
+        pk = insp.get_pk_constraint(table.name).get('constrained_columns') or []
+        if pk:
+            indexed.add(pk[0])
+            unique_sets.add(tuple(pk))
+        for fk in insp.get_foreign_keys(table.name):
+            fk_columns.update(fk.get('constrained_columns') or ())
+
+        for column in table.columns:
+            if not column.primary_key:
+                # unique implies indexed, so report the stronger one only.
+                if column.unique and (column.name,) not in unique_sets:
+                    gaps.append(f'{table.name}.{column.name} (unique)')
+                elif column.index and column.name not in indexed:
+                    gaps.append(f'{table.name}.{column.name} (index)')
+            if column.foreign_keys and column.name not in fk_columns:
+                target = sorted(fk.target_fullname for fk in column.foreign_keys)[0]
+                gaps.append(f'{table.name}.{column.name} (foreign key -> {target})')
+    return sorted(gaps)
+
+
 def run_migrations(strict=True):
     """Bring the schema up to date once, and fail loudly if anything did not apply.
 
-    Three properties, in order of how much they matter:
+    Four properties, in order of how much they matter:
 
     1. FAILURES ARE FATAL. Every operation is attempted; the failures are
        collected rather than printed-and-forgotten, and with strict=True a
@@ -11207,6 +11361,13 @@ def run_migrations(strict=True):
        forever. With it, the ledger is a cache of observable state, not a
        promise.
 
+    4. THE RESULT IS CHECKED AGAINST THE MODELS, not just against this list.
+       Properties 1-3 are all statements about the operations written below.
+       None of them notices a column that was added to a db.Model and never
+       given an `_add()` at all — the one mistake no empty database can show
+       you. schema_drift() asks the database what it actually has and compares
+       it with what the code declares, and a gap is a failed release.
+
     Atomicity: on PostgreSQL the DDL and its ledger INSERT commit together. On
     SQLite (laptop and CI only) pysqlite autocommits DDL, so the two can
     diverge — but only ever in the harmless direction, DDL applied and ledger
@@ -11214,7 +11375,7 @@ def run_migrations(strict=True):
 
     Repairs are deliberately excluded from all of the above; see _repair().
     """
-    from sqlalchemy import text, inspect as _insp
+    from sqlalchemy import text
 
     is_pg = 'postgresql' in str(db.engine.url)
     strict = _migrations_strict(strict)
@@ -11249,21 +11410,7 @@ def run_migrations(strict=True):
     # for the existing production database, which has all 67 columns and an
     # empty ledger. Reading the catalog takes no table locks; replaying 67
     # no-op ALTERs against live traffic during the release phase does.
-    def _live_columns():
-        if is_pg:
-            with db.engine.connect() as conn:
-                # current_schema() matters: an unfiltered information_schema
-                # query matches same-named columns in other schemas and would
-                # report "applied" for something that is not there.
-                return {
-                    (r[0], r[1]) for r in conn.execute(text(
-                        'SELECT table_name, column_name FROM information_schema.columns '
-                        'WHERE table_schema = current_schema()'
-                    ))
-                }
-        _i = _insp(db.engine)
-        return {(t, c['name']) for t in _i.get_table_names() for c in _i.get_columns(t)}
-
+    # (_live_columns() is module scope — schema_drift() below uses the same one.)
     present = _live_columns()
 
     # Reconcile: a `col:` row whose column is not actually in the database is a
@@ -11705,6 +11852,89 @@ def run_migrations(strict=True):
             failures.append(('ledger:record', e))
             print(f'MIGRATION FAILED: recording {len(adopted)} verified key(s): {e}')
 
+    # ── the check this operation list cannot make about itself ─────────────────
+    # Everything above is a statement about the operations written above. None
+    # of it notices a column added to a db.Model with no `_add()` to match —
+    # and that is the only mistake here that no empty database can show you,
+    # because create_all() builds every column from the models on a fresh
+    # database and cannot add one to a table that already exists.
+    #
+    # So ask the database, after all the DDL, and treat a gap as a failed
+    # release. Aborting is the kind outcome: the old dynos keep serving working
+    # code, where shipping would 500 every request that touches the table.
+    #
+    # Fresh catalog read, not the `present` snapshot — _add() and create_all()
+    # have both run since, and judging their work by a photograph taken before
+    # they started is how you get a check that agrees with itself and nothing else.
+    final = _live_columns()
+    drift = schema_drift(final)
+    model_columns = sum(len(t.columns) for t in db.metadata.sorted_tables)
+    if drift:
+        # Split by CAUSE before reporting. All three of these look identical in
+        # a list of missing column names and need completely different actions,
+        # and this message is read at the worst possible moment — mid-deploy,
+        # usually by whoever is on call rather than whoever wrote the change.
+        live_tables = {t for t, _ in final}
+        tracked_keys = set(tracked)
+        no_table, not_applied, forgotten = [], [], []
+        for name in drift:
+            table = name.split('.', 1)[0]
+            if table not in live_tables:
+                no_table.append(name)
+            elif f'col:{name}' in tracked_keys:
+                not_applied.append(name)
+            else:
+                forgotten.append(name)
+
+        def _cap(names):
+            """20 names, then a count. An untruncated list of a failed
+            create_all() is thousands of columns and buries its own cause."""
+            return ', '.join(names[:20]) + (f' … and {len(names) - 20} more'
+                                            if len(names) > 20 else '')
+
+        if no_table:
+            failures.append(('schema:missing_table', RuntimeError(
+                f'{len(no_table)} column(s) are missing because their table is not '
+                f'in this schema at all: {_cap(no_table)}. Look at the '
+                f'ddl:create_all failure above if there is one; if there is not, '
+                f'this connection is pointed at the wrong schema.'
+            )))
+            print(f'MIGRATION FAILED: schema:missing_table: {_cap(no_table)}')
+        if not_applied:
+            failures.append(('schema:not_applied', RuntimeError(
+                f'{len(not_applied)} column(s) HAVE an `_add()` that did not take '
+                f'effect: {_cap(not_applied)}. The operation exists — read the '
+                f'col: failure above for why it did not apply (a lock wait that '
+                f'ran out of attempts looks exactly like this). Writing another '
+                f'`_add()` will not help.'
+            )))
+            print(f'MIGRATION FAILED: schema:not_applied: {_cap(not_applied)}')
+        if forgotten:
+            failures.append(('schema:drift', RuntimeError(
+                f'{len(forgotten)} column(s) declared on a model with no migration '
+                f'at all: {_cap(forgotten)}. Each one needs an `_add()` in '
+                f'run_migrations() — db.create_all() cannot add a column to a table '
+                f'that already exists, which is why CI and your laptop look fine.'
+            )))
+            print(f'MIGRATION FAILED: schema:drift: {len(forgotten)} of '
+                  f'{model_columns} model column(s) have no migration: {_cap(forgotten)}')
+    else:
+        # Say so even when there is nothing to report, for the same reason the
+        # summary below always prints: silence and "never ran" must not look alike.
+        print(f'Schema check: all {model_columns} model column(s) present.')
+
+    # Indexes, unique constraints and foreign keys — reported, never fatal.
+    # Wrapped because a reporting line has no business being the reason a
+    # release fails, and this one walks the catalog table by table.
+    try:
+        gaps = schema_constraint_gaps()
+        if gaps:
+            print(f'Schema note: {len(gaps)} index/constraint(s) the models declare are '
+                  f'NOT in the database — reported, not fatal, and none of them blocks '
+                  f'this release: {", ".join(gaps)}')
+    except Exception as e:                                        # noqa: BLE001
+        print(f'Schema note: could not compare indexes and constraints: {e}')
+
     # ── say what happened, always ──────────────────────────────────────────────
     # Even — especially — when there was nothing to do. "Printed nothing because
     # there was nothing to do" and "the migration code never ran at all" have to
@@ -11713,9 +11943,15 @@ def run_migrations(strict=True):
     # "applied now: 0" is the number that says a release did no schema work.
     # It has to be reachable, so repairs — which run every time by design — are
     # counted separately and never fold into it.
+    #
+    # `already applied` subtracts only the failures that are IN `tracked`.
+    # Three failure keys are not operations — ddl:create_all, ledger:record and
+    # schema:drift — and counting those would silently shrink a number that is
+    # meant to reconcile with the operation list.
+    tracked_failed = sum(1 for key, _ in failures if key in set(tracked))
     print(
         f'Migrations: {len(tracked)} tracked, '
-        f'{len(tracked) - len(applied) - len(adopted) - len(failures)} already applied, '
+        f'{len(tracked) - len(applied) - len(adopted) - tracked_failed} already applied, '
         f'{len(adopted)} verified against the database, '
         f'{len(applied)} applied now, '
         f'{len(failures)} failed | '

@@ -9,8 +9,9 @@ KEEP THIS FILE. It looks like dead code and it is not.
 
 It was written after a migration silently failed to apply in production — the
 incident that run_migrations()'s strict mode and `schema_migrations` ledger now
-exist to prevent. It remains the only repair path that works when app.py itself
-cannot be imported or booted, which is exactly when you need one.
+exist to prevent, and that schema_drift() now refuses to let ship in the first
+place. It remains the only repair path that works when app.py itself cannot be
+imported or booted, which is exactly when you need one.
 
 Two deliberate differences from app.py, neither of which is an oversight:
 

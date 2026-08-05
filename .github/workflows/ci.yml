@@ -65,7 +65,15 @@ jobs:
       APP_BASE_URL: http://localhost:5000
 
     steps:
+      # fetch-depth: 0 because ci/check_migrations.py replays this branch's
+      # release phase against the schema the BASE commit builds, and a depth-1
+      # clone does not contain that commit. The replay skips loudly rather than
+      # passing quietly if it is missing, so a shallow checkout would not break
+      # the build -- it would just remove the one check that catches a model
+      # column with no migration, which is the reason it exists.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -185,9 +193,24 @@ jobs:
       # asserts a ledger row claiming a column the database does not have gets
       # deleted rather than believed. Runs against SQLite and against the Postgres
       # service above, because production only ever runs the second one.
-      - name: Migrations fail loudly, apply once, and verify their own ledger
+      #
+      # It also runs the UPGRADE REPLAY: build the schema from the base commit's
+      # models -- which is what production has -- and run this branch's migrate.py
+      # against it, exactly as Heroku will. That is the only check in this repo
+      # that ever meets a database it did not build from the models under test,
+      # and so the only one that can notice a db.Column added with no matching
+      # `_add()`. Every other check here, including smoke_app.py, starts from an
+      # empty database where create_all() makes every column from the model and
+      # nothing can be missing by construction.
+      #
+      # SCHEMA_REPLAY_BASE is the commit to replay FROM: the PR's base on a
+      # pull_request run, the previous main on a push. It needs `fetch-depth: 0`
+      # on the checkout above -- without it the sha is not in the clone, and the
+      # replay says so loudly and skips rather than passing quietly.
+      - name: Migrations fail loudly, apply once, verify their own ledger, and survive an upgrade
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
+          SCHEMA_REPLAY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python ci/check_migrations.py
 
       # ======================================================================

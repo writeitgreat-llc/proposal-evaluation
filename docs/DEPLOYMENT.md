@@ -379,17 +379,102 @@ What is true now:
 - **Web dynos no longer migrate at boot.** The release phase owns the schema.
   Off Heroku (laptop, CI, tests) boot migration still runs, because there is no
   release phase there.
+- **The result is checked against the models, not just against the list.** All
+  three points above are statements about the operations somebody remembered to
+  write. After the last of them, `schema_drift()` asks the database what columns
+  it actually has and compares that with what the models declare; a gap is a
+  failed release. See *Adding a column* below for why nothing else could catch
+  it.
 
 **Reading a release log.** Every run prints one summary line, including when it
 did nothing — silence and "it never ran" have to be distinguishable:
 
 ```
-Migrations: 69 tracked, 69 already applied, 0 verified against the database,
+Schema check: all 234 model column(s) present.
+Migrations: 75 tracked, 75 already applied, 0 verified against the database,
 0 applied now, 0 failed | repairs: 4 run, 0 warned [strict=on, backend=postgresql]
 ```
 
 `0 applied now, 0 failed` is a healthy no-op release. `repairs` are the four
 data-fix operations that re-run every time on purpose and are never fatal.
+`already applied` counts only failures that are operations, so a `schema:drift`
+or `ddl:create_all` failure does not quietly shrink it.
+
+### Adding a column
+
+Two steps, and the second is the one people forget:
+
+1. add the `db.Column` to the model;
+2. add a matching `_add('table', 'column TYPE')` in `run_migrations()`.
+
+`db.create_all()` means "make every table in the metadata exist". It does not,
+and cannot, add a column to a table that already exists. So step 1 alone works
+perfectly on every empty database — your laptop, CI, a fresh review app — and
+does nothing at all to production, where the table has been there for months.
+The column is simply never created and every request touching that table 500s.
+`fix_schema.py` in the repo root is the emergency repair written the last time
+this happened, for five `coaching_enrollment` columns.
+
+Two things now catch it, and they are deliberately at different times:
+
+- **In the pull request.** `ci/check_migrations.py` runs an *upgrade replay*:
+  it builds a database from the models on the base commit — which is what
+  production has — and runs this branch's `migrate.py` against it, exactly as
+  Heroku will. That is the only check in this repo that ever meets a database it
+  did not build from the models under test. It is also the only place a new
+  `ALTER TABLE` is really executed: against a fresh database every `_add()`
+  finds its column already made by `create_all()` and adopts it without issuing
+  any DDL, so a malformed column definition passes every other check here.
+- **At release time, against the real database.** `schema_drift()` runs at the
+  end of every `run_migrations()`. If a column the models declare is not in the
+  database, the release aborts and the old dynos keep serving. `MIGRATIONS_STRICT=0`
+  overrides this like any other migration failure.
+
+The drift check is **one-directional on purpose**: a column the database has and
+no model declares is a dropped column, which is normal. Production carries four
+(`author_module_progress.approved_at`, `.reminder_sent_at`, `.started_at`,
+`homework_submission.reviewed_at`). Failing on those would make every model
+cleanup a blocked deploy, and the check would be switched off within a week.
+
+It compares **names only** — not types, widths, defaults or nullability — which
+is the same contract `col:` ledger keys have. To *change* an existing column,
+give the change its own new ledger key; neither the ledger nor the drift check
+will notice a type that quietly differs.
+
+### Indexes and foreign keys are reported, never fatal
+
+`_add()` emits `ADD COLUMN` and nothing else. So an `index=True`, `unique=True`
+or `ForeignKey()` on a column added *after* its table was created has never
+reached the database — those are only ever built by `create_all()`, at
+`CREATE TABLE` time. Production carries four, all confirmed against the live
+catalog on 5 August 2026:
+
+| Declared | Missing in production |
+|---|---|
+| `social_strategy.share_token` | unique constraint **and** index |
+| `proposal.content_hash` | index |
+| `proposal.author_id` | foreign key → `author.id` |
+| `marketing_module_data.author_id` | foreign key → `author.id` |
+
+`schema_constraint_gaps()` prints these on every release as a `Schema note:`
+line. It is **deliberately not fatal**, and the asymmetry with columns is the
+design:
+
+- a missing **column** 500s every request that touches the table, so refusing to
+  ship is the kind outcome;
+- a missing **index** is slower and a missing **foreign key** is unenforced
+  referential integrity — real, but not a reason to refuse an unrelated deploy.
+
+Making it fatal would block every deploy from the day it shipped. Building the
+indexes from the release phase would be worse: a `CREATE INDEX` on `proposal`
+takes a lock on a live table, the exact hazard the ledger exists to avoid. They
+want `CONCURRENTLY`, in their own change, on a quiet day. Until then the point
+is that the class is visible rather than silent.
+
+Practical note on `share_token`: uniqueness is **not** enforced in production
+today. The security property that column exists for is unguessability — it is a
+128-bit `uuid4().hex` — and that is unaffected. A collision is not a realistic
+event; the gap is correctness bookkeeping and a sequential scan on lookup.
 
 **Two escape hatches**, both config vars, both taking effect on the release that
 sets them:
@@ -401,8 +486,15 @@ sets them:
 
 `ci/check_migrations.py` asserts all of this on every PR, against SQLite *and*
 Postgres — including a negative test that poisons a schema and requires
-`migrate.py` to exit non-zero. If that check ever goes green while failures are
-being swallowed, the check is broken, not the claim.
+`migrate.py` to exit non-zero, and one that drops a column no `_add()` covers
+and requires the same. If that check ever goes green while failures are being
+swallowed, the check is broken, not the claim.
+
+The upgrade replay needs the base commit in the clone, which is why `ci.yml`
+checks out with `fetch-depth: 0` and passes `SCHEMA_REPLAY_BASE`. If either goes
+missing the replay prints `UPGRADE REPLAY SKIPPED` and carries on — losing
+earliness, not protection, because the release-time check still runs. Treat a
+skip as something to fix, not as a pass.
 
 **The marketing site does NOT have one**, even though it uses Flask-Migrate and
 has `migrations/versions/*.py`. `ci/check_deploy_config.py` raises this as a

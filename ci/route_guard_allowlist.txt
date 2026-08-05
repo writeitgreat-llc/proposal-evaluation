@@ -89,4 +89,4 @@
 # check_route_guards.py only inspects rules containing <...>, so it never sees
 # this route; it is listed because this file is where somebody auditing "what
 # in this app is reachable without a login" will look.
-/healthz                             # liveness probe: no parameter, reads nothing, never echoes the exception
+/healthz                             # liveness probe: no parameter, reads only its own existence check, never echoes the exception

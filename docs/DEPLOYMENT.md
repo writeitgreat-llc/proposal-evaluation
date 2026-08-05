@@ -634,6 +634,39 @@ Headers on both: `Cache-Control: no-store, no-cache, must-revalidate` and
 Configure the monitor as **`GET /healthz`, expect `200`, body contains
 `"ok":true`** — that rule is valid against all three apps unchanged.
 
+**This app additionally answers `backend`, `schema` and `reason` (2026-08-05).**
+They are extra keys, so the rule above is unchanged and no monitor needs
+touching; the other two apps do not carry them yet.
+
+| Key | Values | Means |
+|---|---|---|
+| `backend` | `postgresql` / `sqlite` / `unknown` | the dialect actually in use, read off the URL — no round trip, so it is still meaningful when the database is unreachable |
+| `schema` | `ok` / `locked` / `unreadable` / `unknown` | whether this connection can read the `author` table |
+| `reason` | `null` / `backend_not_postgres` / `schema_unreadable` | which check failed |
+
+Why they exist: `SELECT 1` is answered by **any** database, including a
+brand-new empty one. On 2026-08-04 the Postgres attachment was briefly
+detached, config fell through to the SQLite fallback, and this endpoint
+reported `{"ok":true,"db":"ok"}` while every sign-in was failing. The route now
+**503s on a dyno** when the backend is not Postgres or the schema is
+unreadable, and stays 200 everywhere else.
+
+Two behaviours that look wrong and are deliberate:
+
+- **`db` stays `"ok"` when only the schema fails.** The connection genuinely
+  worked. A body claiming the database is down sends the 3am reader to Postgres
+  instead of to the add-on attachment, which is the wrong place.
+- **`schema: "locked"` is healthy.** The probe reads a real table, so unlike
+  `SELECT 1` it takes a lock — and every release migrates while the *old* dynos
+  are still serving. A queued `ALTER TABLE author ...` blocks the probe while
+  the site itself serves every page fine, because anonymous pages never touch
+  `author`. Reporting that as an outage is a page for a healthy site, so a
+  `lock_timeout` of 250ms bounds the wait and SQLSTATE `55P03`/`57014` are
+  classified as "locked" rather than "missing". `ci/check_healthz.py` holds a
+  real `ACCESS EXCLUSIVE` lock to prove it, and asserts the request returns in
+  milliseconds — without `lock_timeout` it still says "locked", just 5s later,
+  which pins a request thread on every poll.
+
 Things worth knowing before you change anything here:
 
 - **`time` is timezone-aware UTC** (`+00:00`, not a bare `Z`). All three apps

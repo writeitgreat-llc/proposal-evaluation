@@ -155,6 +155,17 @@ jobs:
       - name: Import app, compile templates, run migrations, render public pages
         run: python ci/smoke_app.py
 
+      # A STEP inside proposal-ci, not a job of its own, for the reason given
+      # further down: a new job is a new status context that gates nothing
+      # until ci/setup_branch_protection.sh is re-run. Unlike every other check
+      # here it SEEDS the database before asserting -- the fault it pins (a
+      # months-old backlog costing the reviewer two emails per row on the first
+      # successful run) exists only in pre-existing rows, so against the empty
+      # database the others build, the job under test is a no-op that passes
+      # whatever it does.
+      - name: One-pager reminders do not bombard a reviewer
+        run: python ci/check_one_pager_reminders.py
+
       # Blocking, on purpose. This one asserts the privacy promises the consent
       # banner makes to visitors -- that no raw IP and no raw User-Agent is ever
       # written to storage, that the query string and any URL token are stripped

@@ -1786,6 +1786,11 @@ class OnePagerSubmission(db.Model):
     # Reminder tracking
     reminder_1_sent_at = db.Column(db.DateTime)   # 48 h reminder
     reminder_2_sent_at = db.Column(db.DateTime)   # 96 h reminder
+    # Nudge for a submission with NO assignee. Deliberately a separate column
+    # from the two above: those record chasing a named reviewer, and reusing
+    # one of them here would suppress that reviewer's real 48h reminder the
+    # moment somebody finally picked the submission up.
+    unassigned_nudge_sent_at = db.Column(db.DateTime)
 
     author = db.relationship('Author', backref=db.backref('one_pager_submissions', lazy='dynamic'))
 
@@ -4605,44 +4610,297 @@ def check_reengagement_emails():
             print(f"Re-engagement check error: {e}")
 
 
-def check_one_pager_reminders():
-    """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback."""
-    try:
-        now = datetime.utcnow()
-        # Find submitted one-pagers that are assigned but have no feedback yet
-        pending = (OnePagerSubmission.query
-                   .filter(OnePagerSubmission.status == 'submitted',
-                           OnePagerSubmission.assigned_to.isnot(None),
-                           OnePagerSubmission.assigned_at.isnot(None))
-                   .all())
-        for sub in pending:
-            # Skip if any feedback has already been given
-            if sub.feedbacks.count() > 0:
-                continue
-            hours_since = (now - sub.assigned_at).total_seconds() / 3600
-            assignee_email = TEAM_MEMBER_EMAILS.get(sub.assigned_to)
-            if not assignee_email:
-                continue
-            author_name   = sub.author.name
-            admin_url     = f"{APP_BASE_URL}/admin/one-pager/{sub.id}"
-            assigned_date = sub.assigned_at.strftime('%B %d, %Y')
+# The two reminder points, named because three separate branches below test
+# them and a hand-copied 96 in one of them is the kind of drift that turns the
+# catch-up branch back into the double-send it exists to prevent.
+REMINDER_1_AFTER_HOURS = 48
+REMINDER_2_AFTER_HOURS = 96
 
-            if hours_since >= 48 and not sub.reminder_1_sent_at:
-                _send_one_pager_reminder(assignee_email, sub.assigned_to,
-                                         author_name, assigned_date, admin_url)
-                sub.reminder_1_sent_at = now
+# A submission nobody has been given. The reminder points above only ever fire
+# for an ASSIGNED one-pager, so before this existed an unassigned submission was
+# invisible to every chase in the app: the team got one notification the moment
+# it arrived and then silence, indefinitely. A production check on 5 August 2026
+# found that this, and not the reminders, was where submissions were actually
+# being lost -- most of the open ones had no reviewer and had sat for months.
+#
+# Re-nudged weekly rather than hourly, and never stamped-and-forgotten, because
+# the failure here is not "somebody was told once", it is "nobody ever picked it
+# up". A single nudge that gets archived reproduces exactly the silence this is
+# meant to end.
+UNASSIGNED_NUDGE_AFTER_HOURS = 48
+UNASSIGNED_RENUDGE_AFTER_HOURS = 24 * 7
+
+# Its own variable rather than TEAM_EMAILS. "Assign somebody to this" is a
+# triage task for the two people who own the funnel, not an announcement to
+# everyone told when a one-pager arrives -- and a nudge five people can each
+# assume another has dealt with is how the last four months happened.
+#
+# The `or TEAM_EMAILS` tail is a floor, not a preference: set the variable to
+# an empty string or a stray comma and this would otherwise resolve to nobody
+# and return silently, which is the exact failure mode -- a chase that stops
+# happening and says nothing -- this whole change exists to remove.
+#
+# NOTE for whoever edits the roster: TEAM_EMAIL and TEAM_EMAILS are BOTH set in
+# production with DIFFERENT lists, and line ~801 reads `TEAM_EMAIL or
+# TEAM_EMAILS`, so TEAM_EMAILS is dead config today. Editing it changes nothing
+# and warns nobody. Tracked separately; do not rely on it here.
+ONE_PAGER_TRIAGE_EMAILS = [
+    e.strip() for e in (
+        os.environ.get('ONE_PAGER_TRIAGE_EMAILS')
+        or 'andy@writeitgreat.com,ray@writeitgreat.com'
+    ).split(',') if e.strip()
+] or TEAM_EMAILS
+
+
+def check_one_pager_reminders():
+    """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback.
+
+    The `with app.app_context()` is not decoration. This runs in the hourly
+    daemon thread started by start_background_jobs(), which has no request and
+    therefore no application context, so the first ORM query below raises
+    "Working outside of application context" before a single reminder is
+    considered. It did exactly that, once an hour, from the day it shipped
+    (2c221ec, 16 April 2026) until 4 August — three and a half months in which
+    no 48h or 96h reminder was ever delivered and nothing looked wrong.
+
+    Two things hid it, and both are fixed here. The context was missing while
+    its sibling check_reengagement_emails() twenty lines up has always had one,
+    so the pair looked symmetrical at a glance. And the except printed to
+    stdout and swallowed, which on Heroku means one line an hour in a log
+    nobody tails, saying something that reads like routine noise.
+    """
+    with app.app_context():
+        try:
+            now = datetime.utcnow()
+            # Find submitted one-pagers that are assigned but have no feedback yet
+            pending = (OnePagerSubmission.query
+                       .filter(OnePagerSubmission.status == 'submitted',
+                               OnePagerSubmission.assigned_to.isnot(None),
+                               OnePagerSubmission.assigned_at.isnot(None))
+                       .all())
+            # assignee name -> [(submission, hours_waiting)], oldest first.
+            backlog = {}
+            for sub in pending:
+                # Skip if any feedback has already been given
+                if sub.feedbacks.count() > 0:
+                    continue
+                hours_since = (now - sub.assigned_at).total_seconds() / 3600
+                assignee_email = TEAM_MEMBER_EMAILS.get(sub.assigned_to)
+                if not assignee_email:
+                    continue
+                author_name   = sub.author.name
+                admin_url     = f"{APP_BASE_URL}/admin/one-pager/{sub.id}"
+                assigned_date = sub.assigned_at.strftime('%B %d, %Y')
+
+                # CATCH-UP, NOT CHASING. Past both reminder points and never
+                # once reminded means this job was not running when it should
+                # have been -- true of every row assigned before 5 August,
+                # because the missing app context above meant no reminder ever
+                # sent. Putting those through the normal sequence would send
+                # TWO emails per row within two hours (reminder 1 this pass;
+                # reminder 2 the next, since the branch below only tests
+                # reminder_2 once reminder_1 is stamped), so a backlog of N
+                # costs the assignee 2N emails for work months old. They go
+                # into one digest per person instead.
+                #
+                # This is deliberately a property of the DATA, not a one-off
+                # backfill script or a "have we run before" marker row. Both of
+                # those have to be got exactly right once and then never
+                # re-run, and this app has already been bitten by a guard that
+                # silently re-ran on every release. Stated as a condition, it
+                # is self-correcting: it also absorbs the next multi-day outage
+                # of this job, and the hour after the digest goes out there is
+                # nothing left that satisfies it.
+                if (hours_since >= REMINDER_2_AFTER_HOURS
+                        and not sub.reminder_1_sent_at
+                        and not sub.reminder_2_sent_at):
+                    backlog.setdefault(sub.assigned_to, []).append((sub, hours_since))
+                    continue
+
+                # Reminder 2 is tested FIRST and requires reminder 1 to have
+                # been sent. Written the other way round -- `if 48h and not r1
+                # ... elif 96h and not r2` -- a row can only advance one step
+                # per pass, which is right for a live submission (r1 at 48h,
+                # r2 two days later) and wrong for anything older, which takes
+                # both in consecutive passes. The catch-up branch above now
+                # intercepts that case, and this ordering means it cannot come
+                # back if the threshold constants are ever changed.
+                if (hours_since >= REMINDER_2_AFTER_HOURS
+                        and sub.reminder_1_sent_at and not sub.reminder_2_sent_at):
+                    if _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                                author_name, assigned_date, admin_url):
+                        sub.reminder_2_sent_at = now
+                        db.session.commit()
+                elif hours_since >= REMINDER_1_AFTER_HOURS and not sub.reminder_1_sent_at:
+                    if _send_one_pager_reminder(assignee_email, sub.assigned_to,
+                                                author_name, assigned_date, admin_url):
+                        sub.reminder_1_sent_at = now
+                        db.session.commit()
+
+            # Stamp ONLY on a confirmed send. send_email() returns False and
+            # raises nothing, so the original `send(...); stamp; commit`
+            # recorded a reminder that never left the building -- and for the
+            # digest that failure mode is unrecoverable, because the rows would
+            # be marked reminded and the backlog would never be mentioned to
+            # anyone again. An unstamped row simply reappears in next hour's
+            # digest, which is the safe direction to fail in.
+            for assignee_name, items in backlog.items():
+                items.sort(key=lambda pair: pair[1], reverse=True)
+                if not _send_one_pager_backlog_digest(
+                        TEAM_MEMBER_EMAILS[assignee_name], assignee_name, items):
+                    continue
+                for sub, _hours in items:
+                    sub.reminder_1_sent_at = now
+                    sub.reminder_2_sent_at = now
                 db.session.commit()
-            elif hours_since >= 96 and not sub.reminder_2_sent_at:
-                _send_one_pager_reminder(assignee_email, sub.assigned_to,
-                                         author_name, assigned_date, admin_url)
-                sub.reminder_2_sent_at = now
-                db.session.commit()
-    except Exception as e:
-        print(f"One-pager reminder check error: {e}")
+                logger.info('One-pager backlog digest sent to %s covering %d submission(s)',
+                            assignee_name, len(items))
+
+            _nudge_unassigned_one_pagers(now)
+        except Exception as e:
+            # The line below is what this failure looked like for 3.5 months:
+            # one print an hour into a log nobody reads. capture_failure sends
+            # it somewhere a person actually sees, without changing the
+            # swallow-and-carry-on behaviour, which is deliberate — one bad
+            # submission must not stop the other reminders going out.
+            capture_failure('reminders.one_pager_check',
+                            f"One-pager reminder check error: {e}")
+            print(f"One-pager reminder check error: {e}")
+
+
+def _nudge_unassigned_one_pagers(now):
+    """Chase submitted one-pagers that have no reviewer at all.
+
+    Runs inside check_one_pager_reminders()'s app context and its try/except,
+    so a failure here is reported and swallowed exactly like the rest -- one
+    bad row must not stop the assigned reminders going out.
+
+    Goes to ONE_PAGER_TRIAGE_EMAILS, not the whole team: see the note on that
+    constant. Nobody is named in the email because nobody has been given the
+    submission yet -- that is the whole point of it.
+    """
+    stale_before = now - timedelta(hours=UNASSIGNED_NUDGE_AFTER_HOURS)
+    renudge_before = now - timedelta(hours=UNASSIGNED_RENUDGE_AFTER_HOURS)
+    orphans = (OnePagerSubmission.query
+               .filter(OnePagerSubmission.status == 'submitted',
+                       OnePagerSubmission.assigned_to.is_(None),
+                       OnePagerSubmission.created_at < stale_before)
+               .order_by(OnePagerSubmission.created_at)
+               .all())
+    # Feedback without an assignee is possible (somebody reviewed it without
+    # the submission ever being formally assigned), and that one does not need
+    # chasing -- the author has heard back, which is the outcome this is for.
+    due = [s for s in orphans
+           if s.feedbacks.count() == 0
+           and (s.unassigned_nudge_sent_at is None
+                or s.unassigned_nudge_sent_at < renudge_before)]
+    if not due:
+        return
+
+    recipients = ONE_PAGER_TRIAGE_EMAILS
+    if not recipients:
+        return
+    rows = []
+    for sub in due:
+        days = (now - sub.created_at).days
+        rows.append(
+            '<tr>'
+            f'<td style="padding:8px 14px 8px 0;">{sub.author.name}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{sub.created_at.strftime("%d %b %Y")}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{days} day{"s" if days != 1 else ""}</td>'
+            f'<td style="padding:8px 0;"><a href="{APP_BASE_URL}/admin/one-pager/{sub.id}" '
+            f'style="color:#2D1B69;">Assign →</a></td>'
+            '</tr>'
+        )
+    count = len(due)
+    subject = (f"{count} one-pager{'s have' if count != 1 else ' has'} "
+               f"no reviewer assigned")
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;">{subject}</h2>
+        <p>These authors submitted a one-pager and nobody has been assigned to review it,
+        so no reminder is chasing anyone about them.</p>
+        <table style="border-collapse:collapse;margin:20px 0;font-size:0.95em;">
+            {''.join(rows)}
+        </table>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            This repeats weekly until each one has a reviewer. Once assigned, the
+            usual {REMINDER_1_AFTER_HOURS}h and {REMINDER_2_AFTER_HOURS}h reminders
+            take over.
+        </p>
+    </div></body></html>"""
+    ok = False
+    for to_email in recipients:
+        if send_email(to_email, subject, html_content):
+            ok = True
+    # Stamped only if at least one recipient took it. All-failed leaves the
+    # rows due, so the next hourly pass retries rather than losing them.
+    if not ok:
+        return
+    for sub in due:
+        sub.unassigned_nudge_sent_at = now
+    db.session.commit()
+    logger.info('Unassigned one-pager nudge sent to %d recipient(s) covering %d submission(s)',
+                len(recipients), count)
+
+
+def _send_one_pager_backlog_digest(to_email, assignee_name, items):
+    """One catch-up email covering every one-pager this person never got chased about.
+
+    Returns send_email()'s result, and the caller stamps the rows only when it
+    is True. Says plainly that reminders were not working, because the obvious
+    reading of a list of months-old names is "you have been ignoring these",
+    which is not what happened -- nobody was ever told.
+    """
+    rows = []
+    for sub, hours in items:
+        days = int(hours // 24)
+        rows.append(
+            '<tr>'
+            f'<td style="padding:8px 14px 8px 0;">{sub.author.name}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{sub.assigned_at.strftime("%d %b %Y")}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{days} day{"s" if days != 1 else ""}</td>'
+            f'<td style="padding:8px 0;"><a href="{APP_BASE_URL}/admin/one-pager/{sub.id}" '
+            f'style="color:#2D1B69;">Open →</a></td>'
+            '</tr>'
+        )
+    count = len(items)
+    subject = (f"{count} one-pager{'s are' if count != 1 else ' is'} "
+               f"waiting for your feedback")
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;">{subject}</h2>
+        <p>Hi {assignee_name},</p>
+        <p>These one-pagers were assigned to you and have had no feedback yet.</p>
+        <p style="background:#F4F1EA;padding:12px 16px;border-left:3px solid #2D1B69;">
+            <strong>You have not missed reminders about these — they were never sent.</strong>
+            The reminder job had been failing silently since April and was fixed today.
+            This is a one-off catch-up so nothing stays buried; you will not get a
+            separate email for each of them.</p>
+        <table style="border-collapse:collapse;margin:20px 0;font-size:0.95em;">
+            {''.join(rows)}
+        </table>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            From here the normal reminders resume: one at
+            {REMINDER_1_AFTER_HOURS} hours after assignment, one at
+            {REMINDER_2_AFTER_HOURS}.
+        </p>
+    </div></body></html>"""
+    return send_email(to_email, subject, html_content)
 
 
 def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date, admin_url):
-    """Send a feedback-overdue reminder to the assigned team member."""
+    """Send a feedback-overdue reminder to the assigned team member.
+
+    Returns send_email()'s result so the caller can stamp reminder_1_sent_at /
+    reminder_2_sent_at only on a confirmed send. It used to return None and the
+    caller stamped regardless, so a failed send marked the reminder as
+    delivered and the assignee was never chased again.
+    """
     html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
     <div style="max-width:600px;margin:0 auto;padding:24px;">
         <h2 style="color:#2D1B69;">Reminder: {author_name} is waiting for your feedback</h2>
@@ -4656,7 +4914,8 @@ def _send_one_pager_reminder(to_email, assignee_name, author_name, assigned_date
             This is an automated reminder from Write It Great.
         </p>
     </div></body></html>"""
-    send_email(to_email, f"Reminder: {author_name} is waiting for your feedback", html_content)
+    return send_email(to_email, f"Reminder: {author_name} is waiting for your feedback",
+                      html_content)
 
 
 # ── Stuck-evaluation sweep ───────────────────────────────────────────────────
@@ -11750,6 +12009,7 @@ def run_migrations(strict=True):
     _add('one_pager_submission', 'reminder_1_sent_at TIMESTAMP')
     _add('one_pager_submission', 'reminder_2_sent_at TIMESTAMP')
     _add('one_pager_submission', 'confidentiality_acknowledged_at TIMESTAMP')
+    _add('one_pager_submission', 'unassigned_nudge_sent_at TIMESTAMP')
 
     # ── one_pager_feedback + social_strategy (new tables via create_all) ────────
     # No _add needed for brand-new tables.

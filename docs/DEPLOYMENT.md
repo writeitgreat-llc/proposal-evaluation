@@ -441,40 +441,53 @@ is the same contract `col:` ledger keys have. To *change* an existing column,
 give the change its own new ledger key; neither the ledger nor the drift check
 will notice a type that quietly differs.
 
-### Indexes and foreign keys are reported, never fatal
+### Adding an index, a unique constraint or a foreign key
 
 `_add()` emits `ADD COLUMN` and nothing else. So an `index=True`, `unique=True`
-or `ForeignKey()` on a column added *after* its table was created has never
-reached the database — those are only ever built by `create_all()`, at
-`CREATE TABLE` time. Production carries four, all confirmed against the live
-catalog on 5 August 2026:
+or `ForeignKey()` on a column added *after* its table was created never reaches
+the database on its own — those are only ever built by `create_all()`, at
+`CREATE TABLE` time, which a live table has long since passed. Use `_index()`
+and `_foreign_key()` in `run_migrations()`, next to the `_add()` that created
+the column.
 
-| Declared | Missing in production |
-|---|---|
-| `social_strategy.share_token` | unique constraint **and** index |
-| `proposal.content_hash` | index |
-| `proposal.author_id` | foreign key → `author.id` |
-| `marketing_module_data.author_id` | foreign key → `author.id` |
+Both verify the **shape**, not just the name, on both backends. `CREATE UNIQUE
+INDEX IF NOT EXISTS` matches the name only, so an index of the right name and
+the wrong shape would let the statement succeed while the uniqueness it promises
+does not exist — that is a failed release, never an adoption.
 
-`schema_constraint_gaps()` prints these on every release as a `Schema note:`
-line. It is **deliberately not fatal**, and the asymmetry with columns is the
-design:
+Neither is `CONCURRENTLY`, and that is a decision. `CREATE INDEX CONCURRENTLY`
+cannot run inside a transaction block, so it could not commit with its ledger
+row — the atomicity every other operation depends on. These tables are tens of
+rows (measured 5 August 2026: `proposal` 37, `author` 35, `marketing_module_data`
+5, `social_strategy` 3), where the build is sub-millisecond. **On a table of real
+size that answer flips**, and the right move is then a one-off script, not a
+weaker release phase.
 
-- a missing **column** 500s every request that touches the table, so refusing to
-  ship is the kind outcome;
-- a missing **index** is slower and a missing **foreign key** is unenforced
-  referential integrity — real, but not a reason to refuse an unrelated deploy.
+Foreign keys are added **validated**, not `NOT VALID`. The scan is over tens of
+rows. A failure means orphan rows exist, and the fix is the rows — a `NOT VALID`
+constraint nobody ever validates is a foreign key that enforces nothing about
+the data it was added to protect.
 
-Making it fatal would block every deploy from the day it shipped. Building the
-indexes from the release phase would be worse: a `CREATE INDEX` on `proposal`
-takes a lock on a live table, the exact hazard the ledger exists to avoid. They
-want `CONCURRENTLY`, in their own change, on a quiet day. Until then the point
-is that the class is visible rather than silent.
+**Adding a foreign key changes DELETE behaviour.** PostgreSQL then refuses to
+delete a parent while a child still points at it, and this codebase has no ORM
+cascades — `grep -c 'cascade=' app.py` returns 0. `delete_author_and_dependents()`
+is the hand-written order for `author`, and `ci/check_author_delete.py` is what
+keeps it honest: it builds one author with a row in all 13 referencing tables and
+deletes them. Add a table that points at `author` and you must add it there too,
+child-first, or an admin button starts returning 500.
 
-Practical note on `share_token`: uniqueness is **not** enforced in production
-today. The security property that column exists for is unguessability — it is a
-128-bit `uuid4().hex` — and that is unaffected. A collision is not a realistic
-event; the gap is correctness bookkeeping and a sequential scan on lookup.
+Four gaps were found and closed this way on 5 August 2026 —
+`social_strategy.share_token` (unique + index), `proposal.content_hash` (index),
+and foreign keys on `proposal.author_id` and `marketing_module_data.author_id`.
+Two of those foreign keys were what made the delete-path repair necessary; one
+of them, `social_strategy`, had been silently breaking author deletion for as
+long as that table has existed.
+
+`schema_constraint_gaps()` still prints a `Schema note:` line for anything
+outstanding, and stays **non-fatal on purpose**. A missing column 500s every
+request that touches the table, so refusing to ship is kind. A missing index is
+slower and a missing foreign key is unenforced integrity — real, but never a
+reason to refuse the unrelated deploy in front of you.
 
 **Two escape hatches**, both config vars, both taking effect on the release that
 sets them:

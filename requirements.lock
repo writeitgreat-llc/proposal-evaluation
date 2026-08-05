@@ -1,0 +1,89 @@
+# requirements.lock -- proposal-evaluation (authors.writeitgreat.com)
+#
+# EVERY package this app installs, at the exact version, including the transitive
+# ones nobody chose. requirements.txt carries `-c requirements.lock` on its first
+# line, so pip -- including the pip Heroku's buildpack runs -- constrains the build
+# to these versions. That is what makes a rebuild reproducible, and what lets anyone
+# answer "what is actually running?" by reading a file instead of a dyno.
+#
+# GENERATED ON THE DYNO, NOT A LAPTOP. Resolution is platform-dependent and for this
+# stack it genuinely differs: SQLAlchemy declares
+#     greenlet>=1 ; platform_machine == "aarch64" or ... "x86_64" ...
+# so greenlet is part of the build on Heroku (linux/x86_64) and absent on an
+# Apple-silicon laptop (arm64). Resolving this same file on a Mac produced 60
+# packages; the dyno produced 61. The difference was greenlet -- the concurrency
+# substrate underneath SQLAlchemy, which would have been left floating by a lock
+# built in the wrong place.
+#
+#   platform : linux x86_64 (heroku-24)
+#   python   : 3.11.7
+#   packages : 61
+#   generated: 2026-08-05
+#
+# DO NOT HAND-EDIT. Regenerate, on a dyno:
+#     cat ci/resolve_requirements.py | heroku run --no-tty -a proposal-evaluation \
+#         "cat > /tmp/res.py && python /tmp/res.py"
+# ci/check_requirements_lock.py fails the build if anything installs without a pin
+# here -- a constraints file does not require completeness, so a missing package
+# floats free and pip says nothing.
+annotated-types==0.8.0
+anyio==4.14.2
+arabic-reshaper==3.0.1
+asn1crypto==1.5.1
+blinker==1.9.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.4.9
+click==8.4.2
+cryptography==50.0.0
+cssselect2==0.9.0
+distro==1.9.0
+flask==3.0.0
+flask-login==0.6.3
+flask-sqlalchemy==3.1.1
+greenlet==3.5.4
+gunicorn==23.0.0
+h11==0.16.0
+html5lib==1.1
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+itsdangerous==2.2.0
+jinja2==3.1.6
+jiter==0.16.0
+lxml==6.1.1
+markupsafe==3.0.3
+openai==1.68.2
+oscrypto==1.3.0
+packaging==26.3
+pillow==12.3.0
+psycopg2-binary==2.9.9
+pycparser==3.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+pyhanko==0.36.2
+pyhanko-certvalidator==0.31.4
+pyotp==2.9.0
+pypdf==6.14.2
+pypng==0.20220715.0
+python-bidi==0.6.11
+python-docx==1.1.0
+python-dotenv==1.0.0
+qrcode==7.4.2
+reportlab==4.5.1
+requests==2.32.5
+sentry-sdk==2.66.1
+six==1.17.0
+sniffio==1.3.1
+sqlalchemy==2.0.51
+svglib==2.1.0
+tinycss2==1.5.1
+tqdm==4.70.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+tzlocal==5.4.4
+uritools==6.1.3
+urllib3==2.7.0
+webencodings==0.5.1
+werkzeug==3.1.8
+xhtml2pdf==0.2.16

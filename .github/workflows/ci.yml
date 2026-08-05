@@ -92,6 +92,20 @@ jobs:
       - name: Check Heroku deploy config
         run: python ci/check_deploy_config.py
 
+      # A STEP inside proposal-ci, not a job: `proposal-ci` is the required status
+      # check, and a new job would be a new context that gates nothing.
+      #
+      # This is the only place the lock is verified on the platform it was built
+      # for. It asserts three things a reader might assume are automatic and are
+      # not: that requirements.txt actually carries `-c requirements.lock` (without
+      # it the lock is a text file nobody reads), that no direct pin contradicts the
+      # lock, and -- the one that matters -- that NOTHING resolves without a pin.
+      # A constraints file does not have to be complete: a package missing from it
+      # installs unconstrained and pip says nothing at all, which is precisely the
+      # silent gap the lock exists to close.
+      - name: Every installed version is pinned
+        run: python ci/check_requirements_lock.py --label proposal-evaluation
+
       # A STEP inside proposal-ci, deliberately not a job of its own: `proposal-ci`
       # is the required status check (see the comment above), and a new job would
       # be a new status context that gates nothing. Placed before smoke_app.py so

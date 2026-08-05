@@ -1,5 +1,25 @@
+# Every version below, AND every transitive package these drag in, is pinned in
+# requirements.lock. This line is what makes that file do anything: without it pip
+# never reads the lock and the pins are decorative. Heroku's buildpack runs
+# `pip install -r requirements.txt`, so the constraint applies to the real build.
+# ci/check_requirements_lock.py fails if this line is missing or if anything
+# resolves without a pin. Read the header of requirements.lock before regenerating.
+-c requirements.lock
+
 Flask==3.0.0
 Flask-SQLAlchemy==3.1.1
+# SQLAlchemy is imported DIRECTLY by app.py, migrate.py and fix_schema.py
+# (`from sqlalchemy import text`, `from sqlalchemy.exc import IntegrityError`), so it
+# is a dependency of this app, not just of Flask-SQLAlchemy. It was never listed:
+# ci/check_undeclared_imports.py has been warning "imported but not in
+# requirements.txt -- it only installs today as a transitive dependency of something
+# else" on every build.
+#
+# 2.0.51 is what this app already resolves to, so nothing changes. Note the marketing
+# site pins 2.0.36 -- the two are DELIBERATELY not unified here. Moving website's ORM
+# is a change with its own testing, and this file's job today is to record what runs,
+# not to change it.
+SQLAlchemy==2.0.51
 Flask-Login==0.6.3
 openai==1.68.2
 httpx==0.28.1

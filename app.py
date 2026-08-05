@@ -5605,6 +5605,29 @@ def healthz():
     break this app, it breaks the monitor for all three, silently, because a
     keyword check that stops matching reads as "down" or (worse, depending on
     the rule) as "up forever". Change it in three repos or not at all.
+
+    WHAT `SELECT 1` COULD NOT SEE, AND WHY THAT NEEDED FIXING (2026-08-05).
+    `SELECT 1` is answered by ANY database, including a brand-new completely
+    empty one on a disk that is wiped at the next restart. On 2026-08-04 this
+    app's Postgres attachment was briefly detached, config fell through to the
+    local SQLite fallback, and every net downstream agreed things were fine:
+    the release phase exited 0, the deploy smoke test passed, and THIS ENDPOINT
+    answered {"ok":true,"db":"ok"} while every sign-in 500ed. The startup guard
+    added the same day makes that exact accident impossible on a dyno, but the
+    blind spot itself is more general — a restored-wrong or freshly-provisioned
+    database has the same shape — so the probe now reports two more FACTS:
+
+        backend   the SQLAlchemy dialect actually in use, read off the URL
+        schema    "ok" if this connection can read the `author` table
+
+    and fails ONLY on a combination impossible for a real deployment: on a dyno,
+    the backend must be Postgres and the schema must be readable.
+
+    ADDING keys is free; the monitors match the literal `"ok":true` and nothing
+    asserts on the full key set (verified against the runbook and both deploy
+    smokes). `db` deliberately stays "ok" when the CONNECTION worked and only
+    the schema did not — a body claiming the database is down sends the 3am
+    reader to Postgres instead of to the attachment, which is the wrong place.
     """
     # Timezone-AWARE UTC, and this is the one place in this file that is.
     # datetime.utcnow().isoformat() + 'Z' was hand-stamping an offset onto a
@@ -5621,8 +5644,27 @@ def healthz():
         # `heroku labs:enable runtime-dyno-metadata -a proposal-evaluation`.
         'release': os.environ.get('HEROKU_RELEASE_VERSION') or None,
         'time': datetime.now(timezone.utc).isoformat(),
+        # One greppable token naming WHICH check failed, null when healthy.
+        # Always present so a parser never has to distinguish "absent" from
+        # "null" — the same reason `release` is an explicit null above.
+        'reason': None,
     }
     status = 200
+
+    # "unknown" is the honest starting value, and it is what this stays at if
+    # the connectivity probe never gets far enough to learn better. Do not
+    # initialise it to "ok": a fact that defaults to good is not a fact, and
+    # this body is read at 3am.
+    schema_state = 'unknown'
+    try:
+        # From the URL, not from the wire — dialect.name is resolved when the
+        # engine is built, so it costs no round trip and is still meaningful
+        # when the database is unreachable. That matters: "we could not reach
+        # Postgres" and "we cheerfully opened a SQLite file" are different
+        # incidents with different fixes, and only the second one hides.
+        backend = db.engine.dialect.name
+    except Exception:
+        backend = 'unknown'
 
     try:
         # Bound the check, or the probe becomes the outage it exists to report.
@@ -5658,8 +5700,30 @@ def healthz():
         # in connect_args, which would cap every query this app makes, including
         # the scoring writes. That is a real decision with real blast radius —
         # do not make it here as a drive-by.
-        if db.engine.dialect.name == 'postgresql':
+        if backend == 'postgresql':
             db.session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            # lock_timeout is NOT a duplicate of statement_timeout, and leaving
+            # it out caused a false alarm in testing that is worth writing down.
+            #
+            # The schema probe below reads a real table, so unlike `SELECT 1` it
+            # takes an ACCESS SHARE lock. Every Heroku release runs migrations
+            # while the OLD web dynos are still serving, and an `ALTER TABLE
+            # author ...` waiting behind any ordinary slow reader blocks all
+            # subsequent readers of that table — including this one. Measured:
+            # with the probe queued behind a pending ALTER, /healthz returned
+            # 503 while the site itself served every page perfectly, because
+            # anonymous pages never touch `author` at all. That is a 3am page
+            # for a healthy site, caused by the check rather than by a fault.
+            #
+            # 250ms because this must never queue: it is a liveness probe, not
+            # a query. Without it the wait is bounded only by statement_timeout,
+            # so the false alarm would also pin a request thread for 5s per
+            # poll, once a minute, from several monitoring regions, during
+            # exactly the deploy window when the app is already busiest.
+            #
+            # The house pattern already exists — run_migrations() sets
+            # lock_timeout for this same hazard — it just had not reached here.
+            db.session.execute(text("SET LOCAL lock_timeout = '250ms'"))
         db.session.execute(text('SELECT 1'))
     except Exception:
         payload['ok'] = False
@@ -5690,6 +5754,96 @@ def healthz():
             db.session.rollback()
         except Exception:
             logger.warning('/healthz could not roll back after the failed check')
+    else:
+        # ── Is there anything BEHIND the connection? ─────────────────────────
+        # Only reached when the connection answered, so this asks the SECOND
+        # question rather than repeating the first: can this process read the
+        # app's own data, or is it talking to a correctly-configured nothing?
+        #
+        # Same session, same transaction, so it inherits the statement_timeout
+        # and lock_timeout set above — no second connection is checked out and
+        # no second set of ceilings has to be kept in step. That is why this is
+        # an `else:` on the existing try rather than a helper with its own
+        # session.
+        #
+        # `author` because it is the account table: it is the table the
+        # user_loader hits on every request carrying a session cookie, so its
+        # absence is precisely the condition that turns every page — including
+        # the public ones — into a 500. Referenced through the model so a
+        # rename follows automatically instead of turning the probe into a
+        # permanent alarm.
+        #
+        # LIMIT 1 and no count(). It MUST pass on a table with zero rows: a
+        # fresh CI database and a first deploy both have exactly that, and
+        # neither is an outage. This is the line that decides whether the check
+        # is shippable at all — ci/smoke_app.py builds a correct, totally empty
+        # schema and requires 200 from this route.
+        try:
+            db.session.execute(db.select(Author.id).limit(1)).first()
+            schema_state = 'ok'
+        except Exception as exc:
+            # A LOCK WAIT IS NOT A MISSING TABLE, and conflating them is the
+            # false alarm described above. Postgres reports the two distinctly:
+            #   55P03 lock_not_available  -> the table exists; a migration has it
+            #   57014 query_canceled      -> we hit a timeout, not an absence
+            #   42P01 undefined_table     -> genuinely not there (the real fault)
+            # Anything in the first group means "cannot answer right now", which
+            # is not evidence of an empty database and must not page anyone.
+            orig = getattr(exc, 'orig', None)
+            sqlstate = (getattr(orig, 'sqlstate', None)
+                        or getattr(getattr(orig, 'diag', None), 'sqlstate', None)
+                        or getattr(orig, 'pgcode', None))
+            if sqlstate in ('55P03', '57014'):
+                schema_state = 'locked'
+            else:
+                # "unreadable", not "absent", deliberately: 99 times out of 100
+                # the table is not there, but a connection that died between the
+                # two statements lands here too, and a public endpoint should
+                # not confidently name a cause it cannot distinguish. The log
+                # line says which it was.
+                schema_state = 'unreadable'
+            # warning, not error — same Sentry-billing trap as the branch above.
+            logger.warning('/healthz could not read %s (schema=%s)',
+                           Author.__tablename__, schema_state, exc_info=True)
+            try:
+                db.session.rollback()
+            except Exception:
+                logger.warning('/healthz could not roll back after the schema probe')
+
+    payload['backend'] = backend
+    payload['schema'] = schema_state
+
+    # ── The verdict ──────────────────────────────────────────────────────────
+    # DYNO, and nothing cleverer, gates the two NEW failure modes.
+    #
+    # WHY THERE HAS TO BE A GATE. An empty-but-correct database is a perfectly
+    # normal thing to be pointed at off a dyno: ci/smoke_app.py boots this app
+    # against a freshly built schema with no rows and requires 200 here, and a
+    # laptop has nothing at all until migrations run. Reporting those as 503
+    # would break CI and first-run local dev in order to catch a production
+    # fault — the trade that gets a check deleted rather than fixed.
+    #
+    # WHY DYNO AND NOT _is_production. Same reasoning as the DATABASE_URL guard
+    # shipped alongside this: DYNO is set by the PLATFORM and by nothing else,
+    # whereas _is_production is derived from APP_BASE_URL, a config var we set —
+    # the same class of thing as the variable whose disappearance started all
+    # this. One predicate, used by both, cannot disagree with itself.
+    #
+    # `locked` counts as healthy on purpose: the table demonstrably EXISTS, a
+    # migration simply holds it for the moment. See the lock_timeout note above.
+    if os.environ.get('DYNO') and payload['ok']:
+        if backend != 'postgresql':
+            payload['ok'] = False
+            payload['reason'] = 'backend_not_postgres'
+            status = 503
+            logger.warning('/healthz: on dyno %s the backend is %s, not postgresql',
+                           os.environ.get('DYNO'), backend)
+        elif schema_state not in ('ok', 'locked'):
+            payload['ok'] = False
+            payload['reason'] = 'schema_unreadable'
+            status = 503
+            logger.warning('/healthz: on dyno %s the connection works but %s is %s',
+                           os.environ.get('DYNO'), Author.__tablename__, schema_state)
 
     headers = {
         'Cache-Control': 'no-store, no-cache, must-revalidate',

@@ -238,6 +238,29 @@ jobs:
           SCHEMA_REPLAY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python ci/check_migrations.py
 
+      # Another STEP inside proposal-ci for the same reason as the one above: a
+      # new job is a new status context that gates nothing until three files
+      # agree about its name.
+      #
+      # /healthz used to run `SELECT 1`, which a completely empty database
+      # answers happily -- so on 2026-08-04 it reported {"ok":true} while every
+      # sign-in was failing. It now reads a real table and 503s on a dyno when
+      # the backend is not Postgres or the schema is unreadable.
+      #
+      # Half of what this asserts is that the probe does NOT fire: on a
+      # correct-but-empty database (which is what smoke_app.py builds and what
+      # every laptop has before migrations run), and -- the subtle one -- while
+      # a migration holds the table. The schema probe takes a lock that
+      # `SELECT 1` never did, and every release migrates while the OLD dynos are
+      # still serving, so without a lock_timeout and SQLSTATE classification
+      # this endpoint reports a healthy site as down during its own deploy.
+      # That scenario needs the Postgres service; SQLite has neither locks of
+      # that kind nor SQLSTATEs, so it cannot stand in.
+      - name: The health check can tell a real database from an empty one
+        env:
+          HEALTHZ_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
+        run: python ci/check_healthz.py
+
       # A STEP inside proposal-ci, same reason as every other step here.
       #
       # Two foreign keys to `author` were declared on the models and missing from

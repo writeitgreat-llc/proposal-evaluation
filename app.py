@@ -4629,6 +4629,27 @@ REMINDER_2_AFTER_HOURS = 96
 UNASSIGNED_NUDGE_AFTER_HOURS = 48
 UNASSIGNED_RENUDGE_AFTER_HOURS = 24 * 7
 
+# Its own variable rather than TEAM_EMAILS. "Assign somebody to this" is a
+# triage task for the two people who own the funnel, not an announcement to
+# everyone told when a one-pager arrives -- and a nudge five people can each
+# assume another has dealt with is how the last four months happened.
+#
+# The `or TEAM_EMAILS` tail is a floor, not a preference: set the variable to
+# an empty string or a stray comma and this would otherwise resolve to nobody
+# and return silently, which is the exact failure mode -- a chase that stops
+# happening and says nothing -- this whole change exists to remove.
+#
+# NOTE for whoever edits the roster: TEAM_EMAIL and TEAM_EMAILS are BOTH set in
+# production with DIFFERENT lists, and line ~801 reads `TEAM_EMAIL or
+# TEAM_EMAILS`, so TEAM_EMAILS is dead config today. Editing it changes nothing
+# and warns nobody. Tracked separately; do not rely on it here.
+ONE_PAGER_TRIAGE_EMAILS = [
+    e.strip() for e in (
+        os.environ.get('ONE_PAGER_TRIAGE_EMAILS')
+        or 'andy@writeitgreat.com,ray@writeitgreat.com'
+    ).split(',') if e.strip()
+] or TEAM_EMAILS
+
 
 def check_one_pager_reminders():
     """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback.
@@ -4753,11 +4774,9 @@ def _nudge_unassigned_one_pagers(now):
     so a failure here is reported and swallowed exactly like the rest -- one
     bad row must not stop the assigned reminders going out.
 
-    Goes to TEAM_EMAILS rather than a named person on purpose: that is already
-    the address told when a one-pager ARRIVES, so this is the same
-    conversation continued rather than a new channel somebody has to know to
-    watch. Nobody is named because nobody has been given it yet -- that is the
-    whole point.
+    Goes to ONE_PAGER_TRIAGE_EMAILS, not the whole team: see the note on that
+    constant. Nobody is named in the email because nobody has been given the
+    submission yet -- that is the whole point of it.
     """
     stale_before = now - timedelta(hours=UNASSIGNED_NUDGE_AFTER_HOURS)
     renudge_before = now - timedelta(hours=UNASSIGNED_RENUDGE_AFTER_HOURS)
@@ -4777,7 +4796,7 @@ def _nudge_unassigned_one_pagers(now):
     if not due:
         return
 
-    recipients = [e.strip() for e in TEAM_EMAILS if e.strip()]
+    recipients = ONE_PAGER_TRIAGE_EMAILS
     if not recipients:
         return
     rows = []

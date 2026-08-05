@@ -96,6 +96,7 @@ appmod.send_email = fake_send_email
 # depend on TEAM_ROSTER in the environment.
 appmod.TEAM_MEMBER_EMAILS = {"Andy": "andy@example.test"}
 appmod.TEAM_EMAILS = ["team@example.test"]
+appmod.ONE_PAGER_TRIAGE_EMAILS = ["triage@example.test"]
 
 ASSIGNEE = "Andy"
 
@@ -201,8 +202,8 @@ with appmod.app.app_context():
     check(len(sent) == 1, f"unassigned submission produces one nudge (got {len(sent)})")
     check(sent and "no reviewer assigned" in sent[0][1],
           f"nudge subject says what is wrong (got {sent[0][1] if sent else 'nothing'})")
-    check(sent and sent[0][0] in appmod.TEAM_EMAILS,
-          "nudge goes to the team address, not a named reviewer")
+    check(sent and sent[0][0] in appmod.ONE_PAGER_TRIAGE_EMAILS,
+          "nudge goes to the triage address, not a named reviewer")
 
     sent.clear()
     appmod.check_one_pager_reminders()

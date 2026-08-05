@@ -10490,6 +10490,71 @@ def admin_coaching_review_homework(enrollment_id, submission_id):
     return redirect(url_for('admin_coaching_detail', enrollment_id=enrollment_id))
 
 
+def delete_author_and_dependents(author):
+    """Delete an author and everything that points at them, children first.
+
+    ONE implementation for both delete routes, because they had drifted apart
+    and each was missing a different table — and every omission is a 500 on a
+    button an admin has already clicked, not a quiet no-op. Six tables carry a
+    foreign key to `author`, and three of those carry children of their own:
+
+        one_pager_feedback ─→ one_pager_submission ─┐
+        social_strategy ────────────────────────────┼─→ author
+        author_engagement_email ────────────────────┤
+        marketing_module_data ──────────────────────┤
+        (chat, homework, module content, progress) ─┴─→ coaching_enrollment ─→ author
+        (proposal_note, publisher_proposal) ────────────→ proposal ─────────→ author
+
+    The order below is that graph, leaves first. It is the whole point of the
+    function: PostgreSQL rejects the parent delete while any child still refers
+    to it, and nothing in this codebase uses ORM cascades — there is not one
+    `cascade=` anywhere — so the order has to be written down and kept.
+
+    marketing_module_data is matched on BOTH author_id and enrollment_id: the
+    column was made nullable long ago, so a row can hang off the enrollment
+    while naming no author at all, and filtering on author_id alone leaves it
+    behind to block the enrollment delete instead.
+    """
+    enrollment_ids = [e.id for e in CoachingEnrollment.query.filter_by(author_id=author.id).all()]
+    proposal_ids = [p.id for p in Proposal.query.filter_by(author_id=author.id).all()]
+    one_pager_ids = [s.id for s in OnePagerSubmission.query.filter_by(author_id=author.id).all()]
+
+    if one_pager_ids:
+        OnePagerFeedback.query.filter(
+            OnePagerFeedback.submission_id.in_(one_pager_ids)).delete(synchronize_session=False)
+
+    # Before one_pager_submission: social_strategy points at both it and author.
+    SocialStrategy.query.filter_by(author_id=author.id).delete(synchronize_session=False)
+    if one_pager_ids:
+        SocialStrategy.query.filter(
+            SocialStrategy.one_pager_id.in_(one_pager_ids)).delete(synchronize_session=False)
+        OnePagerSubmission.query.filter(
+            OnePagerSubmission.id.in_(one_pager_ids)).delete(synchronize_session=False)
+
+    AuthorEngagementEmail.query.filter_by(author_id=author.id).delete(synchronize_session=False)
+
+    MarketingModuleData.query.filter_by(author_id=author.id).delete(synchronize_session=False)
+    if enrollment_ids:
+        MarketingModuleData.query.filter(
+            MarketingModuleData.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+        for model in (CoachingChatMessage, HomeworkSubmission,
+                      CoachingModuleContent, AuthorModuleProgress):
+            model.query.filter(
+                model.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+        CoachingEnrollment.query.filter(
+            CoachingEnrollment.id.in_(enrollment_ids)).delete(synchronize_session=False)
+
+    if proposal_ids:
+        ProposalNote.query.filter(
+            ProposalNote.proposal_id.in_(proposal_ids)).delete(synchronize_session=False)
+        PublisherProposal.query.filter(
+            PublisherProposal.proposal_id.in_(proposal_ids)).delete(synchronize_session=False)
+        Proposal.query.filter(Proposal.id.in_(proposal_ids)).delete(synchronize_session=False)
+
+    db.session.delete(author)
+    db.session.commit()
+
+
 @app.route('/admin/coaching/<int:enrollment_id>/delete-author', methods=['POST'])
 @team_required
 def admin_coaching_delete_author(enrollment_id):
@@ -10499,23 +10564,7 @@ def admin_coaching_delete_author(enrollment_id):
     author_name = author.name
     author_email = author.email
 
-    # Delete all coaching data for every enrollment this author has
-    for enr in CoachingEnrollment.query.filter_by(author_id=author.id).all():
-        CoachingChatMessage.query.filter_by(enrollment_id=enr.id).delete()
-        HomeworkSubmission.query.filter_by(enrollment_id=enr.id).delete()
-        CoachingModuleContent.query.filter_by(enrollment_id=enr.id).delete()
-        AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).delete()
-        db.session.delete(enr)
-
-    # Delete proposals and their child records
-    for proposal in Proposal.query.filter_by(author_id=author.id).all():
-        ProposalNote.query.filter_by(proposal_id=proposal.id).delete()
-        PublisherProposal.query.filter_by(proposal_id=proposal.id).delete()
-        db.session.delete(proposal)
-
-    # Delete the author account itself
-    db.session.delete(author)
-    db.session.commit()
+    delete_author_and_dependents(author)
 
     flash(f'Author account for {author_name} ({author_email}) has been permanently deleted.', 'success')
     return redirect(url_for('admin_coaching_list'))
@@ -10529,23 +10578,7 @@ def admin_delete_author(author_id):
     author_name = author.name
     author_email = author.email
 
-    for enr in CoachingEnrollment.query.filter_by(author_id=author.id).all():
-        CoachingChatMessage.query.filter_by(enrollment_id=enr.id).delete()
-        HomeworkSubmission.query.filter_by(enrollment_id=enr.id).delete()
-        CoachingModuleContent.query.filter_by(enrollment_id=enr.id).delete()
-        AuthorModuleProgress.query.filter_by(enrollment_id=enr.id).delete()
-        db.session.delete(enr)
-
-    for proposal in Proposal.query.filter_by(author_id=author.id).all():
-        ProposalNote.query.filter_by(proposal_id=proposal.id).delete()
-        PublisherProposal.query.filter_by(proposal_id=proposal.id).delete()
-        db.session.delete(proposal)
-
-    OnePagerSubmission.query.filter_by(author_id=author.id).delete()
-    AuthorEngagementEmail.query.filter_by(author_id=author.id).delete()
-
-    db.session.delete(author)
-    db.session.commit()
+    delete_author_and_dependents(author)
 
     flash(f'Author account for {author_name} ({author_email}) has been permanently deleted.', 'success')
     return redirect(url_for('admin_pipeline'))
@@ -11277,24 +11310,25 @@ def schema_constraint_gaps():
     missing FOREIGN KEY is unenforced referential integrity; both are real, and
     neither is a reason to refuse to deploy something unrelated.
 
-    They also cannot be fixed on the way past. Production has four of these
-    today, every one a column that arrived through `_add()` — which emits
-    ADD COLUMN and nothing else, so an `index=True` or `unique=True` or
-    `ForeignKey()` on a column added after its table was created has never once
-    reached the database:
+    It found four when it was written, every one a column that had arrived
+    through `_add()` — which emits ADD COLUMN and nothing else, so an
+    `index=True`, `unique=True` or `ForeignKey()` on a column added after its
+    table was created had never once reached the database:
 
         social_strategy.share_token     index + unique
         proposal.content_hash           index
         proposal.author_id              foreign key -> author.id
         marketing_module_data.author_id foreign key -> author.id
 
-    Making this fatal would therefore block every deploy from the moment it
-    shipped. Building the indexes here would be worse: a CREATE INDEX on
-    `proposal` during the release phase takes a lock on a live table, which is
-    the exact hazard the ledger exists to avoid. They want CONCURRENTLY, in
-    their own change, on a quiet day.
+    All four now have `_index()` / `_foreign_key()` operations and are applied,
+    so a healthy release prints nothing here. Keep the report anyway: it is the
+    only thing that would notice the next one, and the next one arrives the same
+    way this one did — quietly, in a change about something else.
 
-    So this prints. The point is that the class stops being invisible.
+    Stays non-fatal even now. The reason is not that these four were tolerable
+    but that the correct response to a missing index is never "refuse to deploy
+    the unrelated thing in front of you": it is a small change that builds the
+    index deliberately, at a time somebody chose.
     """
     from sqlalchemy import inspect as _insp
 
@@ -11518,6 +11552,110 @@ def run_migrations(strict=True):
             # any version, verified on 3.51. The `present` check above is what
             # makes this safe, so do not "modernise" this branch away.
             _run(key, [f'ALTER TABLE {table} ADD COLUMN {col_def}'])
+
+    def _index(name, table, column, unique=False):
+        """Ensure one index exists, with the shape the model asks for.
+
+        NOT CONCURRENTLY, and that is a decision rather than an omission.
+        CREATE INDEX CONCURRENTLY cannot run inside a transaction block, so it
+        could not commit together with its ledger row — the atomicity every
+        other operation here depends on. The tables this is used on are tens of
+        rows, where the build is sub-millisecond and the brief lock is not worth
+        giving that up for. On a table of real size the answer flips, and then
+        the right move is a separate one-off script, not a weaker release phase.
+
+        `IF NOT EXISTS` matches the index NAME and not its definition, so an
+        index of the right name and the wrong shape would let the statement
+        succeed while the uniqueness it promises does not exist. The catalog
+        probe below is what closes that, and a name collision is a FAILURE
+        rather than something to record as done.
+        """
+        key = f'idx:{name}'
+        tracked.append(key)
+        if key in done:
+            return
+        create = (f'CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS {name} '
+                  f'ON {table} ({column})')
+
+        # Both backends get the shape probe, not just Postgres. SQLite is where
+        # every laptop and most of CI runs, so a helper that only verifies on
+        # Postgres is a helper whose verification is never exercised until the
+        # release phase — which is precisely the shape of bug this file exists
+        # to remove.
+        if is_pg:
+            with db.engine.connect() as conn:
+                row = conn.execute(text(
+                    'SELECT i.indisunique, pg_get_indexdef(i.indexrelid)'
+                    ' FROM pg_index i'
+                    ' JOIN pg_class c ON c.oid = i.indexrelid'
+                    ' JOIN pg_namespace n ON n.oid = c.relnamespace'
+                    ' WHERE n.nspname = current_schema() AND c.relname = :n'
+                ), {'n': name}).first()
+            found = row is not None
+            is_unique = bool(row[0]) if found else False
+            covers = column in (row[1] or '') if found else False
+            shown = row[1] if found else None
+        else:
+            from sqlalchemy import inspect as _insp
+            existing = {i['name']: i for i in _insp(db.engine).get_indexes(table)}
+            row = existing.get(name)
+            found = row is not None
+            is_unique = bool(row.get('unique')) if found else False
+            covers = column in (row.get('column_names') or []) if found else False
+            shown = row if found else None
+
+        if not found:
+            _run(key, [create])
+        elif is_unique == unique and covers:
+            _adopt(key)
+        else:
+            failures.append((key, RuntimeError(
+                f'index {name} exists with the wrong shape: {shown!r} '
+                f'(expected {"a unique" if unique else "a non-unique"} index on {column}).'
+                f'{" Uniqueness is NOT enforced." if unique else ""} '
+                f'Drop it by hand and redeploy; this will not silently adopt it.'
+            )))
+            print(f'MIGRATION FAILED: {key}: wrong index definition {shown!r}')
+
+    def _foreign_key(name, table, column, target_table, target_column):
+        """Ensure one foreign key exists. PostgreSQL only.
+
+        SQLite cannot ADD CONSTRAINT at all — a foreign key there exists only if
+        it was written into the CREATE TABLE, which is exactly what create_all()
+        does on a laptop and in CI. So there is nothing for this to do off
+        Postgres, and pretending otherwise would mean shipping SQL that cannot
+        parse on the backend most of the tests run against.
+
+        Validated immediately rather than added NOT VALID: the scan is over tens
+        of rows here. A failure means orphan rows exist, and the correct
+        response to that is to fix the rows — a NOT VALID constraint that nobody
+        ever validates is a foreign key that enforces nothing about the data it
+        was added to protect.
+        """
+        if not is_pg:
+            return
+        key = f'fk:{name}'
+        tracked.append(key)
+        if key in done:
+            return
+        with db.engine.connect() as conn:
+            row = conn.execute(text(
+                'SELECT pg_get_constraintdef(c.oid), c.convalidated'
+                ' FROM pg_constraint c'
+                ' JOIN pg_namespace n ON n.oid = c.connamespace'
+                ' WHERE n.nspname = current_schema() AND c.conname = :n'
+            ), {'n': name}).first()
+        if row is None:
+            _run(key, [f'ALTER TABLE {table} ADD CONSTRAINT {name} '
+                       f'FOREIGN KEY ({column}) REFERENCES {target_table}({target_column})'])
+        elif (row[0] or '').startswith('FOREIGN KEY') and column in (row[0] or '') and row[1]:
+            _adopt(key)
+        else:
+            failures.append((key, RuntimeError(
+                f'constraint {name} exists but is not a validated foreign key on {column}: '
+                f'{row[0]!r} (validated={row[1]}). Referential integrity is NOT enforced.'
+            )))
+            print(f'MIGRATION FAILED: {key}: wrong constraint {row[0]!r}')
 
     blob = 'BYTEA' if is_pg else 'BLOB'
 
@@ -11806,41 +11944,31 @@ def run_migrations(strict=True):
     # breaks every results link already sent.)
     _add('proposal', 'results_token VARCHAR(32)')
 
-    idx_key = 'idx:ix_proposal_results_token'
-    tracked.append(idx_key)
-    if idx_key not in done:
-        if is_pg:
-            # CREATE UNIQUE INDEX IF NOT EXISTS matches the index NAME, not its
-            # definition — so an index of the right name and the wrong shape
-            # makes the statement succeed while no uniqueness constraint exists.
-            # Verify the definition, and treat a name collision as a failure
-            # rather than recording a constraint that is not there.
-            with db.engine.connect() as conn:
-                idx = conn.execute(text(
-                    'SELECT i.indisunique, pg_get_indexdef(i.indexrelid)'
-                    ' FROM pg_index i'
-                    ' JOIN pg_class c ON c.oid = i.indexrelid'
-                    ' JOIN pg_namespace n ON n.oid = c.relnamespace'
-                    " WHERE n.nspname = current_schema()"
-                    "   AND c.relname = 'ix_proposal_results_token'"
-                )).first()
-            if idx is None:
-                # Not CONCURRENTLY on purpose: it cannot run inside a
-                # transaction block, so it could not commit with its ledger row.
-                # The table is small and the build is milliseconds.
-                _run(idx_key, ['CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
-                               'ON proposal (results_token)'])
-            elif idx[0] and 'results_token' in (idx[1] or ''):
-                _adopt(idx_key)
-            else:
-                failures.append((idx_key, RuntimeError(
-                    f'index ix_proposal_results_token exists but is not a unique index on '
-                    f'results_token: {idx[1]!r}. results_token would not be enforced unique.'
-                )))
-                print(f'MIGRATION FAILED: {idx_key}: wrong index definition {idx[1]!r}')
-        else:
-            _run(idx_key, ['CREATE UNIQUE INDEX IF NOT EXISTS ix_proposal_results_token '
-                           'ON proposal (results_token)'])
+    _index('ix_proposal_results_token', 'proposal', 'results_token', unique=True)
+
+    # ── the index and key declarations that _add() could never carry ───────────
+    # `_add()` emits ADD COLUMN and nothing else. So an `index=True`,
+    # `unique=True` or `ForeignKey()` on a column added AFTER its table was
+    # first created has never reached the database — only create_all() builds
+    # those, and only at CREATE TABLE time. A fresh database has them and
+    # production does not, which is the same disease as a forgotten _add() one
+    # level down, and schema_constraint_gaps() is what made it visible.
+    #
+    # Measured on the live database before writing these: proposal 37 rows,
+    # social_strategy 3, marketing_module_data 5, author 35. At that size every
+    # statement below is sub-millisecond, which is why none of them is
+    # CONCURRENTLY — see _index() for why CONCURRENTLY is not merely unnecessary
+    # here but unusable.
+    _index('ix_social_strategy_share_token', 'social_strategy', 'share_token', unique=True)
+    _index('ix_proposal_content_hash', 'proposal', 'content_hash')
+
+    # Verified zero orphans on the live database first (36 non-null
+    # proposal.author_id, 3 in marketing_module_data, none dangling), so these
+    # validate immediately rather than needing NOT VALID. If one ever DOES fail,
+    # it means orphan rows appeared: fix the rows, do not weaken the constraint.
+    _foreign_key('proposal_author_id_fkey', 'proposal', 'author_id', 'author', 'id')
+    _foreign_key('marketing_module_data_author_id_fkey', 'marketing_module_data',
+                 'author_id', 'author', 'id')
 
     # ── record everything that was already true, in one transaction ────────────
     if adopted:

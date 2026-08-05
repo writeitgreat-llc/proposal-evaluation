@@ -523,6 +523,70 @@ def _scenario_missing_index_is_not_fatal() -> int:
     return 0
 
 
+def _scenario_constraints_from_production() -> int:
+    """Put the schema in the state PRODUCTION was in, then migrate it forward.
+
+    create_all() builds indexes and foreign keys at CREATE TABLE time, so a
+    fresh database has all four of these and can never exercise the operations
+    that add them. Production could not: `_add()` emits ADD COLUMN and nothing
+    else, so every index/unique/FK declared on a later-added column was missing.
+    Removing them here — and their ledger rows, or the run would skip — is the
+    only way to make this test the thing it claims to test.
+    """
+    from sqlalchemy import text
+    import app as application
+    db = application.db
+    with application.app.app_context():
+        db.create_all()
+        application.run_migrations(strict=True)
+        is_pg = "postgresql" in str(db.engine.url)
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP INDEX ix_social_strategy_share_token"))
+            conn.execute(text("DROP INDEX ix_proposal_content_hash"))
+            if is_pg:
+                # SQLite cannot DROP CONSTRAINT, and cannot ADD one either --
+                # which is exactly why _foreign_key() is a no-op there.
+                conn.execute(text("ALTER TABLE proposal "
+                                  "DROP CONSTRAINT proposal_author_id_fkey"))
+                conn.execute(text("ALTER TABLE marketing_module_data "
+                                  "DROP CONSTRAINT marketing_module_data_author_id_fkey"))
+            conn.execute(text("DELETE FROM schema_migrations "
+                              "WHERE migration_key LIKE 'idx:%' OR migration_key LIKE 'fk:%'"))
+        print(f"GAPS_BEFORE={application.schema_constraint_gaps()}")
+        application.run_migrations(strict=True)
+        print(f"GAPS_AFTER={application.schema_constraint_gaps()}")
+    return 0
+
+
+def _scenario_wrong_shape_is_fatal() -> int:
+    """An index of the right NAME and the wrong shape must not be adopted.
+
+    `CREATE UNIQUE INDEX IF NOT EXISTS` matches the name only, so a non-unique
+    index called ix_social_strategy_share_token would make the statement succeed
+    while the uniqueness it exists to provide does not. Recording that as done
+    is worse than never having run: the ledger would then say the constraint is
+    there forever.
+    """
+    from sqlalchemy import text
+    import app as application
+    db = application.db
+    with application.app.app_context():
+        db.create_all()
+        application.run_migrations(strict=True)
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP INDEX ix_social_strategy_share_token"))
+            conn.execute(text("CREATE INDEX ix_social_strategy_share_token "
+                              "ON social_strategy (share_token)"))   # NOT unique
+            conn.execute(text("DELETE FROM schema_migrations "
+                              "WHERE migration_key = 'idx:ix_social_strategy_share_token'"))
+        try:
+            application.run_migrations(strict=True)
+            print("WRONG_SHAPE_RAISED=0")
+        except application.MigrationError as exc:
+            print(f"WRONG_SHAPE_RAISED=1 NAMED={'ix_social_strategy_share_token' in str(exc)}")
+    return 0
+
+
 def _scenario_build_base_schema() -> int:
     """Build the schema from the tree this runs in, and put a row in every table.
 
@@ -579,6 +643,8 @@ SCENARIOS = {
     "build-base-schema": _scenario_build_base_schema,
     "independent-drift": _scenario_independent_drift,
     "missing-index": _scenario_missing_index_is_not_fatal,
+    "constraints-from-production": _scenario_constraints_from_production,
+    "wrong-shape": _scenario_wrong_shape_is_fatal,
 }
 
 
@@ -695,8 +761,36 @@ def drift_checks(backend: str, base_url: str) -> None:
           "production carries four of these; failing on them would make every "
           "model cleanup a blocked deploy, and would break `releases:rollback`")
 
-    # Columns are fatal, constraints are not. Production has four missing
-    # index/FK declarations today, so getting this backwards blocks every deploy.
+    # The four declarations _add() could never carry. A fresh database has them
+    # all from create_all(), so this is the only shape of test that can see the
+    # operations at all -- it removes them first, as production had them removed
+    # by never having had them.
+    env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
+    rc, out = run_child("constraints-from-production", env, expect_rc=0)
+    before = re.search(r"GAPS_BEFORE=(\[.*?\])", out)
+    after = re.search(r"GAPS_AFTER=(\[.*?\])", out)
+    expected = 4 if backend == "postgresql" else 2      # SQLite cannot drop a FK
+    check(f"[{backend}] the production-shaped schema really was missing {expected}",
+          before is not None and before.group(1).count("'") // 2 == expected,
+          f"got {before.group(1) if before else out[-300:]} -- if this is empty the "
+          f"test removed nothing and proves nothing")
+    check(f"[{backend}] run_migrations() adds every declared index and foreign key",
+          after is not None and after.group(1) == "[]",
+          f"still missing after the migration: {after.group(1) if after else out[-300:]}")
+
+    # A name collision must FAIL, not be adopted: IF NOT EXISTS matches the name
+    # and not the shape, so adopting would record a uniqueness that is not there.
+    env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
+    rc, out = run_child("wrong-shape", env, expect_rc=0)
+    check(f"[{backend}] an index with the right name and wrong shape is a FAILURE",
+          "WRONG_SHAPE_RAISED=1" in out,
+          "a non-unique index of the same name was adopted as if it enforced "
+          "uniqueness -- the ledger would then claim it forever")
+    check(f"[{backend}] and the failure names the index",
+          "NAMED=True" in out)
+
+    # Columns are fatal, constraints are not. Getting this backwards would block
+    # every deploy on any gap that has not been closed yet.
     env = {"DATABASE_URL": fresh(), "MIGRATE_ON_BOOT": "0"}
     rc, out = run_child("missing-index", env, expect_rc=0)
     check(f"[{backend}] a declared index the database lacks is REPORTED",

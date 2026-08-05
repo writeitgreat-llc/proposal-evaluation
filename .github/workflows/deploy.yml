@@ -149,6 +149,16 @@ jobs:
       - name: Check Heroku deploy config
         run: python ci/check_deploy_config.py
 
+      # Recorded BEFORE the push so the step after the smoke check can prove the
+      # release version actually moved. Without a before-value there is nothing
+      # to compare against, and "the site returns 200" is satisfied just as well
+      # by the release we were trying to replace. See ci/verify_release.py.
+      - name: Record the release version before deploying
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          echo "RELEASE_BEFORE=$(python ci/verify_release.py --capture --app "$HEROKU_APP_NAME")" >> "$GITHUB_ENV"
+
       - name: Push to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
@@ -163,6 +173,24 @@ jobs:
       # This one is the real gate -- it hits the app we just deployed to.
       - name: Post-deploy smoke check (deployed app)
         run: bash ci/smoke_deploy.sh "$APP_URL" 12 15
+
+      # The smoke check above proves the site WORKS. It cannot prove the site is
+      # running what we just pushed, and on 4 August it went green twice while
+      # production stayed on the previous release: once because the release
+      # phase failed and Heroku kept the old dynos serving, once because the
+      # push was a no-op and no release happened at all. Both look identical to
+      # "returns 200". This asserts the release version advanced, that Heroku
+      # calls it succeeded rather than failed, and that /healthz on the running
+      # dyno reports that same version -- the last being the only evidence that
+      # the web process itself picked the slug up.
+      - name: Verify the deploy actually deployed
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          python ci/verify_release.py --verify \
+            --app "$HEROKU_APP_NAME" \
+            --before "$RELEASE_BEFORE" \
+            --healthz "$APP_URL"
 
       # And this one checks what authors actually see. See the note on
       # PUBLIC_URL above: until the domain ownership is confirmed, a green

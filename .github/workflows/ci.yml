@@ -241,6 +241,23 @@ jobs:
           AUTHOR_DELETE_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
         run: python ci/check_author_delete.py
 
+      # The same fault one level down, and it was live: `proposal` has two NOT
+      # NULL children (proposal_note, publisher_proposal) and both delete paths
+      # were a bare db.session.delete(), so the admin Delete button 500'd for any
+      # proposal with a note, a share -- or an archive toggle, which writes a note
+      # itself. "Archive the junk now, purge it later" was the exact workflow that
+      # made the purge impossible. Reproduced against real PostgreSQL before the
+      # fix: NotNullViolation on proposal_note.proposal_id.
+      #
+      # It is also the storage recovery path: uploaded files live in the database,
+      # so deleting proposals is the only way to reclaim that space by hand.
+      #
+      # Same Postgres requirement, same reason as the check above it.
+      - name: Deleting a proposal works on one somebody has actually touched
+        env:
+          PROPOSAL_DELETE_TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/ci
+        run: python ci/check_proposal_delete.py
+
       # ======================================================================
       # RESPONSIVE / MOBILE AUDIT
       #

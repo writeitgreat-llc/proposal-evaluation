@@ -476,6 +476,22 @@ keeps it honest: it builds one author with a row in all 13 referencing tables an
 deletes them. Add a table that points at `author` and you must add it there too,
 child-first, or an admin button starts returning 500.
 
+`proposal` has the same shape one level down — `proposal_note` and
+`publisher_proposal` both carry `nullable=False` foreign keys to it — and it was
+**already broken in production** until 2026-08-05: both delete paths were a bare
+`db.session.delete(proposal)`, so the admin Delete button returned a 500 for any
+proposal carrying a note, a publisher share, or an archive toggle. The archive
+toggle is the trap: it writes a `ProposalNote` itself, so *archive the junk now
+and purge it later* was precisely the workflow that guaranteed the purge would
+fail. Bulk delete was worse — one commit at the end of the loop, so a single
+proposal with a note aborted the whole batch, deleted nothing, and still flashed
+"N proposal(s) deleted." `delete_proposals_and_dependents()` is now the order and
+`ci/check_proposal_delete.py` keeps it honest.
+
+That check is not only about a button. Uploaded files live in the database, so
+deleting proposals is the **only** way to reclaim that space by hand — a broken
+delete is a broken recovery path for the storage headroom check above it.
+
 Four gaps were found and closed this way on 5 August 2026 —
 `social_strategy.share_token` (unique + index), `proposal.content_hash` (index),
 and foreign keys on `proposal.author_id` and `marketing_module_data.author_id`.
@@ -534,10 +550,61 @@ phase, that deploy simply fails and the old site stays up.
 
 ## Monitoring
 
-Two independent things, and they answer different questions: `/healthz` tells you
-**whether the app is up**, Sentry tells you **what broke**. Neither replaces the
-other and neither is on by default — `/healthz` needs a monitor pointed at it,
-Sentry needs a `SENTRY_DSN` set.
+Three independent things, and they answer different questions: `/healthz` tells
+you **whether the app is up**, Sentry tells you **what broke**, and the storage
+headroom check tells you **what is about to break**. None replaces the others and
+none is on by default — `/healthz` needs a monitor pointed at it, Sentry needs a
+`SENTRY_DSN` set, and the headroom check needs `DATABASE_ALLOTMENT_BYTES` to
+match the plan you are actually on.
+
+### Database storage headroom
+
+Uploaded proposals, one-pager audio feedback and knowledge-base documents are
+stored **in the database** as `bytea`, so database storage is a resource this app
+can exhaust by doing its job. Nothing measured it until 2026-08-05.
+
+`check_database_headroom()` runs on the hourly background loop. Every tick it
+logs the measurement, whatever the level:
+
+```
+db.storage used=22.5MB allotment=64GB ratio=0.0003
+```
+
+Grep for `db.storage` to confirm it is alive. That line is deliberate: the two
+log alarms this account shipped in August 2026 were both silently broken — they
+searched for text that never appears — and a continuous measurement is the
+cheapest defence against a third.
+
+Over `DATABASE_HEADROOM_WARN_RATIO` (default `0.70`) it logs at ERROR, which
+Sentry captures, and emails `TEAM_EMAILS` **once a day**.
+
+| var | default | notes |
+|---|---|---|
+| `DATABASE_ALLOTMENT_BYTES` | `68719476736` (64 GB) | **Must match the current plan.** standard-0 is 64 GB. |
+| `DATABASE_HEADROOM_WARN_RATIO` | `0.70` | Drive it to `0.0000001` for one tick to prove the alarm fires, then unset it. |
+
+**Change `DATABASE_ALLOTMENT_BYTES` in the same change as any `pg:upgrade` or
+plan move.** There is no Heroku API this app can read for "how big is my plan",
+so a stale value reports healthy headroom against a plan you are no longer on —
+which is worse than no number at all. This app has already been caught by exactly
+that: it moved from essential-0 (1 GB) to standard-0 (64 GB) on 2026-08-04 and
+the in-code arithmetic about "~200 uploads away" stayed behind for a week.
+
+**Why 70% and not Heroku's own emails.** Heroku sends nothing until 100%, and its
+standard-tier enforcement only revokes `INSERT`/`CREATE`/`UPDATE` after a database
+has been over **150%** for **30 continuous days**. That is a generous ladder, not
+a cliff — but every rung of it arrives after the point where you would have wanted
+to know. See <https://devcenter.heroku.com/articles/heroku-postgres-over-plan-capacity>.
+
+**`/healthz` cannot cover this.** It proves liveness with `SELECT 1`, and Heroku's
+enforcement leaves `SELECT` working while blocking writes — so during a real
+storage outage the uptime monitors would stay green while every upload failed.
+That is the gap this check exists to fill, and it is why the check is not simply
+another field on `/healthz`.
+
+**Reclaiming space is not symmetric with filling it.** Deleting rows marks space
+reusable; it does not shrink what Heroku measures. That needs `VACUUM FULL`, which
+takes an exclusive lock — i.e. downtime. Plan for the alert, not the cleanup.
 
 ### `/healthz`
 
@@ -707,6 +774,19 @@ MIGRATION_TEST_DATABASE_URL=postgresql://localhost/wig_migcheck \
 
 It creates and drops its own private schema per scenario, so it never touches
 anything in `public`.
+
+The two delete checks take a Postgres URL the same way, and **need one to mean
+anything** — SQLite does not enforce foreign keys unless `PRAGMA foreign_keys` is
+on, so the SQLite leg cannot fail for the reason either check exists. Both say so
+loudly when the variable is unset:
+
+```bash
+createdb wig_delcheck
+AUTHOR_DELETE_TEST_DATABASE_URL=postgresql://localhost/wig_delcheck \
+  python3 ci/check_author_delete.py
+PROPOSAL_DELETE_TEST_DATABASE_URL=postgresql://localhost/wig_delcheck \
+  python3 ci/check_proposal_delete.py
+```
 
 Note for the marketing site: it needs **Python 3.10+** (`app/__init__.py` uses
 `str | None`). On a 3.9 machine the app-boot and route checks cannot run locally

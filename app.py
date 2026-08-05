@@ -1786,6 +1786,11 @@ class OnePagerSubmission(db.Model):
     # Reminder tracking
     reminder_1_sent_at = db.Column(db.DateTime)   # 48 h reminder
     reminder_2_sent_at = db.Column(db.DateTime)   # 96 h reminder
+    # Nudge for a submission with NO assignee. Deliberately a separate column
+    # from the two above: those record chasing a named reviewer, and reusing
+    # one of them here would suppress that reviewer's real 48h reminder the
+    # moment somebody finally picked the submission up.
+    unassigned_nudge_sent_at = db.Column(db.DateTime)
 
     author = db.relationship('Author', backref=db.backref('one_pager_submissions', lazy='dynamic'))
 
@@ -4611,6 +4616,19 @@ def check_reengagement_emails():
 REMINDER_1_AFTER_HOURS = 48
 REMINDER_2_AFTER_HOURS = 96
 
+# A submission nobody has been given. The reminder points above only ever fire
+# for an ASSIGNED one-pager, so before this existed an unassigned submission was
+# invisible to every chase in the app: the team got one notification the moment
+# it arrived and then silence, indefinitely. On 5 August that was five of the
+# six submitted one-pagers, four of them waiting since April.
+#
+# Re-nudged weekly rather than hourly, and never stamped-and-forgotten, because
+# the failure here is not "somebody was told once", it is "nobody ever picked it
+# up". A single nudge that gets archived reproduces exactly the silence this is
+# meant to end.
+UNASSIGNED_NUDGE_AFTER_HOURS = 48
+UNASSIGNED_RENUDGE_AFTER_HOURS = 24 * 7
+
 
 def check_one_pager_reminders():
     """Send 48 h and 96 h reminder emails to assigned team members who haven't left feedback.
@@ -4715,6 +4733,8 @@ def check_one_pager_reminders():
                 db.session.commit()
                 logger.info('One-pager backlog digest sent to %s covering %d submission(s)',
                             assignee_name, len(items))
+
+            _nudge_unassigned_one_pagers(now)
         except Exception as e:
             # The line below is what this failure looked like for 3.5 months:
             # one print an hour into a log nobody reads. capture_failure sends
@@ -4724,6 +4744,86 @@ def check_one_pager_reminders():
             capture_failure('reminders.one_pager_check',
                             f"One-pager reminder check error: {e}")
             print(f"One-pager reminder check error: {e}")
+
+
+def _nudge_unassigned_one_pagers(now):
+    """Chase submitted one-pagers that have no reviewer at all.
+
+    Runs inside check_one_pager_reminders()'s app context and its try/except,
+    so a failure here is reported and swallowed exactly like the rest -- one
+    bad row must not stop the assigned reminders going out.
+
+    Goes to TEAM_EMAILS rather than a named person on purpose: that is already
+    the address told when a one-pager ARRIVES, so this is the same
+    conversation continued rather than a new channel somebody has to know to
+    watch. Nobody is named because nobody has been given it yet -- that is the
+    whole point.
+    """
+    stale_before = now - timedelta(hours=UNASSIGNED_NUDGE_AFTER_HOURS)
+    renudge_before = now - timedelta(hours=UNASSIGNED_RENUDGE_AFTER_HOURS)
+    orphans = (OnePagerSubmission.query
+               .filter(OnePagerSubmission.status == 'submitted',
+                       OnePagerSubmission.assigned_to.is_(None),
+                       OnePagerSubmission.created_at < stale_before)
+               .order_by(OnePagerSubmission.created_at)
+               .all())
+    # Feedback without an assignee is possible (somebody reviewed it without
+    # the submission ever being formally assigned), and that one does not need
+    # chasing -- the author has heard back, which is the outcome this is for.
+    due = [s for s in orphans
+           if s.feedbacks.count() == 0
+           and (s.unassigned_nudge_sent_at is None
+                or s.unassigned_nudge_sent_at < renudge_before)]
+    if not due:
+        return
+
+    recipients = [e.strip() for e in TEAM_EMAILS if e.strip()]
+    if not recipients:
+        return
+    rows = []
+    for sub in due:
+        days = (now - sub.created_at).days
+        rows.append(
+            '<tr>'
+            f'<td style="padding:8px 14px 8px 0;">{sub.author.name}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{sub.created_at.strftime("%d %b %Y")}</td>'
+            f'<td style="padding:8px 14px 8px 0;white-space:nowrap;color:#666;">'
+            f'{days} day{"s" if days != 1 else ""}</td>'
+            f'<td style="padding:8px 0;"><a href="{APP_BASE_URL}/admin/one-pager/{sub.id}" '
+            f'style="color:#2D1B69;">Assign →</a></td>'
+            '</tr>'
+        )
+    count = len(due)
+    subject = (f"{count} one-pager{'s have' if count != 1 else ' has'} "
+               f"no reviewer assigned")
+    html_content = f"""<html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+    <div style="max-width:640px;margin:0 auto;padding:24px;">
+        <h2 style="color:#2D1B69;">{subject}</h2>
+        <p>These authors submitted a one-pager and nobody has been assigned to review it,
+        so no reminder is chasing anyone about them.</p>
+        <table style="border-collapse:collapse;margin:20px 0;font-size:0.95em;">
+            {''.join(rows)}
+        </table>
+        <p style="font-size:0.875em;color:#666;margin-top:1.5rem;">
+            This repeats weekly until each one has a reviewer. Once assigned, the
+            usual {REMINDER_1_AFTER_HOURS}h and {REMINDER_2_AFTER_HOURS}h reminders
+            take over.
+        </p>
+    </div></body></html>"""
+    ok = False
+    for to_email in recipients:
+        if send_email(to_email, subject, html_content):
+            ok = True
+    # Stamped only if at least one recipient took it. All-failed leaves the
+    # rows due, so the next hourly pass retries rather than losing them.
+    if not ok:
+        return
+    for sub in due:
+        sub.unassigned_nudge_sent_at = now
+    db.session.commit()
+    logger.info('Unassigned one-pager nudge sent to %d recipient(s) covering %d submission(s)',
+                len(recipients), count)
 
 
 def _send_one_pager_backlog_digest(to_email, assignee_name, items):
@@ -11742,6 +11842,7 @@ def run_migrations(strict=True):
     _add('one_pager_submission', 'reminder_1_sent_at TIMESTAMP')
     _add('one_pager_submission', 'reminder_2_sent_at TIMESTAMP')
     _add('one_pager_submission', 'confidentiality_acknowledged_at TIMESTAMP')
+    _add('one_pager_submission', 'unassigned_nudge_sent_at TIMESTAMP')
 
     # ── one_pager_feedback + social_strategy (new tables via create_all) ────────
     # No _add needed for brand-new tables.

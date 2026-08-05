@@ -32,7 +32,15 @@ What it pins:
      raises nothing, so the original `send(...); stamp; commit` recorded
      reminders that never left the building. For the digest that is
      unrecoverable -- the rows would read as reminded and the backlog would
-     never be mentioned to anybody again.
+     never be mentioned to anybody again;
+  5. a submission with NO reviewer is chased at all. Both reminder points only
+     ever fire for an ASSIGNED one-pager, so an unassigned one was invisible to
+     every chase in the app -- one notification on arrival, then silence. On
+     5 August that was five of the six submitted one-pagers, four since April.
+     It repeats weekly rather than once, because "somebody was told once" is
+     the failure being fixed, and it hands over cleanly to the reviewer
+     reminders the moment the submission is assigned;
+  6. nothing is chased before its threshold.
 """
 
 from __future__ import annotations
@@ -87,6 +95,7 @@ appmod.send_email = fake_send_email
 # The job resolves recipients through this map; pin it so the check does not
 # depend on TEAM_ROSTER in the environment.
 appmod.TEAM_MEMBER_EMAILS = {"Andy": "andy@example.test"}
+appmod.TEAM_EMAILS = ["team@example.test"]
 
 ASSIGNEE = "Andy"
 
@@ -178,6 +187,60 @@ with appmod.app.app_context():
     appmod.db.session.expire_all()   # job commits in its own context; re-read from the DB
     check(len(sent) == 1, f"and it is retried on the next pass (got {len(sent)})")
     check(lost.reminder_1_sent_at is not None, "stamped once the send succeeds")
+
+    print("\n5. A submission with NO reviewer is chased, weekly, and stops once assigned")
+    sent.clear()
+    orphan = seed(24 * 30, name="Orphaned Author")
+    orphan.assigned_to = None
+    orphan.assigned_at = None
+    orphan.created_at = datetime.utcnow() - timedelta(hours=24 * 30)
+    appmod.db.session.commit()
+
+    appmod.check_one_pager_reminders()
+    appmod.db.session.expire_all()
+    check(len(sent) == 1, f"unassigned submission produces one nudge (got {len(sent)})")
+    check(sent and "no reviewer assigned" in sent[0][1],
+          f"nudge subject says what is wrong (got {sent[0][1] if sent else 'nothing'})")
+    check(sent and sent[0][0] in appmod.TEAM_EMAILS,
+          "nudge goes to the team address, not a named reviewer")
+
+    sent.clear()
+    appmod.check_one_pager_reminders()
+    appmod.db.session.expire_all()
+    check(len(sent) == 0, f"not repeated on the next hourly pass (got {len(sent)})")
+
+    # Wind the stamp back beyond the re-nudge window.
+    orphan.unassigned_nudge_sent_at = (
+        datetime.utcnow() - timedelta(hours=appmod.UNASSIGNED_RENUDGE_AFTER_HOURS + 1))
+    appmod.db.session.commit()
+    sent.clear()
+    appmod.check_one_pager_reminders()
+    appmod.db.session.expire_all()
+    check(len(sent) == 1, f"re-nudged after the weekly window (got {len(sent)})")
+
+    # Assigning it must hand over to the normal reminder path, and must NOT be
+    # suppressed by the unassigned stamp -- the reason that stamp is its own
+    # column rather than a reuse of reminder_1_sent_at.
+    orphan.assigned_to = ASSIGNEE
+    orphan.assigned_at = datetime.utcnow() - timedelta(hours=50)
+    appmod.db.session.commit()
+    sent.clear()
+    appmod.check_one_pager_reminders()
+    appmod.db.session.expire_all()
+    check(len(sent) == 1, f"once assigned, the reviewer gets their own reminder (got {len(sent)})")
+    check(sent and "waiting for your feedback" in sent[0][1],
+          "and it is the reviewer reminder, not another team nudge")
+
+    print("\n6. A recent submission is not chased before the threshold")
+    sent.clear()
+    fresh_orphan = seed(1, name="Just Arrived")
+    fresh_orphan.assigned_to = None
+    fresh_orphan.assigned_at = None
+    fresh_orphan.created_at = datetime.utcnow() - timedelta(hours=1)
+    appmod.db.session.commit()
+    appmod.check_one_pager_reminders()
+    appmod.db.session.expire_all()
+    check(len(sent) == 0, f"a 1-hour-old unassigned submission is left alone (got {len(sent)})")
 
 if CHECK_DB.exists():
     CHECK_DB.unlink()

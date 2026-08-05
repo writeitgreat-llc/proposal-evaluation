@@ -35,8 +35,9 @@ What it pins:
      never be mentioned to anybody again;
   5. a submission with NO reviewer is chased at all. Both reminder points only
      ever fire for an ASSIGNED one-pager, so an unassigned one was invisible to
-     every chase in the app -- one notification on arrival, then silence. On
-     5 August that was five of the six submitted one-pagers, four since April.
+     every chase in the app -- one notification on arrival, then silence. A
+     production check on 5 August 2026 found this, rather than the reminders,
+     was where submissions were actually being lost.
      It repeats weekly rather than once, because "somebody was told once" is
      the failure being fixed, and it hands over cleanly to the reviewer
      reminders the moment the submission is assigned;

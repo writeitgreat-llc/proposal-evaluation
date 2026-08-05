@@ -4619,8 +4619,9 @@ REMINDER_2_AFTER_HOURS = 96
 # A submission nobody has been given. The reminder points above only ever fire
 # for an ASSIGNED one-pager, so before this existed an unassigned submission was
 # invisible to every chase in the app: the team got one notification the moment
-# it arrived and then silence, indefinitely. On 5 August that was five of the
-# six submitted one-pagers, four of them waiting since April.
+# it arrived and then silence, indefinitely. A production check on 5 August 2026
+# found that this, and not the reminders, was where submissions were actually
+# being lost -- most of the open ones had no reviewer and had sat for months.
 #
 # Re-nudged weekly rather than hourly, and never stamped-and-forgotten, because
 # the failure here is not "somebody was told once", it is "nobody ever picked it

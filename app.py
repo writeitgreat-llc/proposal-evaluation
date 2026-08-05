@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort, has_request_context
+from flask import Flask, Request, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -269,6 +269,46 @@ if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
     app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+
+# ── Form-field memory ceiling ─────────────────────────────────────────────────
+# MAX_CONTENT_LENGTH above bounds the whole body. This bounds the part of it
+# that gets buffered IN MEMORY as form fields — uploaded files spool to a temp
+# file and are still bounded only by MAX_CONTENT_LENGTH, and JSON bodies are
+# not affected at all (both verified by request, not assumed).
+#
+# Why it is written down rather than left to the library: Werkzeug 3.0 had no
+# such limit (None), and Werkzeug 3.1 introduced a 500,000-byte default. The
+# 2026-08-05 bump from 3.0.1 to 3.1.8 therefore silently narrowed this app from
+# "16MB of form text" to "500KB", with no line of ours changing. That is a
+# reasonable default and we are not fighting it — but a limit that moves when a
+# dependency moves is a limit nobody owns, so here is ours, slightly looser than
+# upstream's and still two orders of magnitude below what a real form sends.
+#
+# The number: every textarea in templates/ is a short-answer field (problem,
+# reader, why_you, bio, admin_notes, marketing_strategy). The largest realistic
+# submission is a few KB. 1MB is generous headroom; 16 request threads (Procfile
+# `--threads 16`) can therefore buffer at most 16MB of form text between them on
+# a 512MB dyno. Before the bump the same arithmetic allowed 256MB, which is the
+# resource exhaustion PYSEC-2026-3417 describes.
+#
+# THE TRAP: `app.config['MAX_FORM_MEMORY_SIZE']` does NOT work here. That config
+# key landed in Flask 3.1; this app pins Flask 3.0.0, which never reads it, so
+# setting it looks correct and silently does nothing (checked: the effective
+# limit stays at Werkzeug's 500,000). Setting the attribute on the request class
+# is what actually takes effect. If Flask is ever bumped past 3.1, prefer the
+# config key and delete this class.
+#
+# One consequence worth knowing: /api/evaluate wraps its body in a broad
+# try/except, so a form body over this limit surfaces as its generic failure
+# message at HTTP 200 rather than the careful size message it gives an
+# oversized FILE. Reachable only by a caller sending ~1MB of text into a
+# short-answer field, which is why it is documented rather than special-cased.
+class _AppRequest(Request):
+    max_form_memory_size = 1 * 1024 * 1024
+
+
+app.request_class = _AppRequest
 
 # ── Connection pool ───────────────────────────────────────────────────────────
 # MUST stay above `db = SQLAlchemy(app)` below. Flask-SQLAlchemy reads this

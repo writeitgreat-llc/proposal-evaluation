@@ -6,9 +6,27 @@ httpx==0.28.1
 xhtml2pdf==0.2.16
 python-docx==1.1.0
 pypdf==6.14.2
-Werkzeug==3.0.1
+# Werkzeug 3.1.8, not 3.0.x. Clears six advisories: the debugger RCE
+# (PYSEC-2026-2043), the multipart resource exhaustion that this app is
+# genuinely exposed to because /api/evaluate parses uploads
+# (PYSEC-2026-3417), and four Windows-only safe_join issues that need 3.1.6
+# (PYSEC-2026-2044/2045/2046/2320) — so 3.0.6 would NOT have been enough.
+#
+# 3.0.x -> 3.1.x is a MINOR step and it changes one thing this app can feel:
+# Werkzeug 3.1 gives Request.max_form_memory_size a 500,000-byte default where
+# 3.0 had None. That caps NON-FILE form fields only; uploaded files are still
+# bounded solely by MAX_CONTENT_LENGTH, and JSON bodies are unaffected. app.py
+# now pins the value explicitly next to MAX_CONTENT_LENGTH so it is our number
+# rather than an upstream default that can move again — read the note there
+# before changing this pin.
+Werkzeug==3.1.8
 itsdangerous==2.2.0
-gunicorn==21.2.0
+# gunicorn 23.0.0 matches what writeitgreat-website and wig-dashboard already
+# run. Clears the two Transfer-Encoding request-smuggling advisories
+# (PYSEC-2026-1433/1434), which mattered here more than the CVSS suggests: this
+# app serves a public admin panel, so smuggling is a route-restriction bypass
+# primitive rather than a theoretical parsing quirk.
+gunicorn==23.0.0
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 pyotp==2.9.0

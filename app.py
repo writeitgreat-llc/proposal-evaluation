@@ -2376,12 +2376,82 @@ PDF_TIME_BUDGET_SECONDS = 15.0
 # sample chapters -- "3,000-10,000 words of your strongest writing" -- never a
 # full manuscript. 5 MB is roughly 8x the largest real upload.
 #
-# The reason this is not simply "whatever the parser can handle": uploads are
-# stored as rows in a 1 GB database, and when Heroku Postgres reaches that
-# ceiling it revokes INSERT across the board -- no signups, no proposals, no
-# tracking, until someone reclaims space. At 16 MB per file that is ~60 uploads
-# away; at 5 MB it is ~200. Storage is the binding constraint here, not CPU.
+# THE STORAGE ARITHMETIC THIS COMMENT USED TO CARRY IS DEAD. It said uploads are
+# "stored as rows in a 1 GB database" and that 5 MB files put the INSERT-revoking
+# ceiling "~200 uploads away". Both numbers were true when written on 2026-07-30
+# and stopped being true on 2026-08-04, when this app's DATABASE_URL moved to the
+# standard-0 add-on `wig-portal-db-standard`: 64 GB, not 1 GB. The essential-0 the
+# old numbers described is still ATTACHED as HEROKU_POSTGRESQL_TEAL and takes no
+# writes. Do not reason forward from the old figures -- ~200 became ~13,000, and
+# Heroku's standard-tier enforcement is itself far softer than the revocation this
+# comment described (see check_database_headroom() for the real ladder).
+#
+# So storage is NO LONGER why this cap is 5 MB, and if you are here to raise it,
+# storage is not the argument against you. What remains:
+#
+#   * Memory. Parsing holds the whole document in RAM on a 512MB dyno, which is
+#     why _UPLOAD_PARSE_SLOTS is 2 rather than the thread count.
+#   * Honesty to the author. The portal asks for a proposal plus 1-3 sample
+#     chapters, never a full manuscript, so a 16 MB upload is nearly always a
+#     mistake worth naming at the door rather than accepting and parsing.
 EVALUATE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+# What a signed-in TEAM MEMBER may upload: knowledge-base documents and one-pager
+# audio feedback. Until this constant existed those two routes had no limit of
+# their own at all -- only MAX_CONTENT_LENGTH -- and they are not a small corner:
+# knowledge_base_document is the largest table in this database, larger than the
+# proposal table, and the single biggest stored object in the app is a training
+# document rather than any author's manuscript.
+#
+# Deliberately much higher than EVALUATE_MAX_UPLOAD_BYTES, and NOT a security
+# control. Both routes are @team_required, so this is not defending against an
+# attacker -- a colleague who can upload here can also delete the table. It is
+# there so that an accidental drag of the wrong file is refused with a sentence
+# about size, instead of silently becoming the largest row in production.
+#
+# 12 MB rather than 16: MAX_CONTENT_LENGTH bounds the WHOLE multipart body, so a
+# limit set at 16 would be unreachable -- the title and module fields ride along
+# and Werkzeug would raise 413 for the request before this check could name the
+# file. 12 leaves room for the rest of the form and stays above the largest
+# training document anyone has actually uploaded.
+ADMIN_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
+
+# The SAME column, Proposal.original_file, through a different door: /api/submit
+# is the API-key'd integration endpoint and has always had its own 10 MB limit,
+# against /api/evaluate's 5 MB. Named rather than left inline so that the
+# divergence is visible in one place instead of being discovered by grepping for
+# a magic number, and so the next person to reason about "how big can a stored
+# proposal be" gets 10 MB rather than the 5 MB the comment above implies.
+#
+# NOT unified to 5 MB in this change. This endpoint has an external caller that
+# nobody here can redeploy, and silently tightening a limit it was built against
+# would turn working integrations into 400s for reasons the caller cannot see.
+# Worth doing deliberately, with notice, rather than as a drive-by.
+SUBMIT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _uploaded_size(file):
+    """Bytes in an uploaded file, measured from the stream, or None if unmeasurable.
+
+    Seek-to-end rather than len(file.read()): the whole point is to refuse an
+    oversized upload WITHOUT first materialising it, so that the size check is
+    not itself the memory event it exists to prevent.
+
+    Returns None rather than raising when the stream will not seek, and every
+    caller treats None as "cannot tell, allow it". That is the right default
+    here and not laziness: MAX_CONTENT_LENGTH is still enforced by Werkzeug
+    underneath, so an unmeasurable stream is bounded, just less tightly. Failing
+    closed instead would reject valid uploads on an unmeasurable stream, which
+    is a worse trade for a limit that is about accidents rather than attackers.
+    """
+    try:
+        file.seek(0, 2)
+        size = file.tell()
+        file.seek(0)
+        return size
+    except Exception:
+        return None
+
 
 # Refuses page-count bombs, and it has to be checked before reader.pages is
 # touched even once. pypdf's reader.pages is a lazy list whose __iter__ calls
@@ -5234,6 +5304,140 @@ def _claim_stuck_proposal(proposal, now, lease_before, give_up):
     return updated == 1
 
 
+# ── Database storage headroom ────────────────────────────────────────────────
+#
+# The allotment of the CURRENT plan, in bytes. standard-0 is 64 GB.
+#
+# It is a config var and not a lookup, because Heroku exposes no API for "how
+# big is this plan" that this app could read at runtime, and a hardcoded number
+# that survives a plan change is worse than no number: it would report healthy
+# headroom against a plan the app is no longer on. CHANGE THIS IN THE SAME
+# CHANGE AS ANY pg:upgrade, and see docs/DEPLOYMENT.md.
+DATABASE_ALLOTMENT_BYTES = int(
+    os.environ.get('DATABASE_ALLOTMENT_BYTES') or 64 * 1024 * 1024 * 1024)
+
+# Warn at 70% of the allotment. Heroku's own first warning email does not arrive
+# until 100%, and its enforcement ladder does not revoke writes until a database
+# has been over 150% for 30 continuous days -- so this is not a duplicate of
+# Heroku's alerting, it is the part that arrives while there is still room to
+# act. Tunable so it can be driven DOWN temporarily to prove the alarm fires;
+# an alarm nobody has ever seen fire is not an alarm.
+DATABASE_HEADROOM_WARN_RATIO = float(
+    os.environ.get('DATABASE_HEADROOM_WARN_RATIO') or 0.70)
+
+# One email a day, not one an hour. The loop below ticks hourly and a storage
+# problem does not clear on its own, so without this the first day of a real
+# alert would be 24 identical emails and the second day would be filtered.
+_DB_HEADROOM_ALERT_EVERY = 24 * 3600
+_last_db_headroom_alert = 0.0
+
+
+def database_size_bytes():
+    """Bytes on disk for the current database, or None where that is not askable.
+
+    pg_database_size() rather than summing pg_total_relation_size() over
+    pg_class: the sum omits everything that is not a relation the query can see
+    -- other schemas, indexes on system catalogues, and (the one that matters
+    here) the TOAST tables where every LargeBinary value in this app actually
+    lives. Heroku measures the plan against the former, so this must too.
+
+    Returns None on SQLite, which is every laptop and every CI job. Callers
+    render that as "unknown" rather than zero -- a storage panel reading 0 B on
+    a developer's machine is the kind of thing that gets believed in production.
+    """
+    if db.engine.dialect.name != 'postgresql':
+        return None
+    return db.session.execute(
+        text('SELECT pg_database_size(current_database())')).scalar()
+
+
+def check_database_headroom():
+    """Measure database storage against the plan, and say so once a day if low.
+
+    Runs on the shared loop below, so like everything else there it must be
+    quick and must never raise: one uncaught exception here would kill the
+    thread that also drains the analytics outbox, sweeps stuck evaluations and
+    sends every reminder email.
+
+    The `with app.app_context()` is not decoration, and it is inside this
+    function rather than at the call site for the same reason the two jobs
+    beside it own theirs: a background thread has no application context, and
+    the one-pager reminders spent their whole existence raising "Working outside
+    of application context" before a single email was sent, silently, because
+    the context lived somewhere that did not cover them.
+
+    WHY THIS EXISTS AT ALL, given the database is a rounding error against its
+    allotment: nothing measured it. Not one line in this repo called
+    pg_database_size() before this, `/healthz` runs `SELECT 1` and so stays
+    GREEN through a disk-full outage -- reads keep working when writes stop, so
+    the uptime monitors would report the portal healthy while every upload
+    failed -- and Sentry only speaks after authors are already seeing errors,
+    throttled to 3 events an hour for the single repeating fingerprint such an
+    outage produces. _integration/MONITORING_RUNBOOK.md lists this under "what
+    is still invisible" and defers it. This is that item.
+
+    The INFO line is not decoration. It runs on every tick regardless of the
+    threshold, so the measurement is in the logs continuously and a silently
+    broken check looks different from a healthy one. Two log alarms on this
+    account have already shipped searching for text that never appears; the
+    defence against a third is a line somebody can grep for today.
+    """
+    global _last_db_headroom_alert
+    with app.app_context():
+        try:
+            used = database_size_bytes()
+            if used is None:
+                return
+            ratio = used / DATABASE_ALLOTMENT_BYTES if DATABASE_ALLOTMENT_BYTES else 0.0
+            used_mb = used / (1024 * 1024)
+            allot_gb = DATABASE_ALLOTMENT_BYTES / (1024 * 1024 * 1024)
+            logger.info('db.storage used=%.1fMB allotment=%.0fGB ratio=%.4f',
+                        used_mb, allot_gb, ratio)
+
+            if ratio < DATABASE_HEADROOM_WARN_RATIO:
+                return
+            now = time.time()
+            if now - _last_db_headroom_alert < _DB_HEADROOM_ALERT_EVERY:
+                return
+            _last_db_headroom_alert = now
+
+            subject = f'[Author portal] Database is {ratio * 100:.0f}% full'
+            # logger.error and not capture_failure: capture_failure reads the
+            # live exception off sys.exc_info() and there is no exception here.
+            # ERROR is what init_sentry() was told to capture, so this reaches
+            # Sentry on its own.
+            logger.error('Database storage at %.0f%% of allotment (%.1fMB of %.0fGB)',
+                         ratio * 100, used_mb, allot_gb)
+            html = (
+                "<html><body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">"
+                "<div style='max-width:640px;margin:0 auto;padding:1.5rem;'>"
+                f"<h2 style='margin-top:0;'>The author portal database is {ratio * 100:.0f}% full</h2>"
+                f"<p>{used_mb:,.0f} MB used of {allot_gb:,.0f} GB.</p>"
+                "<p style='color:#555;'>Nothing is broken yet and authors are unaffected. This is "
+                "the early warning: Heroku does not email about this until 100%, and does not "
+                "restrict the database until it has been over 150% for 30 days.</p>"
+                "<p style='color:#555;'>Uploaded proposals, one-pager audio feedback and knowledge "
+                "base documents are stored in the database itself, so those are the things to look "
+                "at first. Deleting them frees space for reuse but does not shrink the measured "
+                "figure &mdash; that needs a VACUUM FULL, which takes the database offline.</p>"
+                "<p style='font-size:0.85em;color:#888;margin-top:1.5rem;'>Automated message from "
+                "the author portal. One per day while this lasts.</p></div></body></html>")
+            sent = False
+            for addr in TEAM_EMAILS:
+                addr = addr.strip()
+                if addr and send_email(addr, subject, html):
+                    sent = True
+            if not sent:
+                # Same reason as the stuck sweep: send_email() returns False
+                # rather than raising when SMTP is unconfigured, so without this
+                # an undelivered alert is indistinguishable from a healthy
+                # database.
+                logger.error('Database headroom alert NOT SENT (send_email returned False for '
+                             'every address in TEAM_EMAILS) - check SMTP_USER / SMTP_PASSWORD.')
+        except Exception as e:
+            capture_failure('ops.db_headroom', f'Database headroom check failed: {e}')
+
+
 def _start_reengagement_thread():
     """Background thread that checks re-engagement and one-pager reminder emails every hour."""
     import time
@@ -5264,6 +5468,10 @@ def _start_reengagement_thread():
                 next_email_check = time.time() + 3600
                 check_reengagement_emails()
                 check_one_pager_reminders()
+                # Shares the hourly tick rather than taking one of its own: it
+                # is a single scalar query, and its own email is rate-limited to
+                # one a day internally, so the cadence costs nothing.
+                check_database_headroom()
             time.sleep(120)
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
@@ -8114,13 +8322,13 @@ def api_evaluate():
         # Size before type, and measured from the stream rather than after
         # read(), so an oversized upload is refused without first being
         # materialised as bytes. Applies to every accepted format, since the
-        # constraint being protected is database storage, not the parser.
-        try:
-            file.seek(0, 2)
-            upload_size = file.tell()
-            file.seek(0)
-        except Exception:
-            upload_size = None
+        # constraint being protected is memory, not the parser.
+        #
+        # This was the only cap in the file when it was written, so it was
+        # inline. It is now one of four, and _uploaded_size() is the shared
+        # measurement -- identical behaviour, including returning None on a
+        # stream that will not seek.
+        upload_size = _uploaded_size(file)
         if upload_size is not None and upload_size > EVALUATE_MAX_UPLOAD_BYTES:
             return jsonify({
                 'success': False,
@@ -8556,12 +8764,18 @@ def api_submit():
         if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.docx') or filename_lower.endswith('.doc')):
             return _json({'success': False, 'error': 'Only PDF and Word documents are accepted.'}, 400)
 
-        file_bytes = file.read()
-
-        # 10 MB limit for external submissions
-        if len(file_bytes) > 10 * 1024 * 1024:
+        # 10 MB limit for external submissions, measured from the stream BEFORE
+        # read(). It used to be `len(file.read()) > 10MB`, which rejected the
+        # same uploads but only after materialising them: a 16 MB body (the
+        # MAX_CONTENT_LENGTH ceiling) became 16 MB of dyno memory before the
+        # refusal, on a 512MB dyno that boots at ~140MB and can be answering
+        # sixteen requests at once. The check that exists to bound the work was
+        # doing the work first.
+        upload_size = _uploaded_size(file)
+        if upload_size is not None and upload_size > SUBMIT_MAX_UPLOAD_BYTES:
             return _json({'success': False, 'error': 'File size must be under 10 MB.'}, 400)
 
+        file_bytes = file.read()
         file.seek(0)
 
         # --- Extract text ---
@@ -9668,13 +9882,53 @@ def resend_author_email(submission_id):
     return redirect(url_for('admin_proposal_detail', submission_id=submission_id))
 
 
+def delete_proposals_and_dependents(proposal_ids):
+    """Delete proposals and the two tables that point at them, children first.
+
+    THE BUTTON THIS FIXES DID NOT WORK. Both delete paths were a bare
+    `db.session.delete(proposal)`, and two tables carry a NOT NULL foreign key to
+    `proposal`: proposal_note and publisher_proposal. With no `cascade=` anywhere
+    in this codebase -- the same fact delete_author_and_dependents() is built
+    around -- SQLAlchemy's default is to UPDATE those children's proposal_id to
+    NULL, which the NOT NULL constraint rejects. The admin got a bare "Server
+    error" page and the proposal stayed.
+
+    That is not an edge case, it is the normal case. A ProposalNote is written on
+    every status change, every note, and every ARCHIVE TOGGLE -- so "archive the
+    junk now, purge it later" was precisely the workflow that guaranteed the
+    purge would fail, and only a proposal nobody had ever touched could be
+    deleted at all.
+
+    Bulk delete had the same fault plus one of its own: it looped delete() and
+    committed once at the end, so a single proposal with a note aborted the whole
+    batch and removed nothing, while still flashing "N proposal(s) deleted."
+
+    Bulk Query.delete() rather than per-row ORM deletes, matching
+    delete_author_and_dependents(): it is one statement per table regardless of
+    selection size, and it does not emit the nullify UPDATE that caused the bug.
+    synchronize_session=False for the same reason it is used there -- nothing
+    reads these objects again in this request, and matching the session state is
+    wasted work at best.
+
+    Does NOT commit. The callers commit, so a failure anywhere leaves the whole
+    delete rolled back rather than half-applied.
+    """
+    if not proposal_ids:
+        return
+    ProposalNote.query.filter(
+        ProposalNote.proposal_id.in_(proposal_ids)).delete(synchronize_session=False)
+    PublisherProposal.query.filter(
+        PublisherProposal.proposal_id.in_(proposal_ids)).delete(synchronize_session=False)
+    Proposal.query.filter(Proposal.id.in_(proposal_ids)).delete(synchronize_session=False)
+
+
 @app.route('/admin/proposal/<submission_id>/delete', methods=['POST'])
 @team_required
 def admin_delete_proposal(submission_id):
     """Delete a proposal"""
     proposal = Proposal.query.filter_by(submission_id=submission_id).first_or_404()
     title = proposal.book_title
-    db.session.delete(proposal)
+    delete_proposals_and_dependents([proposal.id])
     db.session.commit()
     flash(f'Proposal "{title}" has been deleted.', 'success')
     return redirect(url_for('admin_dashboard'))
@@ -9720,8 +9974,7 @@ def admin_bulk_action():
 
     if action == 'delete':
         count = len(proposals)
-        for p in proposals:
-            db.session.delete(p)
+        delete_proposals_and_dependents([p.id for p in proposals])
         db.session.commit()
         flash(f'{count} proposal(s) deleted.', 'success')
     elif action == 'archive':
@@ -11151,6 +11404,16 @@ def admin_one_pager_add_feedback(submission_id):
         if not audio_file:
             flash('No audio file received.', 'error')
             return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+        # Before read(). A voice note is normally well under a megabyte; this
+        # only ever fires on a recording left running or the wrong file picked.
+        audio_size = _uploaded_size(audio_file)
+        if audio_size is not None and audio_size > ADMIN_UPLOAD_MAX_BYTES:
+            flash(
+                f'That recording is {audio_size / 1024 / 1024:.1f} MB and the limit is '
+                f'{ADMIN_UPLOAD_MAX_BYTES // (1024 * 1024)} MB. Please re-record it or '
+                'leave written feedback instead.',
+                'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
         fb.audio_data = audio_file.read()
         fb.audio_mime_type = audio_file.mimetype or 'audio/webm'
     else:
@@ -11409,6 +11672,18 @@ def admin_knowledge_base_upload():
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
     if ext not in ('pdf', 'docx', 'txt', 'doc'):
         flash('Only PDF, Word, and TXT files are supported.', 'error')
+        return redirect(url_for('admin_knowledge_base'))
+
+    # Before read(), for the reason given on _uploaded_size(): this row is stored
+    # whole in the database and this table is the largest one in it.
+    upload_size = _uploaded_size(file)
+    if upload_size is not None and upload_size > ADMIN_UPLOAD_MAX_BYTES:
+        flash(
+            f'That file is {upload_size / 1024 / 1024:.1f} MB and the limit is '
+            f'{ADMIN_UPLOAD_MAX_BYTES // (1024 * 1024)} MB. Knowledge base documents are '
+            'stored in the database — if this one is that large it is probably a scan '
+            'rather than a text document.',
+            'error')
         return redirect(url_for('admin_knowledge_base'))
 
     file_bytes = file.read()

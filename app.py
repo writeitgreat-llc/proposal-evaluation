@@ -983,10 +983,9 @@ WOODPECKER_BASE = os.environ.get('WOODPECKER_BASE', 'https://api.woodpecker.co/r
 # or not a valid non-empty string→string object, the built-in roster below is
 # used unchanged, so existing deployments keep working with zero config.
 _DEFAULT_TEAM_MEMBER_EMAILS = {
-    'Andy':     'andy@writeitgreat.com',
-    'Virginia': 'virginia@writeitgreat.com',
-    'Ray':      'ray@writeitgreat.com',
-    'Anna':     'anna@writeitgreat.com',
+    'Andy': 'andy@writeitgreat.com',
+    'Ray':  'ray@writeitgreat.com',
+    'Anna': 'anna@writeitgreat.com',
 }
 
 

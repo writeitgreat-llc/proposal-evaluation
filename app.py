@@ -18,12 +18,13 @@ import traceback
 import threading
 import requests as http_requests
 from io import BytesIO
-# `timezone` is imported for /healthz and, for now, only for /healthz. Every
-# model column and every comparison in this file is NAIVE UTC (datetime.utcnow),
+# `timezone` is imported for /healthz and for the lockout helpers _utcnow /
+# _naive (which strip tzinfo before anything reaches a column). Every model
+# column and every comparison in this file is NAIVE UTC (datetime.utcnow),
 # and mixing the two raises "can't compare offset-naive and offset-aware
 # datetimes" at runtime — see the note at the reengagement cutoff below. Use
 # datetime.now(timezone.utc) for values that leave the app as text; keep using
-# datetime.utcnow() for anything that touches a column.
+# datetime.utcnow() (or _utcnow) for anything that touches a column.
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -1391,7 +1392,152 @@ ROLE_MEMBER = 'member'
 ROLE_CHOICES = [(ROLE_ADMIN, 'Admin'), (ROLE_MEMBER, 'Member')]
 
 
-class AdminUser(UserMixin, db.Model):
+# ── Sign-in lockout, shared by all three account types ──────────────────────
+#
+# Semantics ported from the marketing site's admin lockout (already debugged
+# against real Postgres there). The numbers matter less than the shape: what
+# a lockout buys is a ceiling on guesses per day, which is the whole
+# difference between "a stranger can try keys until one works" and "a
+# stranger cannot".
+#
+# The ladder is CAPPED on purpose. The cost of a lockout lands on the real
+# account holder, not the attacker: anyone who knows a sign-in address can
+# hold that account locked by failing on purpose, so an unbounded lock is a
+# permanent off-switch handed to a stranger. Every lock expires, and
+# /admin/team/<id>/unlock clears one immediately.
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_LADDER_MINUTES = (15, 30, 60)
+
+# A mistyped password on a Tuesday and another one three weeks later are not
+# "two strikes" under any reading a human would recognise. Without decay the
+# ladder only ever punishes the legitimate user — an attacker guesses
+# continuously and so never benefits from forgetting, while an author who
+# fat-fingers twice a year would climb it over a career.
+_ATTEMPT_DECAY = timedelta(hours=12)
+
+
+def _utcnow():
+    """Naive UTC — what every plain db.DateTime column in this file stores.
+
+    Writing an AWARE datetime into one of these columns is a trap that cost a
+    real bug on the marketing site: psycopg2 sends the offset, and Postgres
+    casts the value into `timestamp without time zone` using the SESSION's
+    TimeZone — on a non-UTC session an aware 18:15 UTC lands in the table
+    hours in the past. Read back and re-stamped as UTC, a fifteen-minute
+    lockout was already expired the instant it was written, and the sixth
+    wrong password reset the counter instead of refusing. SQLite stores the
+    value unchanged, so the bug passes every local run and every CI test;
+    ci/check_author_lockout.py asserts the naive WRITE directly for exactly
+    that reason.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _naive(value):
+    """A column value as naive UTC, whichever way it was written.
+
+    The read side of _utcnow, and deliberately tolerant: a lockout must not
+    depend on which code wrote the row it is reading.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+class LoginLockoutMixin:
+    """Failed-attempt lockout: one copy of the columns and the arithmetic for
+    AdminUser, Author and Publisher, so the semantics cannot drift apart per
+    audience.
+
+    SQLAlchemy copies plain Columns declared on a mixin onto each mapped
+    subclass, so every inheriting model gets its own four columns — but each
+    TABLE still needs its own _add() lines in run_migrations().
+    """
+
+    # Nullable with default=0, matching the admin_user precedent these
+    # columns replace: every increment below is `(x or 0) + 1`, so a
+    # pre-migration NULL can never poison the arithmetic (the
+    # create_all-vs-_add NULL trap documented on Proposal.evaluation_attempts).
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime)
+    last_failed_login_at = db.Column(db.DateTime)
+    # How many times this account has gone all the way to locked. Drives the
+    # ladder; cleared by a completed sign-in or by _ATTEMPT_DECAY of quiet.
+    lockout_count = db.Column(db.Integer, default=0)
+
+    def is_locked(self, now=None):
+        return self.lock_seconds_remaining(now) > 0
+
+    def lock_seconds_remaining(self, now=None):
+        until = _naive(self.locked_until)
+        if until is None:
+            return 0
+        return max(0, int((until - (_naive(now) or _utcnow())).total_seconds()))
+
+    def lock_minutes_remaining(self, now=None):
+        """Rounded UP, so "1 minute" never means "actually, try again now"."""
+        seconds = self.lock_seconds_remaining(now)
+        return -(-seconds // 60) if seconds else 0
+
+    def record_failed_login(self, now=None):
+        """Count one wrong credential. True when THIS attempt locked the account.
+
+        Only ever counts against an account that is not currently locked, so
+        a locked_until in the past means the last lockout has served its time
+        and the counter starts again from zero. Leaving it at five instead is
+        the bug the old AdminUser version shipped with: every later mistype
+        cost another full lockout, so the account never actually came back —
+        it just paused between punishments.
+        """
+        now = _naive(now) or _utcnow()
+
+        # Load-bearing rather than tidy: the routes check is_locked() before
+        # the password, but with 16 threads a burst of guesses can all pass
+        # that check before the fifth one commits. Each straggler then
+        # arrives here past the threshold and would set ANOTHER lock,
+        # climbing a rung of the ladder per request — an attacker choosing
+        # how long the real user stays locked out, which is precisely what
+        # the capped ladder exists to prevent.
+        if self.is_locked(now):
+            return False
+
+        expired_at = _naive(self.locked_until)
+        last_failure = _naive(self.last_failed_login_at)
+
+        if expired_at is not None and expired_at <= now:
+            # The lock has served its time: a fresh five. The RUNG is kept,
+            # so the next lockout still climbs the ladder.
+            self.failed_login_attempts = 0
+            self.locked_until = None
+        if last_failure is not None and now - last_failure > _ATTEMPT_DECAY:
+            # Long quiet: forget the strikes AND the rung on the ladder.
+            self.failed_login_attempts = 0
+            self.lockout_count = 0
+
+        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
+        self.last_failed_login_at = now
+        if self.failed_login_attempts < _MAX_FAILED_ATTEMPTS:
+            return False
+
+        rung = min(self.lockout_count or 0, len(_LOCKOUT_LADDER_MINUTES) - 1)
+        self.locked_until = now + timedelta(minutes=_LOCKOUT_LADDER_MINUTES[rung])
+        self.lockout_count = (self.lockout_count or 0) + 1
+        return True
+
+    def record_successful_login(self):
+        """Clear all four lockout fields. Call ONLY where a sign-in actually
+        completes — for staff that means after TOTP, never merely after the
+        password matches (see admin_login for why that distinction is the
+        whole 2FA guarantee)."""
+        self.failed_login_attempts = 0
+        self.locked_until = None
+        self.lockout_count = 0
+        self.last_failed_login_at = None
+
+
+class AdminUser(UserMixin, LoginLockoutMixin, db.Model):
     """Admin user model for secure dashboard access"""
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -1407,9 +1553,7 @@ class AdminUser(UserMixin, db.Model):
     totp_secret = db.Column(db.String(64))
     totp_enabled = db.Column(db.Boolean, default=False)
 
-    # Login security
-    failed_login_attempts = db.Column(db.Integer, default=0)
-    locked_until = db.Column(db.DateTime)
+    # Login security columns and methods come from LoginLockoutMixin.
 
     # SSO jump from the company dashboard (see /sso/consume).
     # dashboard_email is an explicit identity override: the dashboard may know
@@ -1428,20 +1572,6 @@ class AdminUser(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
-
-    def is_locked(self):
-        if self.locked_until and datetime.utcnow() < self.locked_until:
-            return True
-        return False
-
-    def record_failed_login(self):
-        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
-        if self.failed_login_attempts >= 5:
-            self.locked_until = datetime.utcnow() + timedelta(minutes=15)
-
-    def record_successful_login(self):
-        self.failed_login_attempts = 0
-        self.locked_until = None
 
     def generate_reset_token(self):
         self.password_reset_token = uuid.uuid4().hex
@@ -1526,7 +1656,7 @@ class ConsumedSsoToken(db.Model):
     seen_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-class Author(UserMixin, db.Model):
+class Author(UserMixin, LoginLockoutMixin, db.Model):
     """Author account for the public portal"""
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(200), unique=True, nullable=False)
@@ -1738,7 +1868,7 @@ class ProposalNote(db.Model):
     proposal = db.relationship('Proposal', backref=db.backref('activity_log', lazy='dynamic', order_by='ProposalNote.created_at.desc()'))
 
 
-class Publisher(UserMixin, db.Model):
+class Publisher(UserMixin, LoginLockoutMixin, db.Model):
     """External publisher/editor account"""
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(200), unique=True, nullable=False)
@@ -2294,14 +2424,25 @@ from functools import wraps
 from urllib.parse import urlparse
 
 def _safe_next(next_url):
-    """Return next_url only if it is a relative path on this app.
+    """Return next_url only if it is a root-relative path on this app.
     Rejects absolute URLs (open-redirect prevention) and any URL pointing
     to a different host — including stale references to the old Heroku domain."""
     if not next_url:
         return None
+    # A backslash is rejected outright: several browsers fold "/\" into "//"
+    # when resolving the Location header, which turns an apparently relative
+    # path into a protocol-relative jump to another host. urlparse does not,
+    # so it would wave "/\evil.com" straight through as a bare path.
+    if '\\' in next_url:
+        return None
     parsed = urlparse(next_url)
-    # Accept only paths with no scheme/netloc (i.e. relative URLs)
+    # Accept only paths with no scheme/netloc (i.e. relative URLs)...
     if parsed.scheme or parsed.netloc:
+        return None
+    # ...and require a single leading slash. "//evil.com" is caught by the
+    # netloc test above, but requiring exactly one makes the guarantee explicit
+    # rather than resting on how a given parser splits a protocol-relative URL.
+    if not next_url.startswith('/') or next_url.startswith('//'):
         return None
     return next_url
 
@@ -8741,6 +8882,23 @@ _coach_feedback_rate = {}
 _social_rate = {}
 _social_peer_rate = {}
 
+# Sign-in gets its own pair, same two-key shape and same reasoning as the
+# register buckets above: the peer bucket stays deliberately loose and exists
+# only to bound a direct-to-origin flood, the per-visitor control is keyed on
+# (peer, client_ip()). ONE pair shared by the author and publisher login
+# forms — both are the same action (guessing a credential), and splitting
+# them would only let an attacker warm up on one form without spending the
+# other's allowance. Be honest about the weight class: this is noise
+# reduction, not the defence. The herokuapp origin bypasses Cloudflare, so a
+# direct caller can rotate what client_ip() sees — the per-ACCOUNT lockout on
+# the models is the layer that holds there, because an attacker cannot spoof
+# away the account they are attacking.
+_login_peer_rate = {}
+_login_rate = {}
+LOGIN_PEER_PER_HOUR = 240
+LOGIN_PER_QUARTER_HOUR = 20
+LOGIN_WINDOW_SECONDS = 900
+
 # Nothing else ever deletes a key, and the /api/evaluate buckets are keyed by
 # unauthenticated callers, so without a ceiling these dicts grow until the
 # 512MB dyno dies. A sweep alone is not enough: the case that grows the dict
@@ -9284,6 +9442,48 @@ def author_verify_email(token):
                     else url_for('author_login'))
 
 
+# ── Sign-in helpers shared by the author, publisher and team login routes ────
+
+# Verifying a password hash costs real milliseconds, and skipping that work
+# when the address is unknown makes "does this account exist" readable off a
+# stopwatch. An unknown address therefore pays the same cost against a
+# throwaway hash of a value nobody has — generated at import, never stored,
+# never a literal in the source.
+_DUMMY_LOGIN_HASH = generate_password_hash(secrets.token_urlsafe(32))
+
+
+def _count_login_failure(model, user):
+    """Add one strike under a row lock. True when THIS strike locked the account.
+
+    Counting a strike is a read-modify-write, and gunicorn runs 16 threads,
+    so two failed sign-ins landing together both read the same count and both
+    write count+1 — two guesses billed as one. Not a huge bypass, but a real
+    one: it makes the lockout quietly weaker than the number in the docs.
+
+    SELECT … FOR UPDATE serialises the pair. populate_existing() is the part
+    that is easy to leave out and silently undoes the whole thing: without it
+    SQLAlchemy returns the object already in the identity map — the stale
+    read — and the lock is taken around the wrong value.
+
+    SQLite ignores FOR UPDATE rather than raising, so this is a no-op locally
+    and in CI, where writes are serialised by the database anyway. Production
+    is Postgres, which is where it matters.
+
+    Commits, and returns the FRESH row — callers must rebind:
+    `locked_now, user = _count_login_failure(Model, user)`.
+    """
+    fresh = (
+        db.session.query(model)
+        .filter(model.id == user.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    locked_now = fresh.record_failed_login()
+    db.session.commit()
+    return locked_now, fresh
+
+
 @app.route('/author/login', methods=['GET', 'POST'])
 def author_login():
     """Author login"""
@@ -9295,24 +9495,71 @@ def author_login():
         session.pop('user_type', None)
 
     if request.method == 'POST':
+        # Peer first, then the per-visitor key — same order and same reasoning
+        # as author_register above: the unforgeable value is checked first so
+        # a rejected request never inserts a forgeable key.
+        peer_ip = request.remote_addr or 'unknown'
+        caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
+        if (not _check_rate_limit(peer_ip, max_requests=LOGIN_PEER_PER_HOUR,
+                                  window=3600, bucket=_login_peer_rate)
+                or not _check_rate_limit(caller_key,
+                                         max_requests=LOGIN_PER_QUARTER_HOUR,
+                                         window=LOGIN_WINDOW_SECONDS,
+                                         bucket=_login_rate)):
+            # warning, not info: nothing in this app configures logging, so
+            # an info() line is discarded before anyone can read it.
+            app.logger.warning('Author sign-in throttled: per-IP allowance spent')
+            flash('Too many sign-in attempts from this connection. '
+                  'Please wait a few minutes and try again.', 'error')
+            return render_template('author_login.html')
+
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
 
         author = Author.query.filter_by(email=email).first()
-        if author and author.check_password(password):
-            session['user_type'] = 'author'
-            login_user(author)
-            author.last_login_at = datetime.utcnow()
-            author.record_activity()
-            if author.pending_setup:
-                author.pending_setup = False
-            db.session.commit()
-            next_url = _safe_next(request.args.get('next'))
-            if author.assigned_path == 'one_pager' and not next_url:
-                return redirect(url_for('author_coaching_quickstart'))
-            return redirect(next_url or url_for('author_dashboard'))
 
-        flash('Invalid email or password.', 'error')
+        if author is None:
+            check_password_hash(_DUMMY_LOGIN_HASH, password)
+            flash('Invalid email or password.', 'error')
+            return render_template('author_login.html')
+
+        if author.is_locked():
+            # Said plainly rather than hidden behind the generic error. What
+            # it leaks is that the account exists; what the alternative costs
+            # is the real author staring at "wrong password" for a password
+            # they know is right, which is how a lockout gets torn out again
+            # a week after it ships.
+            flash('Too many failed attempts. This account is locked — try '
+                  f'again in {author.lock_minutes_remaining()} minute(s).',
+                  'error')
+            return render_template('author_login.html')
+
+        if not author.check_password(password):
+            locked_now, author = _count_login_failure(Author, author)
+            if locked_now:
+                # Never the typed password, never the count of the guess —
+                # just the fact and the account state.
+                app.logger.warning(
+                    'Author account locked after %s failed sign-ins',
+                    author.failed_login_attempts)
+            flash('Invalid email or password.', 'error')
+            return render_template('author_login.html')
+
+        # Nothing carried in from the unauthenticated half of this exchange
+        # survives into the authenticated session.
+        session.clear()
+        session['user_type'] = 'author'
+        login_user(author)
+        author.record_successful_login()
+        author.last_login_at = datetime.utcnow()
+        author.record_activity()
+        if author.pending_setup:
+            author.pending_setup = False
+        db.session.commit()
+        next_url = _safe_next(request.args.get('next'))
+        if author.assigned_path == 'one_pager' and not next_url:
+            return redirect(url_for('author_coaching_quickstart'))
+        return redirect(next_url or url_for('author_dashboard'))
 
     return render_template('author_login.html')
 
@@ -9519,6 +9766,11 @@ def author_reset_password(token):
         author.set_password(password)
         author.password_reset_token = None
         author.password_reset_expires = None
+        # Clear any login lockout: a single-use emailed token proves the account
+        # is theirs, so refusing the new correct password because five wrong
+        # guesses tripped the lock — on the exact recovery path a locked-out
+        # author is sent to — would be a self-inflicted lockout.
+        author.record_successful_login()
         db.session.commit()
         flash('Password reset successfully. Please log in.', 'success')
         return redirect(url_for('author_login'))
@@ -9584,28 +9836,62 @@ def publisher_login():
         session.pop('user_type', None)
 
     if request.method == 'POST':
+        # Same three layers as author_login, sharing its buckets: throttle,
+        # then the per-account lockout, then the credential check.
+        peer_ip = request.remote_addr or 'unknown'
+        caller_key = f"{peer_ip}|{analytics_collect.client_ip() or 'unknown'}"
+        if (not _check_rate_limit(peer_ip, max_requests=LOGIN_PEER_PER_HOUR,
+                                  window=3600, bucket=_login_peer_rate)
+                or not _check_rate_limit(caller_key,
+                                         max_requests=LOGIN_PER_QUARTER_HOUR,
+                                         window=LOGIN_WINDOW_SECONDS,
+                                         bucket=_login_rate)):
+            app.logger.warning('Publisher sign-in throttled: per-IP allowance spent')
+            flash('Too many sign-in attempts from this connection. '
+                  'Please wait a few minutes and try again.', 'error')
+            return render_template('publisher_login.html')
+
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
 
         publisher = Publisher.query.filter_by(email=email).first()
 
-        if publisher and not publisher.is_active_account:
+        if publisher is None:
+            check_password_hash(_DUMMY_LOGIN_HASH, password)
+            flash('Invalid email or password.', 'error')
+            return render_template('publisher_login.html')
+
+        if not publisher.is_active_account:
             flash('This account has been deactivated. Contact our team for assistance.', 'error')
             return render_template('publisher_login.html')
 
-        if publisher and not publisher.is_approved:
-            if publisher.check_password(password):
-                flash('Your account is pending approval. We will notify you once approved.', 'error')
-            else:
-                flash('Invalid email or password.', 'error')
+        if publisher.is_locked():
+            flash('Too many failed attempts. This account is locked — try '
+                  f'again in {publisher.lock_minutes_remaining()} minute(s).',
+                  'error')
             return render_template('publisher_login.html')
 
-        if publisher and publisher.check_password(password):
-            session['user_type'] = 'publisher'
-            login_user(publisher)
-            return redirect(url_for('publisher_dashboard'))
+        if not publisher.check_password(password):
+            locked_now, publisher = _count_login_failure(Publisher, publisher)
+            if locked_now:
+                app.logger.warning(
+                    'Publisher account locked after %s failed sign-ins',
+                    publisher.failed_login_attempts)
+            flash('Invalid email or password.', 'error')
+            return render_template('publisher_login.html')
 
-        flash('Invalid email or password.', 'error')
+        # Password is right; the pending-approval message is only ever shown
+        # to someone holding the credential, exactly as before.
+        if not publisher.is_approved:
+            flash('Your account is pending approval. We will notify you once approved.', 'error')
+            return render_template('publisher_login.html')
+
+        session.clear()
+        session['user_type'] = 'publisher'
+        login_user(publisher)
+        publisher.record_successful_login()
+        db.session.commit()
+        return redirect(url_for('publisher_dashboard'))
 
     return render_template('publisher_login.html')
 
@@ -9796,6 +10082,9 @@ def publisher_reset_password(token):
         publisher.set_password(password)
         publisher.password_reset_token = None
         publisher.password_reset_expires = None
+        # See author_reset_password: a valid reset token clears the lockout so
+        # recovery is not blocked by the lock it exists to escape.
+        publisher.record_successful_login()
         db.session.commit()
         flash('Password reset successfully. Please log in.', 'success')
         return redirect(url_for('publisher_login'))
@@ -9823,7 +10112,14 @@ def admin_login():
 
         user = AdminUser.query.filter_by(email=email).first()
 
-        if user and not user.is_active_account:
+        if user is None:
+            # Same hashing cost as a wrong password, so account existence is
+            # not readable off a stopwatch.
+            check_password_hash(_DUMMY_LOGIN_HASH, password)
+            flash('Invalid email or password.', 'error')
+            return render_template('admin_login.html')
+
+        if not user.is_active_account:
             if not user.totp_enabled:
                 # Never completed first login/2FA setup — this is a fresh
                 # registration still waiting for an admin to approve it.
@@ -9833,32 +10129,38 @@ def admin_login():
                 flash('This account has been deactivated. Contact an admin.', 'error')
             return render_template('admin_login.html')
 
-        if user and user.is_locked():
-            remaining = int((user.locked_until - datetime.utcnow()).total_seconds() / 60) + 1
-            flash(f'Account locked due to too many failed attempts. Try again in {remaining} minutes.', 'error')
+        if user.is_locked():
+            flash('Account locked due to too many failed attempts. Try again '
+                  f'in {user.lock_minutes_remaining()} minute(s).', 'error')
             return render_template('admin_login.html')
 
-        if user and user.check_password(password):
-            user.record_successful_login()
-            db.session.commit()
+        if not user.check_password(password):
+            locked_now, user = _count_login_failure(AdminUser, user)
+            if locked_now:
+                app.logger.warning(
+                    'Team account locked after %s failed sign-ins',
+                    user.failed_login_attempts)
+            flash('Invalid email or password.', 'error')
+            return render_template('admin_login.html')
 
-            # If 2FA is enabled, redirect to verification
-            if user.totp_enabled:
-                session['pending_2fa_user_id'] = user.id
-                return redirect(url_for('admin_verify_2fa'))
+        # The password is right, and this is still NOT a login — so the
+        # strike counters are NOT cleared here. Clearing them here was the
+        # hole that let anyone holding the password reset the counter between
+        # TOTP guesses by re-POSTing this form: five free code guesses per
+        # password re-entry, forever. record_successful_login() now runs only
+        # where a sign-in actually completes (verify-2fa, setup-2fa, SSO).
 
-            # 2FA not yet enabled — always require setup (mandatory)
-            # Reset any stale secret so user gets a fresh QR code
-            user.totp_secret = None
-            db.session.commit()
-            session['setup_2fa_user_id'] = user.id
-            return redirect(url_for('admin_setup_2fa'))
+        # If 2FA is enabled, redirect to verification
+        if user.totp_enabled:
+            session['pending_2fa_user_id'] = user.id
+            return redirect(url_for('admin_verify_2fa'))
 
-        if user:
-            user.record_failed_login()
-            db.session.commit()
-
-        flash('Invalid email or password.', 'error')
+        # 2FA not yet enabled — always require setup (mandatory)
+        # Reset any stale secret so user gets a fresh QR code
+        user.totp_secret = None
+        db.session.commit()
+        session['setup_2fa_user_id'] = user.id
+        return redirect(url_for('admin_setup_2fa'))
 
     return render_template('admin_login.html')
 
@@ -10468,6 +10770,10 @@ def admin_reset_password(token):
             user.set_password(password)
             user.password_reset_token = None
             user.password_reset_expires = None
+            # See author_reset_password: a valid reset token clears the lockout
+            # so recovery is not blocked by the lock it exists to escape. 2FA
+            # still stands between this and the dashboard.
+            user.record_successful_login()
             db.session.commit()
             flash('Your password has been reset. Please log in.', 'success')
             return redirect(url_for('admin_login'))
@@ -10503,6 +10809,9 @@ def admin_setup_2fa():
         code = request.form.get('totp_code', '').strip()
         if user.verify_totp(code):
             user.totp_enabled = True
+            # First real sign-in completes here, so the strike counters clear
+            # here — the password step above no longer clears them.
+            user.record_successful_login()
             db.session.commit()
             session.pop('setup_2fa_user_id', None)
             session['user_type'] = 'admin'
@@ -10548,17 +10857,33 @@ def admin_verify_2fa():
         return redirect(url_for('admin_login'))
 
     if request.method == 'POST':
+        # A lockout that lets the right code through is not a lockout: the
+        # account can have been locked from the login form while this
+        # half-authenticated session sat open.
+        if user.is_locked():
+            session.pop('pending_2fa_user_id', None)
+            flash('Account locked due to too many failed attempts. Try again '
+                  f'in {user.lock_minutes_remaining()} minute(s).', 'error')
+            return redirect(url_for('admin_login'))
+
         code = request.form.get('totp_code', '').strip()
         if user.verify_totp(code):
+            # THIS is where a team sign-in completes, so this is where the
+            # strike counters clear — never back at the password step.
+            user.record_successful_login()
+            db.session.commit()
             session.pop('pending_2fa_user_id', None)
             session['user_type'] = 'admin'
             login_user(user)
             return redirect(url_for('admin_dashboard'))
         else:
-            user.record_failed_login()
-            db.session.commit()
-            if user.is_locked():
+            # Wrong codes cost the same as wrong passwords. Without this the
+            # second factor is a six-digit number with unlimited guesses,
+            # which is a weaker door than the one it is standing behind.
+            locked_now, user = _count_login_failure(AdminUser, user)
+            if locked_now:
                 session.pop('pending_2fa_user_id', None)
+                app.logger.warning('Team account locked after repeated bad 2FA codes')
                 flash('Account locked due to too many failed attempts.', 'error')
                 return redirect(url_for('admin_login'))
             flash('Invalid code. Please try again.', 'error')
@@ -10686,6 +11011,9 @@ def sso_consume():
     # ── Success ─────────────────────────────────────────────────────────────
     session['user_type'] = 'admin'
     login_user(user)
+    # A completed sign-in (the dashboard chain carries its own mandatory
+    # 2FA), so it clears the strike counters like any other completed one.
+    user.record_successful_login()
     user.last_sso_login_at = datetime.utcnow()
     db.session.commit()
 
@@ -10788,8 +11116,9 @@ def admin_reset_2fa(user_id):
 def admin_unlock_account(user_id):
     """Unlock a locked account"""
     target = AdminUser.query.get_or_404(user_id)
-    target.failed_login_attempts = 0
-    target.locked_until = None
+    # All four lockout fields, including the ladder rung — an admin unlock is
+    # a clean slate, not a pause.
+    target.record_successful_login()
     db.session.commit()
     flash(f'{target.name} has been unlocked.', 'success')
     return redirect(url_for('admin_team'))
@@ -12489,6 +12818,9 @@ def run_migrations(strict=True):
     _add('admin_user', 'totp_enabled BOOLEAN DEFAULT FALSE')
     _add('admin_user', 'failed_login_attempts INTEGER DEFAULT 0')
     _add('admin_user', 'locked_until TIMESTAMP')
+    # The other half of the LoginLockoutMixin state (ladder + decay).
+    _add('admin_user', 'last_failed_login_at TIMESTAMP')
+    _add('admin_user', 'lockout_count INTEGER DEFAULT 0')
     _add('admin_user', f"role VARCHAR(20) DEFAULT '{ROLE_MEMBER}'")
     _add('admin_user', 'is_active_account BOOLEAN DEFAULT TRUE')
     # SSO jump (dashboard → this app); the consumed_sso_token table itself is
@@ -12520,6 +12852,13 @@ def run_migrations(strict=True):
     _add('publisher', 'preferred_genres TEXT')
     _add('publisher', 'preferred_topics TEXT')
     _add('publisher', 'website VARCHAR(300)')
+    # Sign-in lockout (LoginLockoutMixin) — same four on all three account
+    # tables. INTEGER DEFAULT 0 matches the model default; the increments are
+    # all `(x or 0) + 1`, so a NULL on an old row cannot poison them.
+    _add('publisher', 'failed_login_attempts INTEGER DEFAULT 0')
+    _add('publisher', 'locked_until TIMESTAMP')
+    _add('publisher', 'last_failed_login_at TIMESTAMP')
+    _add('publisher', 'lockout_count INTEGER DEFAULT 0')
 
     # ── publisher_proposal ─────────────────────────────────────────────────────
     _add('publisher_proposal', "publisher_status VARCHAR(50) DEFAULT 'new'")
@@ -12652,6 +12991,11 @@ def run_migrations(strict=True):
     _add('author', 'email_verified_at TIMESTAMP')
     _add('author', 'email_verify_token VARCHAR(100)')
     _add('author', 'email_verify_expires TIMESTAMP')
+    # Sign-in lockout (LoginLockoutMixin) — same four as admin_user/publisher.
+    _add('author', 'failed_login_attempts INTEGER DEFAULT 0')
+    _add('author', 'locked_until TIMESTAMP')
+    _add('author', 'last_failed_login_at TIMESTAMP')
+    _add('author', 'lockout_count INTEGER DEFAULT 0')
 
     # Every author who existed before email confirmation shipped is verified by
     # definition — they registered when registering was all there was. Without
@@ -12986,6 +13330,8 @@ def admin_bootstrap():
                     # Clear any lockout / 2FA so they can log in fresh
                     user.failed_login_attempts = 0
                     user.locked_until = None
+                    user.last_failed_login_at = None
+                    user.lockout_count = 0
                     user.totp_enabled = False
                     user.totp_secret = None
                     db.session.commit()

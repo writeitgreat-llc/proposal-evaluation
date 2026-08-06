@@ -180,6 +180,23 @@ jobs:
       - name: One-pager reminders do not bombard a reviewer
         run: python ci/check_one_pager_reminders.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # required-check-name coupling as every other step here.
+      #
+      # The author and publisher login forms accepted unlimited password
+      # guesses, and the staff lockout that did exist never reset its counter
+      # after a lock expired AND cleared it the moment a password matched --
+      # BEFORE the TOTP step, which handed anyone holding the password
+      # unlimited code guesses five at a time. This drives all three login
+      # routes end to end and pins the shared semantics: the capped 15/30/60
+      # ladder, the fresh five after an expired lock, the 12-quiet-hour decay,
+      # the burst guard on an already-locked account, the per-caller throttle,
+      # and -- the one that matters most on SQLite -- that every lockout
+      # timestamp is WRITTEN naive UTC, because an aware value expires a lock
+      # instantly on a non-UTC Postgres session while passing every test here.
+      - name: Sign-in lockout holds on all three account types
+        run: python ci/check_author_lockout.py
+
       # Blocking, on purpose. This one asserts the privacy promises the consent
       # banner makes to visitors -- that no raw IP and no raw User-Agent is ever
       # written to storage, that the query string and any URL token are stripped

@@ -918,7 +918,24 @@ SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
 SMTP_USER = os.environ.get('SMTP_USER', '')
 SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
 FROM_EMAIL = os.environ.get('FROM_EMAIL', '') or SMTP_USER
-TEAM_EMAILS = (os.environ.get('TEAM_EMAIL') or os.environ.get('TEAM_EMAILS') or 'anna@writeitgreat.com').split(',')
+# ONE env var, deliberately. This used to read TEAM_EMAIL with a fallback to a
+# second var named TEAM_EMAILS — and production had BOTH set, holding different
+# lists, so the fallback was dead config: anyone who opened the settings, found
+# the name they recognised and edited it changed nothing and was warned by
+# nothing. The moment that bites is a hurried re-route (someone on holiday, a
+# new starter) — exactly when nobody re-reads this line to check which of two
+# identically-purposed settings is live. So the fallback is gone and the dead
+# var is deleted from Heroku; there is now only one place this list can live.
+#
+# The strip() matters: the live value separates addresses with ", " and SMTP
+# recipients should not carry stray whitespace. The trailing `or` is the same
+# floor ONE_PAGER_TRIAGE_EMAILS uses — a value of stray commas must not resolve
+# to an empty list and make every team notification return silently.
+TEAM_EMAILS = [
+    e.strip()
+    for e in (os.environ.get('TEAM_EMAIL') or 'anna@writeitgreat.com').split(',')
+    if e.strip()
+] or ['anna@writeitgreat.com']
 
 # Booking link for the social-media-services upsell (Calendly / Cal.com).
 # Set SERVICES_CALL_URL in Heroku Config Vars.
@@ -4830,10 +4847,10 @@ UNASSIGNED_RENUDGE_AFTER_HOURS = 24 * 7
 # and return silently, which is the exact failure mode -- a chase that stops
 # happening and says nothing -- this whole change exists to remove.
 #
-# NOTE for whoever edits the roster: TEAM_EMAIL and TEAM_EMAILS are BOTH set in
-# production with DIFFERENT lists, and line ~801 reads `TEAM_EMAIL or
-# TEAM_EMAILS`, so TEAM_EMAILS is dead config today. Editing it changes nothing
-# and warns nobody. Tracked separately; do not rely on it here.
+# NOTE for whoever edits the roster: the team list lives in the TEAM_EMAIL env
+# var (singular) and nowhere else. A second var named TEAM_EMAILS used to exist
+# as a silent fallback and has been removed from the code and from Heroku — if
+# you find one set anywhere, it is dead and should be deleted, not edited.
 ONE_PAGER_TRIAGE_EMAILS = [
     e.strip() for e in (
         os.environ.get('ONE_PAGER_TRIAGE_EMAILS')

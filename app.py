@@ -722,8 +722,19 @@ def _csrf_failed(e):
     token itself never expires. A campaign author mid-signup must land back on
     the form they came from, with their message explained; a fetch() caller
     must get JSON, because every caller in templates/ runs .json() on the body
-    and a redirect to an HTML page would surface as a parse error."""
-    if request.path.startswith('/api/'):
+    and a redirect to an HTML page would surface as a parse error.
+
+    A fetch() caller is recognised by its SHAPE, never by URL prefix: it sent
+    a token header (a stale token is still sent — window.CSRF_TOKEN is a
+    page-load constant) or it asked for JSON outright. A `/api/` path test
+    alone missed /author/coaching/evaluate, the one fetch() target in
+    templates/ outside /api/ — its caller ran .json() on the redirect's HTML,
+    alerted 'Network error', and every retry re-sent the same stale token, so
+    the author could never submit until they happened to reload."""
+    sent_token_header = any(h in request.headers
+                            for h in app.config['WTF_CSRF_HEADERS'])
+    if (request.path.startswith('/api/') or sent_token_header
+            or request.accept_mimetypes.best == 'application/json'):
         return jsonify({'success': False,
                         'error': 'Your session expired. Please refresh the page and try again.'}), 400
     flash('Your session expired, so that submission was not accepted. '
@@ -731,7 +742,13 @@ def _csrf_failed(e):
     ref = request.referrer
     if ref:
         parsed = urlparse(ref)
-        if not parsed.netloc or parsed.netloc == request.host:
+        # Same host, or genuinely relative. `not netloc` alone is not
+        # "relative": `http:evil.com` parses with an empty netloc but browsers
+        # read it as http://evil.com, and a backslash in a path (`/\evil.com`)
+        # gets folded to `//` — either would walk this redirect off-host.
+        same_host = parsed.scheme in ('http', 'https') and parsed.netloc == request.host
+        relative = (not parsed.scheme and not parsed.netloc and '\\' not in ref)
+        if same_host or relative:
             return redirect(ref)
     # No usable referrer: re-render the page the form lives on. Every GET+POST
     # route answers this; a POST-only route without a referrer has no page to
@@ -10457,6 +10474,21 @@ def view_proposal_text(submission_id):
                            embed_pdf=embed_pdf)
 
 
+def _uploaded_bytes_headers(response):
+    """The header pair for EVERY route that hands back somebody's upload from
+    this origin (register entry 9's third instruction names all of them, not
+    just audio; the dashboard sends the same pair on client documents).
+    nosniff pins the Content-Type this app chose — which on these routes is
+    guessed from an uploader-controlled filename — and the sandbox CSP keeps
+    the response inert even if it is ever opened as a document. Chromium's
+    built-in PDF viewer renders normally under this CSP, iframe embed
+    included (verified headless), so the inline proposal viewer keeps
+    working."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    return response
+
+
 @app.route('/admin/proposal/<submission_id>/embed-proposal')
 @team_required
 def embed_proposal_file(submission_id):
@@ -10470,7 +10502,10 @@ def embed_proposal_file(submission_id):
         mimetype = 'application/pdf'
     else:
         mimetype = 'application/octet-stream'
-    return send_file(file_buffer, mimetype=mimetype, download_name=proposal.original_filename)
+    # AUTHOR-uploaded bytes served inline: strictly wider exposure than the
+    # audio route, so at minimum the same headers.
+    return _uploaded_bytes_headers(
+        send_file(file_buffer, mimetype=mimetype, download_name=proposal.original_filename))
 
 
 @app.route('/admin/proposal/<submission_id>/download-proposal')
@@ -10491,26 +10526,26 @@ def download_proposal_text(submission_id):
             mimetype = 'application/msword'
         else:
             mimetype = 'application/octet-stream'
-        return send_file(
+        return _uploaded_bytes_headers(send_file(
             file_buffer,
             as_attachment=True,
             download_name=proposal.original_filename,
             mimetype=mimetype
-        )
+        ))
 
-    # Fallback to extracted text
+    # Fallback to extracted text — still author-supplied content, same headers
     if not proposal.proposal_text:
         flash('No proposal text available for this submission.', 'error')
         return redirect(url_for('admin_proposal_detail', submission_id=submission_id))
 
     text_buffer = BytesIO(proposal.proposal_text.encode('utf-8'))
     filename = f"{proposal.author_name.replace(' ', '_')}_{proposal.submission_id}_proposal.txt"
-    return send_file(
+    return _uploaded_bytes_headers(send_file(
         text_buffer,
         as_attachment=True,
         download_name=filename,
         mimetype='text/plain'
-    )
+    ))
 
 
 @app.route('/admin/proposal/<submission_id>/resend-author-email', methods=['POST'])
@@ -12194,19 +12229,16 @@ def _audio_feedback_response(fb, feedback_id):
     stored type claim raw. Rows may predate the upload-side allowlist, so the
     claim is re-checked here and anything not plainly audio is served as
     audio/webm; a claim of text/html replayed verbatim would let the author's
-    browser run an uploaded page AS this portal. Same header pattern as the
-    dashboard's client-document download route: nosniff stops the browser
-    second-guessing the forced type, and the sandbox CSP stops anything
-    executing even if a response is opened as a document."""
+    browser run an uploaded page AS this portal. _uploaded_bytes_headers
+    stamps the pair every upload-serving route carries: nosniff stops the
+    browser second-guessing the forced type, and the sandbox CSP stops
+    anything executing even if a response is opened as a document."""
     stored = (fb.audio_mime_type or '').lower()
-    response = send_file(
+    return _uploaded_bytes_headers(send_file(
         BytesIO(fb.audio_data),
         mimetype=stored if stored in AUDIO_FEEDBACK_MIME_ALLOWLIST else 'audio/webm',
         download_name=f'feedback_{feedback_id}.webm',
-    )
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
-    return response
+    ))
 
 
 @app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')
@@ -12432,11 +12464,14 @@ def admin_knowledge_base_delete(doc_id):
 def admin_knowledge_base_download(doc_id):
     """Download original KB document file."""
     doc = KnowledgeBaseDocument.query.get_or_404(doc_id)
-    return send_file(
+    # send_file guesses the type from the stored filename (a KB doc named
+    # evil.html would be answered text/html) — uploaded bytes, so the same
+    # header pair as every other upload-serving route.
+    return _uploaded_bytes_headers(send_file(
         BytesIO(doc.file_data),
         download_name=doc.filename,
         as_attachment=True,
-    )
+    ))
 
 
 # ============================================================================

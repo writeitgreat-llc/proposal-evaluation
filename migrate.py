@@ -119,6 +119,23 @@ if os.environ.get('DYNO') and not _url.startswith('postgresql://'):
           + _FIX, file=sys.stderr)
     sys.exit(1)
 
+# Same placement and same reasoning for the signing key: app.py's own guard
+# raises inside the try below, which lands in _abort(), which honours the
+# bypass — so with MIGRATIONS_STRICT=0 set, a release with no SECRET_KEY would
+# promote a slug whose every web dyno then refuses to boot, with the old dynos
+# already shut down. A missing signing key is not a migration that failed;
+# the bypass must not cover it.
+if os.environ.get('DYNO') and not os.environ.get('SECRET_KEY', '').strip():
+    print("\n=== RELEASE ABORTED: SECRET_KEY IS NOT SET ===\n"
+          "The only fallback is the placeholder printed in this public "
+          "repository, and a session signed with a public value is a session "
+          "anyone can forge. MIGRATIONS_STRICT=0 does not cover this either.\n"
+          "Set a strong random value and deploy again: heroku config:set "
+          "SECRET_KEY=<64 random hex chars> -a proposal-evaluation "
+          "(generate one with: python3 -c 'import secrets; "
+          "print(secrets.token_hex(32))').", file=sys.stderr)
+    sys.exit(1)
+
 
 try:
     from app import app, db, run_migrations, MigrationError  # noqa: E402

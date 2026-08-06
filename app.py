@@ -263,6 +263,33 @@ def _redirect_bypass_origin():
         target += '?' + request.query_string.decode('latin-1')
     return redirect(target, code=301)
 
+# ── Refuse the placeholder signing key on a dyno ──────────────────────────────
+# The fallback on the next line signs every session cookie whenever SECRET_KEY
+# is missing — and its value is printed in this PUBLIC repository, so falling
+# back to it in production hands anyone who can read GitHub the ability to mint
+# a signed-in session for any account, admins included, with no password and no
+# second factor. Nothing would look wrong: the app boots, pages serve, and the
+# only symptom is a forged cookie that verifies.
+#
+# Same signal and same reasoning as the DATABASE_URL guard below: DYNO is set
+# by the PLATFORM on web, release and `heroku run` dynos and by nothing else,
+# so it cannot be forgotten on a new app or dropped by a fork, and if Heroku
+# ever stopped setting it this guard fails OPEN — back to today's behaviour. A
+# laptop with nothing configured keeps working on the dev key, which is what
+# the fallback is for.
+if os.environ.get('DYNO') and not os.environ.get('SECRET_KEY', '').strip():
+    raise RuntimeError(
+        f"SECRET_KEY is not set on dyno {os.environ['DYNO']}. Refusing to "
+        "start. Falling back to the placeholder committed in this public "
+        "repository would let anyone forge a signed-in session for any "
+        "account. Nothing has been changed and no data has been lost. Set a "
+        "strong random value and deploy again: heroku config:set "
+        "SECRET_KEY=<64 random hex chars> -a proposal-evaluation "
+        "(generate one with: python3 -c 'import secrets; "
+        "print(secrets.token_hex(32))'). Rotating the key signs everyone out "
+        "but breaks nothing else — email-confirmation and password-reset "
+        "links are stored tokens, not signed ones."
+    )
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # ── Refuse the SQLite fallback on a dyno ──────────────────────────────────────

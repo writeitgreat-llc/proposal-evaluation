@@ -238,6 +238,15 @@ jobs:
           SCHEMA_REPLAY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python ci/check_migrations.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own — same
+      # reasoning as every guard step above. The signing-key fallback in app.py
+      # is printed in this public repository, so a dyno that silently used it
+      # would be signing sessions with a public value; app.py now refuses to
+      # start that way, and this proves the refusal fires on every dyno type
+      # and NEVER fires on a laptop or a correctly-configured dyno.
+      - name: A dyno cannot boot on the public placeholder signing key
+        run: python ci/check_secret_key_guard.py
+
       # Another STEP inside proposal-ci for the same reason as the one above: a
       # new job is a new status context that gates nothing until three files
       # agree about its name.

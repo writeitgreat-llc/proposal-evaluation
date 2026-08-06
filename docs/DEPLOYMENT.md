@@ -576,7 +576,7 @@ searched for text that never appears — and a continuous measurement is the
 cheapest defence against a third.
 
 Over `DATABASE_HEADROOM_WARN_RATIO` (default `0.70`) it logs at ERROR, which
-Sentry captures, and emails `TEAM_EMAILS` **once a day**.
+Sentry captures, and emails the team list (the `TEAM_EMAIL` env var) **once a day**.
 
 | var | default | notes |
 |---|---|---|

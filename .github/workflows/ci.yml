@@ -213,6 +213,24 @@ jobs:
       - name: The paths that make money still work, driven like a browser
         run: python ci/check_money_paths.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # required-check-name coupling as every other step here. It lives in this
+      # job (not security.yml) because it imports the real app, and the
+      # security jobs are deliberately static and install nothing but their
+      # own scanner.
+      #
+      # App-wide CSRF shipped with exactly three exemptions, each named for
+      # the mechanism that authenticates the caller instead. This pins all of
+      # it: the protection is ON (config + a token-less POST refused), the
+      # exemption set matches the in-file allowlist EXACTLY in both
+      # directions, every <form method=post> in templates/ renders the hidden
+      # token, and every fetch()/XHR POST sends the X-CSRFToken header from
+      # base.html's meta tag. A quiet WTF_CSRF_ENABLED=False or a convenient
+      # new @csrf.exempt is invisible to every other check -- the forms still
+      # render and the token-carrying tests still pass.
+      - name: CSRF stays on, exempted exactly three times, and every form and fetch carries the token
+        run: python ci/check_csrf.py
+
       # Blocking, on purpose. This one asserts the privacy promises the consent
       # banner makes to visitors -- that no raw IP and no raw User-Agent is ever
       # written to storage, that the query string and any URL token are stripped

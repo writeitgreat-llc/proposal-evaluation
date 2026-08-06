@@ -281,6 +281,16 @@ with appmod.app.app_context():
     author = fresh(appmod.Author, author_id)
     check(author.failed_login_attempts == 1,
           f"...and the lockout counter took the strike (got {author.failed_login_attempts})")
+    # The refusal must also leave the caller signed OUT. Risk-register entry 10
+    # is "stray sessions handed staff-level access": a login route that refuses
+    # the password but still mints (or keeps) a usable session fails silently
+    # here and catastrophically in production. visit() runs on a fresh `g`, so
+    # this asserts the SESSION, not a cached g._login_user from an earlier
+    # simulated request.
+    resp = visit(client, "/author/dashboard")
+    check(resp.status_code == 302 and "/author/login" in resp.headers.get("Location", ""),
+          f"a refused password leaves no session: the dashboard bounces to sign-in "
+          f"(got {resp.status_code} -> {resp.headers.get('Location', '')!r})")
 
     resp = form_post(client, "/author/login", "/author/login",
                      {"email": AUTHOR_EMAIL, "password": AUTHOR_PASSWORD})
@@ -323,6 +333,18 @@ with appmod.app.app_context():
     staff = fresh(appmod.AdminUser, staff_id)
     check(staff.failed_login_attempts == 1,
           f"...and costs a strike (got {staff.failed_login_attempts})")
+    # Same signed-out assertion as the author path, and it matters MOST here:
+    # register entry 10's "stray sessions handed staff-level access" is exactly
+    # a verify-2fa handler that bills the strike but promotes the half-done
+    # session anyway. The admin area must stay unreachable -- a redirect to the
+    # admin sign-in, never a served page. Fresh `g` via visit(), so a cached
+    # g._login_user cannot fake either verdict.
+    resp = visit(staff_client, "/admin")
+    check(resp.status_code == 302 and "/admin/login" in resp.headers.get("Location", ""),
+          f"a refused TOTP code leaves the session un-promoted: /admin bounces to the "
+          f"admin sign-in (got {resp.status_code} -> {resp.headers.get('Location', '')!r})")
+    check(resp.status_code != 200,
+          "...and the admin page itself was NOT served to the half-authenticated session")
 
     resp = form_post(staff_client, "/admin/verify-2fa", "/admin/verify-2fa",
                      {"totp_code": totp.now()})

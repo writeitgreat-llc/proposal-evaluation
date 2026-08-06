@@ -741,15 +741,25 @@ def _csrf_failed(e):
           'Please try again.', 'error')
     ref = request.referrer
     if ref:
+        # The Referer is attacker-influenced input, and this handler used to
+        # validate it with its own inline urlparse test — which is exactly the
+        # class of check _safe_next exists to replace (`http:evil.com` parses
+        # with an empty netloc, `/\` gets folded to `//` by several browsers).
+        # Never redirect to the raw referrer. A same-host absolute referrer is
+        # first reduced to its path?query — a string that cannot name a host —
+        # and then, like everything else, must clear _safe_next (defined later
+        # in this module; both exist by request time) before it reaches
+        # Location.
         parsed = urlparse(ref)
-        # Same host, or genuinely relative. `not netloc` alone is not
-        # "relative": `http:evil.com` parses with an empty netloc but browsers
-        # read it as http://evil.com, and a backslash in a path (`/\evil.com`)
-        # gets folded to `//` — either would walk this redirect off-host.
-        same_host = parsed.scheme in ('http', 'https') and parsed.netloc == request.host
-        relative = (not parsed.scheme and not parsed.netloc and '\\' not in ref)
-        if same_host or relative:
-            return redirect(ref)
+        if parsed.scheme in ('http', 'https') and parsed.netloc == request.host:
+            candidate = parsed.path or '/'
+            if parsed.query:
+                candidate += '?' + parsed.query
+        else:
+            candidate = ref
+        target = _safe_next(candidate)
+        if target:
+            return redirect(target)
     # No usable referrer: re-render the page the form lives on. Every GET+POST
     # route answers this; a POST-only route without a referrer has no page to
     # go back to, and 405→login is still a recoverable screen, not a raw 400.

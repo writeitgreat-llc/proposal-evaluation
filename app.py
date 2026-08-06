@@ -2730,6 +2730,23 @@ EVALUATE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 # training document anyone has actually uploaded.
 ADMIN_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
 
+# What one-pager audio feedback may claim to be, and the only types the serve
+# routes will ever echo back. The first four are what the recorder in
+# admin_one_pager_detail.html actually produces (its isTypeSupported probe:
+# audio/mp4 on Safari, audio/webm elsewhere, audio/ogg as the fallback); the
+# rest cover a team member attaching a plain recording by hand. UNLIKE the size
+# cap above, this IS a security control: the stored claim is replayed as the
+# response Content-Type on this app's own origin, so a claim of text/html would
+# make the author's browser run an uploaded page as the portal — able to act as
+# whichever signed-in author plays it. FileStorage.mimetype is already
+# lowercased with any ';codecs=' parameter stripped, so membership is exact.
+# Rows written before this list existed hold arbitrary claims, which is why the
+# serve side re-checks instead of trusting the upload-side refusal.
+AUDIO_FEEDBACK_MIME_ALLOWLIST = frozenset({
+    'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
+    'audio/wav', 'audio/x-m4a',
+})
+
 # The SAME column, Proposal.original_file, through a different door: /api/submit
 # is the API-key'd integration endpoint and has always had its own 10 MB limit,
 # against /api/evaluate's 5 MB. Named rather than left inline so that the
@@ -12071,8 +12088,16 @@ def admin_one_pager_add_feedback(submission_id):
                 'leave written feedback instead.',
                 'error')
             return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+        # The claim is stored and later replayed as a Content-Type, so only the
+        # audio types the recorder (or a hand-picked recording) can honestly
+        # carry are accepted — see AUDIO_FEEDBACK_MIME_ALLOWLIST.
+        claimed_mime = (audio_file.mimetype or '').lower()
+        if claimed_mime not in AUDIO_FEEDBACK_MIME_ALLOWLIST:
+            flash('That file does not look like an audio recording. Please '
+                  're-record it or leave written feedback instead.', 'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
         fb.audio_data = audio_file.read()
-        fb.audio_mime_type = audio_file.mimetype or 'audio/webm'
+        fb.audio_mime_type = claimed_mime
     else:
         fb.feedback_text = request.form.get('feedback_text', '').strip()
         if not fb.feedback_text:
@@ -12164,6 +12189,26 @@ def _send_assignment_notification(to_email, assignee_name, author_name,
                html_content)
 
 
+def _audio_feedback_response(fb, feedback_id):
+    """User-uploaded bytes served from this app's own origin — never echo the
+    stored type claim raw. Rows may predate the upload-side allowlist, so the
+    claim is re-checked here and anything not plainly audio is served as
+    audio/webm; a claim of text/html replayed verbatim would let the author's
+    browser run an uploaded page AS this portal. Same header pattern as the
+    dashboard's client-document download route: nosniff stops the browser
+    second-guessing the forced type, and the sandbox CSP stops anything
+    executing even if a response is opened as a document."""
+    stored = (fb.audio_mime_type or '').lower()
+    response = send_file(
+        BytesIO(fb.audio_data),
+        mimetype=stored if stored in AUDIO_FEEDBACK_MIME_ALLOWLIST else 'audio/webm',
+        download_name=f'feedback_{feedback_id}.webm',
+    )
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    return response
+
+
 @app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')
 @team_required
 def admin_one_pager_feedback_audio(feedback_id):
@@ -12171,11 +12216,7 @@ def admin_one_pager_feedback_audio(feedback_id):
     fb = OnePagerFeedback.query.get_or_404(feedback_id)
     if not fb.audio_data:
         abort(404)
-    return send_file(
-        BytesIO(fb.audio_data),
-        mimetype=fb.audio_mime_type or 'audio/webm',
-        download_name=f'feedback_{feedback_id}.webm'
-    )
+    return _audio_feedback_response(fb, feedback_id)
 
 
 @app.route('/author/coaching/quickstart/feedback/<int:feedback_id>/audio')
@@ -12189,10 +12230,7 @@ def author_one_pager_feedback_audio(feedback_id):
         abort(403)
     if not fb.audio_data:
         abort(404)
-    return send_file(
-        BytesIO(fb.audio_data),
-        mimetype=fb.audio_mime_type or 'audio/webm'
-    )
+    return _audio_feedback_response(fb, feedback_id)
 
 
 def _send_one_pager_feedback_email(author_name, author_email, book_title, feedback_type):

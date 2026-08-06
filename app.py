@@ -33,6 +33,8 @@ from flask import Flask, Request, render_template, request, jsonify, redirect, u
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError
 from sqlalchemy.exc import IntegrityError
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature, BadData
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -679,6 +681,63 @@ def _route_aware_unauthorized():
     return redirect(url_for(endpoint, next=path))
 login_manager.login_message = None  # Disable "Please log in" message
 
+# ── CSRF protection (app-wide) ────────────────────────────────────────────────
+# Every POST/PUT/PATCH/DELETE must carry a token tied to the visitor's session:
+# in a hidden `csrf_token` input on every <form method="post">, or in an
+# X-CSRFToken header for fetch() callers (base.html exposes the value in a
+# <meta name="csrf-token">). SameSite=Lax above already blocks the cross-SITE
+# form post, but all three apps now share writeitgreat.com — Lax does nothing
+# between subdomains of one registrable domain, so an XSS or subdomain takeover
+# on any of them could drive this app's admin actions. The token is what closes
+# that.
+#
+# Exemptions are enumerated, never patterned, and each names the mechanism that
+# authenticates the caller instead:
+#   * /api/submit          — X-API-Key (hmac.compare_digest), the Wix server
+#   * analytics /consent,/e — anonymous by design; sendBeacon cannot set
+#                             headers (exempted below, after the blueprint import)
+# GET /sso/consume needs none: CSRF protects state-changing METHODS, and the
+# jump token is single-use + 60s-signed besides.
+csrf = CSRFProtect(app)
+
+# The token never outlives the session, and never expires inside it. The
+# default 3600s limit would 400 a campaign author who opened /author/register,
+# thought for an hour, and then submitted — an expiry that protects nothing the
+# session cookie's own lifetime doesn't already bound.
+app.config['WTF_CSRF_TIME_LIMIT'] = None
+
+# Token check only, no Referer check. SSL_STRICT rejects any HTTPS POST whose
+# Referer is missing — which is a browser privacy setting, not an attack — and
+# the campaign points cold traffic at these forms. The session-bound token is
+# the actual protection; a referrer heuristic on top buys false refusals.
+app.config['WTF_CSRF_SSL_STRICT'] = False
+
+
+@app.errorhandler(CSRFError)
+def _csrf_failed(e):
+    """A missing/stale token gets a retry, not a dead-end 400.
+
+    In practice this fires when the session cookie changed under an open tab
+    (cookies cleared, SECRET_KEY rotated) — with WTF_CSRF_TIME_LIMIT = None the
+    token itself never expires. A campaign author mid-signup must land back on
+    the form they came from, with their message explained; a fetch() caller
+    must get JSON, because every caller in templates/ runs .json() on the body
+    and a redirect to an HTML page would surface as a parse error."""
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False,
+                        'error': 'Your session expired. Please refresh the page and try again.'}), 400
+    flash('Your session expired, so that submission was not accepted. '
+          'Please try again.', 'error')
+    ref = request.referrer
+    if ref:
+        parsed = urlparse(ref)
+        if not parsed.netloc or parsed.netloc == request.host:
+            return redirect(ref)
+    # No usable referrer: re-render the page the form lives on. Every GET+POST
+    # route answers this; a POST-only route without a referrer has no page to
+    # go back to, and 405→login is still a recoverable screen, not a raw 400.
+    return redirect(request.path)
+
 # ── First-party web analytics (cross-app contract v1) ──────────────────────
 # The collector, the two tables and the outbox drain live in
 # analytics_collect.py — app.py is already ~8,800 lines and this is a
@@ -694,6 +753,11 @@ login_manager.login_message = None  # Disable "Please log in" message
 import analytics_collect
 
 analytics_collect.init_app(app, db)
+
+# CSRF-exempt: /consent and /e are anonymous by design (no session privilege to
+# forge — see set_consent()'s docstring), and navigator.sendBeacon cannot set a
+# token header even if we wanted one.
+csrf.exempt(analytics_collect.analytics_bp)
 
 # Only http(s). PRIVACY_URL comes from the environment, and a mistyped one
 # rendered straight into an href is how a javascript: URL gets onto a login
@@ -9102,6 +9166,7 @@ def _cors_headers(response):
 
 
 @app.route('/api/submit', methods=['POST', 'OPTIONS'])
+@csrf.exempt  # machine-to-machine: authenticated by X-API-Key (hmac.compare_digest below), no browser session to forge
 def api_submit():
     """
     External submission endpoint for the Wix site.

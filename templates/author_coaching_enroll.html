@@ -9,6 +9,7 @@
         <p style="color:var(--gray-500);margin-bottom:1.5rem;font-size:0.9375rem;">You'll work through 7 modules, each focused on a key section of your book proposal. The AI coach will guide you, and you'll submit homework that gets reviewed before you advance.</p>
 
         <form method="POST" action="{{ url_for('author_coaching_enroll') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="book_title" class="form-label">Working book title <span style="color:var(--gray-400);font-weight:400;">(optional — you can add this later)</span></label>
                 <input type="text" id="book_title" name="book_title" class="form-input"

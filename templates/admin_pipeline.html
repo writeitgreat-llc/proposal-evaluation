@@ -156,6 +156,7 @@
                         <form method="POST"
                               action="{{ url_for('admin_one_pager_assign', submission_id=row.one_pager.id) }}"
                               style="margin:0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select name="assigned_to" class="assignee-select"
                                     onchange="this.form.submit()"
                                     title="Assign to team member">
@@ -179,6 +180,7 @@
                         {% endif %}
                         <form method="POST" action="{{ url_for('admin_delete_author', author_id=row.author.id) }}"
                               onsubmit="return confirm('⛔ Permanently delete {{ row.author.name }} ({{ row.author.email }})? This cannot be undone.')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" style="background:none;border:1px solid #dc2626;color:#dc2626;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.75rem;cursor:pointer;">Delete</button>
                         </form>
                     </td>

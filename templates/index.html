@@ -220,7 +220,7 @@ document.addEventListener('DOMContentLoaded', function() {
         loadingOverlay.classList.remove('hidden');
 
         try {
-            const response = await fetch('/api/evaluate', { method: 'POST', body: new FormData(form) });
+            const response = await fetch('/api/evaluate', { method: 'POST', headers: { 'X-CSRFToken': window.CSRF_TOKEN }, body: new FormData(form) });
             const data = await response.json();
             if (data.success && data.proposal_id) {
                 {% if current_user.is_authenticated and current_user.is_team_member %}

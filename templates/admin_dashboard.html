@@ -55,6 +55,7 @@
 
 {# Bulk Actions Bar - shown when proposals are checked #}
 <form method="POST" action="{{ url_for('admin_bulk_action') }}" id="bulkForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="bulk-bar" id="bulkBar">
         <span class="bulk-count"><span id="bulkCount">0</span> selected</span>
         <select name="bulk_action" id="bulkAction">
@@ -100,14 +101,17 @@
                         <a href="{{ url_for('admin_proposal_detail', submission_id=p.submission_id) }}" class="qa-edit">View</a>
                         {% if current_filters.view == 'archive' %}
                         <form method="POST" action="{{ url_for('admin_toggle_archive', submission_id=p.submission_id) }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="qa-restore">Restore</button>
                         </form>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_archive', submission_id=p.submission_id) }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="qa-archive">Archive</button>
                         </form>
                         {% endif %}
                         <form method="POST" action="{{ url_for('admin_delete_proposal', submission_id=p.submission_id) }}" style="display:inline;" onsubmit="return confirm('Delete &quot;{{ p.book_title|e }}&quot;?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="qa-delete">Delete</button>
                         </form>
                     </div>

@@ -34,6 +34,7 @@
         </details>
 
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <p style="font-size: 0.875rem; color: var(--gray-700); margin-bottom: 0.75rem;">
                 <strong>Step 2:</strong> Enter the 6-digit code from your app
             </p>

@@ -132,6 +132,7 @@
                 </td>
                 <td style="padding:0.875rem 1rem;">
                     <form method="POST" action="{{ url_for('admin_marketing_lead_status', md_id=md.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <select name="services_status" class="status-select" onchange="this.form.submit()">
                             {% for val, label in statuses %}
                             <option value="{{ val }}" {% if md.services_status == val %}selected{% endif %}>{{ label }}</option>
@@ -141,6 +142,7 @@
                 </td>
                 <td style="padding:0.875rem 1rem;min-width:180px;">
                     <form method="POST" action="{{ url_for('admin_marketing_lead_notes', md_id=md.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <textarea name="services_admin_notes" class="notes-input"
                                   placeholder="Add notes…"
                                   onblur="this.form.submit()">{{ md.services_admin_notes or '' }}</textarea>

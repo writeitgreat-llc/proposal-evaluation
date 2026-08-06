@@ -264,7 +264,7 @@
             subStatus.textContent = '';
 
             try {
-                const r = await fetch('/author/coaching/evaluate', { method: 'POST' });
+                const r = await fetch('/author/coaching/evaluate', { method: 'POST', headers: { 'X-CSRFToken': window.CSRF_TOKEN } });
                 const d = await r.json();
 
                 if (!d.success) {

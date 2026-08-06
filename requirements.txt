@@ -21,6 +21,13 @@ Flask-SQLAlchemy==3.1.1
 # not to change it.
 SQLAlchemy==2.0.51
 Flask-Login==0.6.3
+# CSRF protection (CSRFProtect) on every state-changing route. Flask-WTF pulls
+# WTForms; both are pure Python, so their lock entries were hand-added rather
+# than regenerated on a dyno — no platform marker can make either resolve
+# differently there (unlike greenlet, the reason the lock is normally
+# dyno-generated). WTForms itself is unused; only flask_wtf.csrf is imported.
+Flask-WTF==1.3.0
+WTForms==3.2.2
 openai==1.68.2
 httpx==0.28.1
 # Held at 0.2.16 ON PURPOSE, and NOT bumped to 0.2.17. Investigated 2026-08-05.

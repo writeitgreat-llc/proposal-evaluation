@@ -13,6 +13,7 @@
             {% endif %}
         {% endwith %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="name">Your Name</label>
                 <input type="text" id="name" name="name" required placeholder="Jane Smith" value="{{ request.form.get('name', '') }}">

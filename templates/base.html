@@ -12,6 +12,12 @@
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='images/favicon-16x16.png') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
 
+    {# One token per session (WTF_CSRF_TIME_LIMIT is None). Forms carry it as a
+       hidden input; every fetch() POST in child templates sends it back as the
+       X-CSRFToken header via the global below. #}
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>window.CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;</script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">

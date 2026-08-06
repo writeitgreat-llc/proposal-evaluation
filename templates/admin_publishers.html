@@ -96,6 +96,7 @@
                         <a href="{{ url_for('admin_publisher_detail', publisher_id=pub.id) }}" class="qa-edit">View</a>
                         {% if not pub.is_approved %}
                         <form method="POST" action="{{ url_for('admin_approve_publisher', publisher_id=pub.id) }}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="qa-restore">Approve</button>
                         </form>
                         {% endif %}

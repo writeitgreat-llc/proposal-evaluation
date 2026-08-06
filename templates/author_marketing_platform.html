@@ -796,7 +796,7 @@
     function saveToServer(type, data, callback) {
         fetch('/api/marketing/save', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
             body: JSON.stringify({standalone: STANDALONE, type: type, data: data}),
         })
         .then(function(r) { return r.json(); })
@@ -1042,7 +1042,7 @@
 
         fetch('/api/marketing/pitch-eval', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
             body: JSON.stringify({standalone: STANDALONE, pitch_text: text, mode: currentMode || 'author'}),
         })
         .then(function(r) { return r.json(); })
@@ -1291,7 +1291,7 @@
             btn.textContent = 'Opening…';
             fetch('/api/marketing/book-call', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                 body: JSON.stringify({}),
             })
             .then(function(r) { return r.json(); })
@@ -1557,7 +1557,7 @@
         }
         if (d.upsell) renderUpsell(d.upsell);
         if (d.status === 'done') {
-            fetch('/api/marketing/plan-ack', {method: 'POST'}).catch(function() {});
+            fetch('/api/marketing/plan-ack', {method: 'POST', headers: {'X-CSRFToken': window.CSRF_TOKEN}}).catch(function() {});
         }
     }
 
@@ -1619,7 +1619,7 @@
 
         fetch('/api/marketing/generate-plan', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
             body: JSON.stringify({goals: goals, platforms: activePlatforms}),
         })
         .then(function(r) { return r.json(); })

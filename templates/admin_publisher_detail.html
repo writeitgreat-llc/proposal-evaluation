@@ -106,22 +106,26 @@
                 <div style="display: grid; gap: 0.5rem;">
                     {% if not publisher.is_approved %}
                     <form method="POST" action="{{ url_for('admin_approve_publisher', publisher_id=publisher.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-primary" style="width: 100%;">Approve Account</button>
                     </form>
                     {% endif %}
 
                     {% if publisher.is_active_account %}
                     <form method="POST" action="{{ url_for('admin_toggle_publisher_active', publisher_id=publisher.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline" style="width: 100%;">Deactivate Account</button>
                     </form>
                     {% else %}
                     <form method="POST" action="{{ url_for('admin_toggle_publisher_active', publisher_id=publisher.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-primary" style="width: 100%;">Reactivate Account</button>
                     </form>
                     {% endif %}
 
                     <form method="POST" action="{{ url_for('admin_delete_publisher', publisher_id=publisher.id) }}"
                           onsubmit="return confirm('Permanently delete {{ publisher.name }}? This will also remove all their shared proposal access.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline" style="width: 100%; color: var(--error); border-color: var(--error);">Delete Account</button>
                     </form>
                 </div>

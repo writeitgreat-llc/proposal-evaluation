@@ -713,6 +713,51 @@ app.config['WTF_CSRF_TIME_LIMIT'] = None
 app.config['WTF_CSRF_SSL_STRICT'] = False
 
 
+def _retry_target(ref):
+    """Where to send a visitor whose token failed, built from OUR url map.
+
+    The Referer is attacker-influenced, so no part of it is ever echoed into
+    Location. It is used only as a LOOKUP KEY: its path is matched against the
+    url map, and what comes back is an endpoint name. The redirect string is
+    then rebuilt by url_for() from that endpoint, so the only thing the
+    attacker controls is *which of our own pages* the visitor lands on — the
+    same choice a link on our own site would give them.
+
+    That construction is what makes this safe by shape rather than by
+    validation. The previous version validated the referrer and was correct
+    (proved against `/\\evil.com`, `http:evil.com`, `//evil.com` and friends),
+    but "user text reaches redirect(), guarded by a helper" is indistinguishable
+    from the vulnerable pattern to a scanner, and CodeQL flagged it on PR #162.
+    A standing alert nobody can safely dismiss is its own hazard: it trains you
+    to wave through the next one, which may be real.
+
+    Returns None when the referrer names nothing we serve.
+    """
+    if not ref:
+        return None
+    parsed = urlparse(ref)
+    # Cross-host referrers are simply not ours to return to. A referrer with no
+    # host at all (a bare path, or the `http:evil.com` shape) is equally
+    # unusable here, because matching is done on path alone.
+    if parsed.scheme not in ('http', 'https') or parsed.netloc != request.host:
+        return None
+    try:
+        # match() resolves against the real url map; anything not routed (or
+        # not answering GET) raises, which is the rejection we want.
+        endpoint, view_args = app.url_map.bind(
+            request.host).match(parsed.path or '/', method='GET')
+    except Exception:
+        return None
+    # The query string is deliberately dropped: preserving it would put
+    # attacker text back into the URL for no benefit, and any campaign
+    # parameter on the original visit was already recorded when that page was
+    # first served.
+    try:
+        return url_for(endpoint, **view_args)
+    except Exception:
+        return None
+
+
 @app.errorhandler(CSRFError)
 def _csrf_failed(e):
     """A missing/stale token gets a retry, not a dead-end 400.
@@ -739,31 +784,13 @@ def _csrf_failed(e):
                         'error': 'Your session expired. Please refresh the page and try again.'}), 400
     flash('Your session expired, so that submission was not accepted. '
           'Please try again.', 'error')
-    ref = request.referrer
-    if ref:
-        # The Referer is attacker-influenced input, and this handler used to
-        # validate it with its own inline urlparse test — which is exactly the
-        # class of check _safe_next exists to replace (`http:evil.com` parses
-        # with an empty netloc, `/\` gets folded to `//` by several browsers).
-        # Never redirect to the raw referrer. A same-host absolute referrer is
-        # first reduced to its path?query — a string that cannot name a host —
-        # and then, like everything else, must clear _safe_next (defined later
-        # in this module; both exist by request time) before it reaches
-        # Location.
-        parsed = urlparse(ref)
-        if parsed.scheme in ('http', 'https') and parsed.netloc == request.host:
-            candidate = parsed.path or '/'
-            if parsed.query:
-                candidate += '?' + parsed.query
-        else:
-            candidate = ref
-        target = _safe_next(candidate)
-        if target:
-            return redirect(target)
-    # No usable referrer: re-render the page the form lives on. Every GET+POST
-    # route answers this; a POST-only route without a referrer has no page to
-    # go back to, and 405→login is still a recoverable screen, not a raw 400.
-    return redirect(request.path)
+    target = _retry_target(request.referrer)
+    if target:
+        return redirect(target)
+    # Nothing in the referrer resolved to one of our own pages: send them to
+    # the form they were most likely on. url_for on the CURRENT endpoint keeps
+    # this a routed URL rather than an echo of the requested path.
+    return redirect(url_for(request.endpoint) if request.endpoint else '/')
 
 # ── First-party web analytics (cross-app contract v1) ──────────────────────
 # The collector, the two tables and the outbox drain live in

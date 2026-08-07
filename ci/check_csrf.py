@@ -172,6 +172,47 @@ with appmod.app.app_context():
     check(appmod.Author.query.filter_by(email="csrf.probe@example.test").first() is None,
           "...and it created no account")
 
+    # -----------------------------------------------------------------
+    # 1b. The retry redirect cannot be steered off-site
+    #
+    # The retry screen is reached by anyone who can make a token-less POST,
+    # and its destination is chosen from the Referer — attacker-influenced
+    # input. _retry_target rebuilds the Location from the url map (referrer
+    # in, endpoint out, url_for back), so these payloads have nowhere to go;
+    # this section is what stops a future edit quietly reintroducing an echo
+    # of the referrer. `/\` is in the list because several browsers fold it
+    # to `//`, which urlparse does not.
+    # -----------------------------------------------------------------
+    HOSTILE_REFERERS = [
+        "https://evil.example/x",
+        "//evil.example",
+        "/\\evil.example",
+        "http:evil.example",
+        "https://localhost/\\evil.example",
+        "https://localhost@evil.example/",
+        "https://localhost.evil.example/author/register",
+        "https://localhost/author/register?next=https://evil.example",
+    ]
+    for referer in HOSTILE_REFERERS:
+        _fresh_g()
+        resp = client.post("/author/register", data={"email": "x@example.test"},
+                           headers={"Referer": referer})
+        location = resp.headers.get("Location", "")
+        safe = (location.startswith("/") and not location.startswith("//")
+                and "\\" not in location and "evil.example" not in location)
+        check(safe, f"a hostile Referer cannot steer the retry redirect: "
+                    f"{referer!r} -> {location!r}")
+
+    for referer, expected in [("https://localhost/author/register", "/author/register"),
+                              ("https://localhost/author/register?src=camp", "/author/register"),
+                              ("https://localhost/author/login", "/author/login")]:
+        _fresh_g()
+        resp = client.post("/author/register", data={"email": "x@example.test"},
+                           headers={"Referer": referer})
+        check(resp.headers.get("Location", "") == expected,
+              f"a genuine same-host Referer still returns the visitor to their form: "
+              f"{referer!r} -> {resp.headers.get('Location', '')!r} (want {expected!r})")
+
     # =======================================================================
     # 2. The exemption set is EXACTLY the allowlist
     # =======================================================================

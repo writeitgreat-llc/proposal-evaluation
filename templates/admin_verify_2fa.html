@@ -17,6 +17,7 @@
         {% endwith %}
 
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <input type="text" id="totp_code" name="totp_code" required
                        placeholder="000000" autofocus

@@ -332,7 +332,7 @@ main { display: flex; flex-direction: column; min-height: 0; }
         try {
             const resp = await fetch('/api/coach-chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN },
                 body: JSON.stringify({
                     messages: messages.map(m => ({ role: m.role === 'agent' ? 'assistant' : m.role, content: m.content })),
                     book_title: titleInput.value.trim()

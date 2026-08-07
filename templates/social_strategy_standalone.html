@@ -79,6 +79,7 @@
     {% endwith %}
 
     <form method="POST" action="{{ url_for('social_strategy_standalone') }}" id="ss-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="ss-card">
             <h2>About Your Book</h2>

@@ -33,6 +33,8 @@ from flask import Flask, Request, render_template, request, jsonify, redirect, u
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError
 from sqlalchemy.exc import IntegrityError
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature, BadData
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -679,6 +681,90 @@ def _route_aware_unauthorized():
     return redirect(url_for(endpoint, next=path))
 login_manager.login_message = None  # Disable "Please log in" message
 
+# ── CSRF protection (app-wide) ────────────────────────────────────────────────
+# Every POST/PUT/PATCH/DELETE must carry a token tied to the visitor's session:
+# in a hidden `csrf_token` input on every <form method="post">, or in an
+# X-CSRFToken header for fetch() callers (base.html exposes the value in a
+# <meta name="csrf-token">). SameSite=Lax above already blocks the cross-SITE
+# form post, but all three apps now share writeitgreat.com — Lax does nothing
+# between subdomains of one registrable domain, so an XSS or subdomain takeover
+# on any of them could drive this app's admin actions. The token is what closes
+# that.
+#
+# Exemptions are enumerated, never patterned, and each names the mechanism that
+# authenticates the caller instead:
+#   * /api/submit          — X-API-Key (hmac.compare_digest), the Wix server
+#   * analytics /consent,/e — anonymous by design; sendBeacon cannot set
+#                             headers (exempted below, after the blueprint import)
+# GET /sso/consume needs none: CSRF protects state-changing METHODS, and the
+# jump token is single-use + 60s-signed besides.
+csrf = CSRFProtect(app)
+
+# The token never outlives the session, and never expires inside it. The
+# default 3600s limit would 400 a campaign author who opened /author/register,
+# thought for an hour, and then submitted — an expiry that protects nothing the
+# session cookie's own lifetime doesn't already bound.
+app.config['WTF_CSRF_TIME_LIMIT'] = None
+
+# Token check only, no Referer check. SSL_STRICT rejects any HTTPS POST whose
+# Referer is missing — which is a browser privacy setting, not an attack — and
+# the campaign points cold traffic at these forms. The session-bound token is
+# the actual protection; a referrer heuristic on top buys false refusals.
+app.config['WTF_CSRF_SSL_STRICT'] = False
+
+
+@app.errorhandler(CSRFError)
+def _csrf_failed(e):
+    """A missing/stale token gets a retry, not a dead-end 400.
+
+    In practice this fires when the session cookie changed under an open tab
+    (cookies cleared, SECRET_KEY rotated) — with WTF_CSRF_TIME_LIMIT = None the
+    token itself never expires. A campaign author mid-signup must land back on
+    the form they came from, with their message explained; a fetch() caller
+    must get JSON, because every caller in templates/ runs .json() on the body
+    and a redirect to an HTML page would surface as a parse error.
+
+    A fetch() caller is recognised by its SHAPE, never by URL prefix: it sent
+    a token header (a stale token is still sent — window.CSRF_TOKEN is a
+    page-load constant) or it asked for JSON outright. A `/api/` path test
+    alone missed /author/coaching/evaluate, the one fetch() target in
+    templates/ outside /api/ — its caller ran .json() on the redirect's HTML,
+    alerted 'Network error', and every retry re-sent the same stale token, so
+    the author could never submit until they happened to reload."""
+    sent_token_header = any(h in request.headers
+                            for h in app.config['WTF_CSRF_HEADERS'])
+    if (request.path.startswith('/api/') or sent_token_header
+            or request.accept_mimetypes.best == 'application/json'):
+        return jsonify({'success': False,
+                        'error': 'Your session expired. Please refresh the page and try again.'}), 400
+    flash('Your session expired, so that submission was not accepted. '
+          'Please try again.', 'error')
+    ref = request.referrer
+    if ref:
+        # The Referer is attacker-influenced input, and this handler used to
+        # validate it with its own inline urlparse test — which is exactly the
+        # class of check _safe_next exists to replace (`http:evil.com` parses
+        # with an empty netloc, `/\` gets folded to `//` by several browsers).
+        # Never redirect to the raw referrer. A same-host absolute referrer is
+        # first reduced to its path?query — a string that cannot name a host —
+        # and then, like everything else, must clear _safe_next (defined later
+        # in this module; both exist by request time) before it reaches
+        # Location.
+        parsed = urlparse(ref)
+        if parsed.scheme in ('http', 'https') and parsed.netloc == request.host:
+            candidate = parsed.path or '/'
+            if parsed.query:
+                candidate += '?' + parsed.query
+        else:
+            candidate = ref
+        target = _safe_next(candidate)
+        if target:
+            return redirect(target)
+    # No usable referrer: re-render the page the form lives on. Every GET+POST
+    # route answers this; a POST-only route without a referrer has no page to
+    # go back to, and 405→login is still a recoverable screen, not a raw 400.
+    return redirect(request.path)
+
 # ── First-party web analytics (cross-app contract v1) ──────────────────────
 # The collector, the two tables and the outbox drain live in
 # analytics_collect.py — app.py is already ~8,800 lines and this is a
@@ -694,6 +780,11 @@ login_manager.login_message = None  # Disable "Please log in" message
 import analytics_collect
 
 analytics_collect.init_app(app, db)
+
+# CSRF-exempt: /consent and /e are anonymous by design (no session privilege to
+# forge — see set_consent()'s docstring), and navigator.sendBeacon cannot set a
+# token header even if we wanted one.
+csrf.exempt(analytics_collect.analytics_bp)
 
 # Only http(s). PRIVACY_URL comes from the environment, and a mistyped one
 # rendered straight into an href is how a javascript: URL gets onto a login
@@ -2665,6 +2756,23 @@ EVALUATE_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 # file. 12 leaves room for the rest of the form and stays above the largest
 # training document anyone has actually uploaded.
 ADMIN_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
+
+# What one-pager audio feedback may claim to be, and the only types the serve
+# routes will ever echo back. The first four are what the recorder in
+# admin_one_pager_detail.html actually produces (its isTypeSupported probe:
+# audio/mp4 on Safari, audio/webm elsewhere, audio/ogg as the fallback); the
+# rest cover a team member attaching a plain recording by hand. UNLIKE the size
+# cap above, this IS a security control: the stored claim is replayed as the
+# response Content-Type on this app's own origin, so a claim of text/html would
+# make the author's browser run an uploaded page as the portal — able to act as
+# whichever signed-in author plays it. FileStorage.mimetype is already
+# lowercased with any ';codecs=' parameter stripped, so membership is exact.
+# Rows written before this list existed hold arbitrary claims, which is why the
+# serve side re-checks instead of trusting the upload-side refusal.
+AUDIO_FEEDBACK_MIME_ALLOWLIST = frozenset({
+    'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
+    'audio/wav', 'audio/x-m4a',
+})
 
 # The SAME column, Proposal.original_file, through a different door: /api/submit
 # is the API-key'd integration endpoint and has always had its own 10 MB limit,
@@ -9102,6 +9210,7 @@ def _cors_headers(response):
 
 
 @app.route('/api/submit', methods=['POST', 'OPTIONS'])
+@csrf.exempt  # machine-to-machine: authenticated by X-API-Key (hmac.compare_digest below), no browser session to forge
 def api_submit():
     """
     External submission endpoint for the Wix site.
@@ -10375,6 +10484,21 @@ def view_proposal_text(submission_id):
                            embed_pdf=embed_pdf)
 
 
+def _uploaded_bytes_headers(response):
+    """The header pair for EVERY route that hands back somebody's upload from
+    this origin (register entry 9's third instruction names all of them, not
+    just audio; the dashboard sends the same pair on client documents).
+    nosniff pins the Content-Type this app chose — which on these routes is
+    guessed from an uploader-controlled filename — and the sandbox CSP keeps
+    the response inert even if it is ever opened as a document. Chromium's
+    built-in PDF viewer renders normally under this CSP, iframe embed
+    included (verified headless), so the inline proposal viewer keeps
+    working."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+    return response
+
+
 @app.route('/admin/proposal/<submission_id>/embed-proposal')
 @team_required
 def embed_proposal_file(submission_id):
@@ -10388,7 +10512,10 @@ def embed_proposal_file(submission_id):
         mimetype = 'application/pdf'
     else:
         mimetype = 'application/octet-stream'
-    return send_file(file_buffer, mimetype=mimetype, download_name=proposal.original_filename)
+    # AUTHOR-uploaded bytes served inline: strictly wider exposure than the
+    # audio route, so at minimum the same headers.
+    return _uploaded_bytes_headers(
+        send_file(file_buffer, mimetype=mimetype, download_name=proposal.original_filename))
 
 
 @app.route('/admin/proposal/<submission_id>/download-proposal')
@@ -10409,26 +10536,26 @@ def download_proposal_text(submission_id):
             mimetype = 'application/msword'
         else:
             mimetype = 'application/octet-stream'
-        return send_file(
+        return _uploaded_bytes_headers(send_file(
             file_buffer,
             as_attachment=True,
             download_name=proposal.original_filename,
             mimetype=mimetype
-        )
+        ))
 
-    # Fallback to extracted text
+    # Fallback to extracted text — still author-supplied content, same headers
     if not proposal.proposal_text:
         flash('No proposal text available for this submission.', 'error')
         return redirect(url_for('admin_proposal_detail', submission_id=submission_id))
 
     text_buffer = BytesIO(proposal.proposal_text.encode('utf-8'))
     filename = f"{proposal.author_name.replace(' ', '_')}_{proposal.submission_id}_proposal.txt"
-    return send_file(
+    return _uploaded_bytes_headers(send_file(
         text_buffer,
         as_attachment=True,
         download_name=filename,
         mimetype='text/plain'
-    )
+    ))
 
 
 @app.route('/admin/proposal/<submission_id>/resend-author-email', methods=['POST'])
@@ -12006,8 +12133,16 @@ def admin_one_pager_add_feedback(submission_id):
                 'leave written feedback instead.',
                 'error')
             return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
+        # The claim is stored and later replayed as a Content-Type, so only the
+        # audio types the recorder (or a hand-picked recording) can honestly
+        # carry are accepted — see AUDIO_FEEDBACK_MIME_ALLOWLIST.
+        claimed_mime = (audio_file.mimetype or '').lower()
+        if claimed_mime not in AUDIO_FEEDBACK_MIME_ALLOWLIST:
+            flash('That file does not look like an audio recording. Please '
+                  're-record it or leave written feedback instead.', 'error')
+            return redirect(url_for('admin_one_pager_detail', submission_id=submission_id))
         fb.audio_data = audio_file.read()
-        fb.audio_mime_type = audio_file.mimetype or 'audio/webm'
+        fb.audio_mime_type = claimed_mime
     else:
         fb.feedback_text = request.form.get('feedback_text', '').strip()
         if not fb.feedback_text:
@@ -12099,6 +12234,23 @@ def _send_assignment_notification(to_email, assignee_name, author_name,
                html_content)
 
 
+def _audio_feedback_response(fb, feedback_id):
+    """User-uploaded bytes served from this app's own origin — never echo the
+    stored type claim raw. Rows may predate the upload-side allowlist, so the
+    claim is re-checked here and anything not plainly audio is served as
+    audio/webm; a claim of text/html replayed verbatim would let the author's
+    browser run an uploaded page AS this portal. _uploaded_bytes_headers
+    stamps the pair every upload-serving route carries: nosniff stops the
+    browser second-guessing the forced type, and the sandbox CSP stops
+    anything executing even if a response is opened as a document."""
+    stored = (fb.audio_mime_type or '').lower()
+    return _uploaded_bytes_headers(send_file(
+        BytesIO(fb.audio_data),
+        mimetype=stored if stored in AUDIO_FEEDBACK_MIME_ALLOWLIST else 'audio/webm',
+        download_name=f'feedback_{feedback_id}.webm',
+    ))
+
+
 @app.route('/admin/one-pager/feedback/<int:feedback_id>/audio')
 @team_required
 def admin_one_pager_feedback_audio(feedback_id):
@@ -12106,11 +12258,7 @@ def admin_one_pager_feedback_audio(feedback_id):
     fb = OnePagerFeedback.query.get_or_404(feedback_id)
     if not fb.audio_data:
         abort(404)
-    return send_file(
-        BytesIO(fb.audio_data),
-        mimetype=fb.audio_mime_type or 'audio/webm',
-        download_name=f'feedback_{feedback_id}.webm'
-    )
+    return _audio_feedback_response(fb, feedback_id)
 
 
 @app.route('/author/coaching/quickstart/feedback/<int:feedback_id>/audio')
@@ -12124,10 +12272,7 @@ def author_one_pager_feedback_audio(feedback_id):
         abort(403)
     if not fb.audio_data:
         abort(404)
-    return send_file(
-        BytesIO(fb.audio_data),
-        mimetype=fb.audio_mime_type or 'audio/webm'
-    )
+    return _audio_feedback_response(fb, feedback_id)
 
 
 def _send_one_pager_feedback_email(author_name, author_email, book_title, feedback_type):
@@ -12329,11 +12474,14 @@ def admin_knowledge_base_delete(doc_id):
 def admin_knowledge_base_download(doc_id):
     """Download original KB document file."""
     doc = KnowledgeBaseDocument.query.get_or_404(doc_id)
-    return send_file(
+    # send_file guesses the type from the stored filename (a KB doc named
+    # evil.html would be answered text/html) — uploaded bytes, so the same
+    # header pair as every other upload-serving route.
+    return _uploaded_bytes_headers(send_file(
         BytesIO(doc.file_data),
         download_name=doc.filename,
         as_attachment=True,
-    )
+    ))
 
 
 # ============================================================================

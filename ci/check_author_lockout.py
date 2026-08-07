@@ -44,6 +44,7 @@ what keeps the Postgres-only failure mode covered.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -100,6 +101,26 @@ def body(resp) -> str:
     return resp.get_data(as_text=True)
 
 
+# CSRFProtect is app-wide, so every form POST below must carry the token the
+# form's own page renders — which doubles as the assertion that the sign-in
+# forms actually carry one. Fetched fresh per POST: logout and session churn
+# would invalidate a cached value.
+_CSRF_RE = re.compile(r'name="csrf_token" value="([^"]+)"')
+
+
+def form_post(c, page_path, post_path, data):
+    # One app context wraps this whole file, so flask_wtf's per-request token
+    # cache on `g` outlives every simulated request here. After a view clears
+    # the session (login does, against fixation), the cached token matches no
+    # session and every later POST would 400. A real request gets a fresh `g`;
+    # give each simulated one the same.
+    from flask import g
+    g.pop("csrf_token", None)
+    m = _CSRF_RE.search(c.get(page_path).get_data(as_text=True))
+    assert m, f"no csrf_token input rendered on {page_path}"
+    return c.post(post_path, data={**data, "csrf_token": m.group(1)})
+
+
 def fresh(model, row_id):
     appmod.db.session.expire_all()
     return appmod.db.session.get(model, row_id)
@@ -130,7 +151,8 @@ with appmod.app.app_context():
     client = appmod.app.test_client()
 
     def post_author(email, password):
-        return client.post("/author/login", data={"email": email, "password": password})
+        return form_post(client, "/author/login", "/author/login",
+                         {"email": email, "password": password})
 
     print("\n1. Five wrong passwords, then the door is locked to everyone")
     clear_login_buckets()
@@ -259,8 +281,8 @@ with appmod.app.app_context():
     totp = pyotp.TOTP(secret)
 
     staff_client = appmod.app.test_client()
-    resp = staff_client.post("/admin/login",
-                             data={"email": STAFF_EMAIL, "password": STAFF_PASSWORD})
+    resp = form_post(staff_client, "/admin/login", "/admin/login",
+                     {"email": STAFF_EMAIL, "password": STAFF_PASSWORD})
     check(resp.status_code == 302 and "verify-2fa" in resp.headers.get("Location", ""),
           "correct password redirects to the TOTP step")
     staff = fresh(appmod.AdminUser, staff_id)
@@ -272,13 +294,15 @@ with appmod.app.app_context():
     now = datetime.utcnow()
     valid = {totp.at(now, offset) for offset in range(-3, 5)}
     wrong_code = next(c for c in ("000000", "111111", "222222") if c not in valid)
-    resp = staff_client.post("/admin/verify-2fa", data={"totp_code": wrong_code})
+    resp = form_post(staff_client, "/admin/verify-2fa", "/admin/verify-2fa",
+                     {"totp_code": wrong_code})
     check("Invalid code" in body(resp), "wrong TOTP code is rejected")
     staff = fresh(appmod.AdminUser, staff_id)
     check(staff.failed_login_attempts == 4,
           f"and it costs a strike on the SAME counter (got {staff.failed_login_attempts})")
 
-    resp = staff_client.post("/admin/verify-2fa", data={"totp_code": totp.now()})
+    resp = form_post(staff_client, "/admin/verify-2fa", "/admin/verify-2fa",
+                     {"totp_code": totp.now()})
     check(resp.status_code == 302 and resp.headers.get("Location", "").endswith("/admin"),
           "correct TOTP completes the sign-in")
     staff = fresh(appmod.AdminUser, staff_id)
@@ -290,13 +314,13 @@ with appmod.app.app_context():
     clear_login_buckets()
     pub_client = appmod.app.test_client()
     for _ in range(5):
-        pub_client.post("/publisher/login",
-                        data={"email": PUB_EMAIL, "password": "wrong-password"})
+        form_post(pub_client, "/publisher/login", "/publisher/login",
+                  {"email": PUB_EMAIL, "password": "wrong-password"})
     pub = fresh(appmod.Publisher, pub_id)
     check(pub.failed_login_attempts == 5 and pub.locked_until is not None,
           f"five wrong passwords lock the publisher (got {pub.failed_login_attempts})")
-    page = body(pub_client.post("/publisher/login",
-                                data={"email": PUB_EMAIL, "password": PUB_PASSWORD}))
+    page = body(form_post(pub_client, "/publisher/login", "/publisher/login",
+                          {"email": PUB_EMAIL, "password": PUB_PASSWORD}))
     check(LOCKED_FRAGMENT in page, "the correct password is refused while locked")
     check(pub_client.get("/publisher/dashboard").status_code == 302,
           "and it did not sign anyone in")
@@ -310,8 +334,8 @@ with appmod.app.app_context():
     clear_login_buckets()
     reset_client = appmod.app.test_client()
     for _ in range(5):
-        reset_client.post("/author/login",
-                          data={"email": AUTHOR_EMAIL, "password": "wrong-password"})
+        form_post(reset_client, "/author/login", "/author/login",
+                  {"email": AUTHOR_EMAIL, "password": "wrong-password"})
     author = fresh(appmod.Author, author_id)
     check(author.is_locked() and author.failed_login_attempts == 5,
           "author is locked after five wrong passwords")
@@ -322,14 +346,15 @@ with appmod.app.app_context():
     reset_token = author.password_reset_token
     appmod.db.session.commit()
     NEW_PASSWORD = "brand-new-passphrase-9"
-    reset_client.post(f"/author/reset-password/{reset_token}",
-                      data={"password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD})
+    form_post(reset_client, f"/author/reset-password/{reset_token}",
+              f"/author/reset-password/{reset_token}",
+              {"password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD})
     author = fresh(appmod.Author, author_id)
     check(not author.is_locked() and author.failed_login_attempts == 0
           and author.locked_until is None and author.lockout_count == 0,
           "the reset cleared every lockout field")
-    resp = reset_client.post("/author/login",
-                            data={"email": AUTHOR_EMAIL, "password": NEW_PASSWORD})
+    resp = form_post(reset_client, "/author/login", "/author/login",
+                     {"email": AUTHOR_EMAIL, "password": NEW_PASSWORD})
     check(resp.status_code == 302 and "/login" not in resp.headers.get("Location", ""),
           "and the new correct password now signs the author straight in")
 

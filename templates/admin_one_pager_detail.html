@@ -140,6 +140,7 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
                 <!-- Text feedback panel -->
                 <div class="fb-panel active" id="panel-text">
                     <form method="POST" action="{{ url_for('admin_one_pager_add_feedback', submission_id=submission.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="feedback_type" value="text">
                         <textarea name="feedback_text" rows="6"
                             style="width:100%;padding:0.6rem 0.875rem;border:1.5px solid var(--gray-200);border-radius:7px;font-size:0.875rem;font-family:inherit;resize:vertical;box-sizing:border-box;"
@@ -177,6 +178,7 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
                         <form id="audio-form" method="POST"
                               action="{{ url_for('admin_one_pager_add_feedback', submission_id=submission.id) }}"
                               enctype="multipart/form-data" style="margin-top:0.625rem;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-primary" style="width:100%;font-size:0.875rem;">
                                 Send Audio Feedback →
                             </button>
@@ -212,6 +214,7 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
         <div class="card" style="margin-top:1rem;">
             <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 1rem;">Internal Notes</h3>
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <textarea name="admin_notes" rows="5"
                     style="width:100%;padding:0.6rem 0.875rem;border:1.5px solid var(--gray-200);border-radius:7px;font-size:0.875rem;font-family:inherit;resize:vertical;box-sizing:border-box;"
                     placeholder="Internal notes (not shown to author)…">{{ submission.admin_notes or '' }}</textarea>
@@ -226,6 +229,7 @@ audio { width: 100%; border-radius: 6px; margin-top: 0.25rem; }
             <h3 style="font-size:0.9375rem;color:var(--primary);margin:0 0 0.75rem;">Assigned To</h3>
             <form method="POST" action="{{ url_for('admin_one_pager_assign', submission_id=submission.id) }}"
                   style="display:flex;gap:0.5rem;align-items:center;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <select name="assigned_to"
                         style="flex:1;font-size:0.875rem;padding:0.4rem 0.6rem;border:1.5px solid var(--gray-200);border-radius:6px;">
                     <option value="">Unassigned</option>
@@ -392,7 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var fd = new FormData();
         fd.append('feedback_type', 'audio');
         fd.append('audio_file', audioBlob, 'feedback.' + ext);
-        fetch(form.action, { method: 'POST', body: fd })
+        fetch(form.action, { method: 'POST', headers: { 'X-CSRFToken': window.CSRF_TOKEN }, body: fd })
             .then(function(r) {
                 if (r.ok || r.redirected) {
                     window.location.reload();

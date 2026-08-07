@@ -197,6 +197,40 @@ jobs:
       - name: Sign-in lockout holds on all three account types
         run: python ci/check_author_lockout.py
 
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # required-check-name coupling as every other step here.
+      #
+      # The five paths that make money -- register, sign in, team 2FA, upload
+      # a proposal, watch its status -- had no behavioural test at all: 109
+      # routes, and nothing in CI ever POSTed to one. This drives each of them
+      # the way a browser does, WITH CSRF enabled: every request fetches the
+      # real page, extracts the rendered token, and submits it. So it is also
+      # the standing proof that app-wide CSRF has not broken the campaign
+      # funnel, and its negative probes prove the protection is actually on.
+      # It asserts rows and stored bytes, never just status codes: a durable
+      # author row, the lockout strike on a wrong password, the byte-identical
+      # uploaded PDF, and the status visible on every page an author checks.
+      - name: The paths that make money still work, driven like a browser
+        run: python ci/check_money_paths.py
+
+      # A STEP inside proposal-ci, deliberately not a job of its own -- same
+      # required-check-name coupling as every other step here. It lives in this
+      # job (not security.yml) because it imports the real app, and the
+      # security jobs are deliberately static and install nothing but their
+      # own scanner.
+      #
+      # App-wide CSRF shipped with exactly three exemptions, each named for
+      # the mechanism that authenticates the caller instead. This pins all of
+      # it: the protection is ON (config + a token-less POST refused), the
+      # exemption set matches the in-file allowlist EXACTLY in both
+      # directions, every <form method=post> in templates/ renders the hidden
+      # token, and every fetch()/XHR POST sends the X-CSRFToken header from
+      # base.html's meta tag. A quiet WTF_CSRF_ENABLED=False or a convenient
+      # new @csrf.exempt is invisible to every other check -- the forms still
+      # render and the token-carrying tests still pass.
+      - name: CSRF stays on, exempted exactly three times, and every form and fetch carries the token
+        run: python ci/check_csrf.py
+
       # Blocking, on purpose. This one asserts the privacy promises the consent
       # banner makes to visitors -- that no raw IP and no raw User-Agent is ever
       # written to storage, that the query string and any URL token are stripped

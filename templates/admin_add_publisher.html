@@ -23,6 +23,7 @@
 
 <div class="container">
     <form method="POST" class="add-publisher-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="form-section">
             <h3>Account Details</h3>

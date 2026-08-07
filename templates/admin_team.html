@@ -41,6 +41,7 @@
                         <span class="tier-badge tier-a" style="font-size: 0.75rem;">{{ member.role|title }}</span>
                     {% else %}
                         <form method="POST" action="{{ url_for('admin_update_role', user_id=member.id) }}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select name="role" onchange="this.form.submit()" style="padding: 0.25rem 0.5rem; border: 1px solid var(--gray-300); border-radius: 4px; font-size: 0.8125rem;">
                                 {% for value, label in role_choices %}
                                 <option value="{{ value }}" {% if member.role == value %}selected{% endif %}>{{ label }}</option>
@@ -73,6 +74,7 @@
                        this member ONLY by this address; blank = match login email. #}
                     <form method="POST" action="{{ url_for('admin_set_dashboard_email', user_id=member.id) }}"
                           style="display: flex; gap: 0.25rem; align-items: center;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <label for="dashboard-email-{{ member.id }}" class="sr-only" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);">Dashboard email for {{ member.name }}</label>
                         <input type="email" id="dashboard-email-{{ member.id }}" name="dashboard_email"
                                value="{{ member.dashboard_email or '' }}"
@@ -90,16 +92,19 @@
                     <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
                         {% if member.is_active_account %}
                         <form method="POST" action="{{ url_for('admin_toggle_active', user_id=member.id) }}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-action btn-action-warn" title="Deactivate account">Deactivate</button>
                         </form>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_active', user_id=member.id) }}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-action btn-action-success" title="{% if not member.totp_enabled %}Approve this registration and activate the account{% else %}Reactivate account{% endif %}">{% if not member.totp_enabled %}Approve{% else %}Activate{% endif %}</button>
                         </form>
                         {% endif %}
 
                         {% if member.is_locked() %}
                         <form method="POST" action="{{ url_for('admin_unlock_account', user_id=member.id) }}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-action btn-action-info" title="Unlock account">Unlock</button>
                         </form>
                         {% endif %}
@@ -107,12 +112,14 @@
                         {% if member.totp_enabled %}
                         <form method="POST" action="{{ url_for('admin_reset_2fa', user_id=member.id) }}" style="display: inline;"
                               onsubmit="return confirm('Reset 2FA for {{ member.name }}? They will need to set it up again.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-action btn-action-info" title="Reset 2FA">Reset 2FA</button>
                         </form>
                         {% endif %}
 
                         <form method="POST" action="{{ url_for('admin_delete_member', user_id=member.id) }}" style="display: inline;"
                               onsubmit="return confirm('Permanently delete {{ member.name }}? This cannot be undone.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn-action btn-action-danger" title="Delete account">Delete</button>
                         </form>
                     </div>

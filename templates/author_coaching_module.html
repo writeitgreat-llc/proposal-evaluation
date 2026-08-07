@@ -1201,7 +1201,7 @@
         try {
             const r = await fetch('/api/coaching/content/save', {
                 method: 'POST',
-                headers: {'Content-Type':'application/json'},
+                headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                 body: JSON.stringify({
                     enrollment_id: ENROLLMENT_ID,
                     module_order: MODULE_ORDER,
@@ -1337,7 +1337,7 @@
             try {
                 const r = await fetch('/api/coaching/homework', {
                     method: 'POST',
-                    headers: {'Content-Type':'application/json'},
+                    headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                     body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, content })
                 });
                 const d = await r.json();
@@ -1391,7 +1391,7 @@
             try {
                 const r = await fetch('/api/coaching/save-continue', {
                     method: 'POST',
-                    headers: {'Content-Type':'application/json'},
+                    headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                     body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, content: textarea ? textarea.value : '' })
                 });
                 const d = await r.json();
@@ -1450,7 +1450,7 @@
         try {
             const r = await fetch('/api/coaching/chat', {
                 method: 'POST',
-                headers: {'Content-Type':'application/json'},
+                headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                 body: JSON.stringify({ enrollment_id: ENROLLMENT_ID, module_order: MODULE_ORDER, message: text })
             });
             const d = await r.json();
@@ -1529,7 +1529,7 @@
             try {
                 const r = await fetch('/api/coaching/research', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                     body: JSON.stringify({
                         hook: hook,
                         book_title: BOOK_TITLE,
@@ -1574,7 +1574,7 @@
         timer = setTimeout(function() {
             fetch('/api/coaching/update-title', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
                 body: JSON.stringify({ enrollment_id: {{ enrollment.id }}, book_title: input.value })
             })
             .then(function(r) { return r.json(); })
@@ -1682,7 +1682,7 @@ function showXPToast(xpGained, badge) {
 function saveToServer(type, data, callback) {
     fetch('/api/marketing/save', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
         body: JSON.stringify({enrollment_id: ENROLLMENT_ID, type: type, data: data}),
     })
     .then(function(r) { return r.json(); })
@@ -1974,7 +1974,7 @@ function submitPitch() {
 
     fetch('/api/marketing/pitch-eval', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN},
         body: JSON.stringify({enrollment_id: ENROLLMENT_ID, pitch_text: text}),
     })
     .then(function(r) { return r.json(); })

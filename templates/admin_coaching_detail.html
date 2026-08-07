@@ -55,12 +55,14 @@
                 <span class="mod-status-badge {{ enrollment.status }}" style="font-size:0.8rem;">{{ enrollment.status | title }}</span>
                 <form method="POST" action="{{ url_for('admin_coaching_reset_enrollment', enrollment_id=enrollment.id) }}"
                       onsubmit="return confirm('⚠️ This will DELETE all progress, chat, homework, and drafts for {{ enrollment.author.name }}. They will restart from Module 1. Continue?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" style="background:#dc2626;color:white;border:none;padding:0.3rem 0.75rem;border-radius:5px;font-size:0.75rem;font-weight:700;cursor:pointer;">
                         Reset Enrollment
                     </button>
                 </form>
                 <form method="POST" action="{{ url_for('admin_coaching_delete_author', enrollment_id=enrollment.id) }}"
                       onsubmit="return confirm('⛔ PERMANENTLY DELETE the account for {{ enrollment.author.email }}? This removes the author account, all proposals, all coaching data, and cannot be undone.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" style="background:#7f1d1d;color:white;border:none;padding:0.3rem 0.75rem;border-radius:5px;font-size:0.75rem;font-weight:700;cursor:pointer;">
                         Delete Author Account
                     </button>
@@ -119,6 +121,7 @@
             {% if mp.status in ('locked', 'revision_requested') %}
                 <form method="POST" action="{{ url_for('admin_coaching_unlock_module', enrollment_id=enrollment.id, module_order=m.order) }}"
                       onsubmit="return confirm('Manually unlock Section {{ m.order }} for {{ enrollment.author.name }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;background:var(--primary);color:white;border:none;cursor:pointer;border-radius:var(--radius);">
                         🔓 {% if mp.status == 'revision_requested' %}Override & Unlock Anyway{% else %}Unlock This Section{% endif %}
                     </button>
@@ -127,6 +130,7 @@
             {% if mp.status != 'approved' and mp.status != 'locked' %}
                 <form method="POST" action="{{ url_for('admin_coaching_approve_module', enrollment_id=enrollment.id, module_order=m.order) }}"
                       onsubmit="return confirm('Mark Section {{ m.order }} as complete for {{ enrollment.author.name }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn" style="font-size:0.8125rem;padding:0.4rem 0.875rem;background:#16a34a;color:white;border:none;cursor:pointer;border-radius:var(--radius);">
                         ✓ Mark Section Complete
                     </button>
@@ -170,6 +174,7 @@
                     <summary style="cursor:pointer;font-size:0.8125rem;color:var(--primary);font-weight:600;">Add Admin Review</summary>
                     <form method="POST" action="{{ url_for('admin_coaching_review_homework', enrollment_id=enrollment.id, submission_id=sub.id) }}"
                           style="margin-top:0.75rem;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <textarea name="admin_feedback" rows="3" placeholder="Your feedback…"
                                   style="width:100%;padding:0.625rem;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:0.875rem;font-family:inherit;box-sizing:border-box;resize:vertical;">{{ sub.admin_feedback or '' }}</textarea>
                         <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">

@@ -38,6 +38,7 @@
     <div class="form-card">
         <h2>New Author Account</h2>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="f-group">
                 <label>Full Name *</label>
                 <input type="text" name="name" required placeholder="Jane Smith" autofocus>

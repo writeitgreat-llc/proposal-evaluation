@@ -17,7 +17,7 @@
 #
 #   platform : linux x86_64 (heroku-24)
 #   python   : 3.11.7
-#   packages : 61
+#   packages : 63 (61 dyno-resolved 2026-08-05 + flask-wtf/wtforms hand-added)
 #   generated: 2026-08-05
 #
 # DO NOT HAND-EDIT. Regenerate, on a dyno:
@@ -41,6 +41,9 @@ distro==1.9.0
 flask==3.0.0
 flask-login==0.6.3
 flask-sqlalchemy==3.1.1
+# Hand-added with Flask-WTF (2026-08-06): pure Python, no environment markers,
+# so the resolution cannot differ between a laptop and the dyno.
+flask-wtf==1.3.0
 greenlet==3.5.4
 gunicorn==23.0.0
 h11==0.16.0
@@ -86,4 +89,6 @@ uritools==6.1.3
 urllib3==2.7.0
 webencodings==0.5.1
 werkzeug==3.1.8
+# Hand-added with flask-wtf above — same reasoning.
+wtforms==3.2.2
 xhtml2pdf==0.2.16

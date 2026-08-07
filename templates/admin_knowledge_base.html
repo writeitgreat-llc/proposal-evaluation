@@ -42,6 +42,7 @@
     <div class="upload-card">
         <h2>Upload New Document</h2>
         <form method="POST" action="{{ url_for('admin_knowledge_base_upload') }}" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="f-group">
                 <label>Document Title *</label>
                 <input type="text" name="title" required placeholder="e.g. Strong Hook Examples — Module 1">
@@ -119,6 +120,7 @@
                                style="font-size:0.8125rem;color:var(--primary);text-decoration:none;">Download</a>
                             <form method="POST" action="{{ url_for('admin_knowledge_base_delete', doc_id=doc.id) }}"
                                   onsubmit="return confirm('Delete this document?');" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" style="background:none;border:none;color:#dc2626;font-size:0.8125rem;cursor:pointer;padding:0;">Delete</button>
                             </form>
                         </div>

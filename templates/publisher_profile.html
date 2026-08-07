@@ -23,6 +23,7 @@
 
 <div class="container">
     <form method="POST" class="profile-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         {# ── Basic Info ── #}
         <div class="profile-section">

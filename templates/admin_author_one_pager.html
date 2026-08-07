@@ -74,6 +74,7 @@
             </div>
             <div class="op-card-body">
                 <form method="POST" id="op-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" id="form-action" value="save">
 
                     <div class="f-group">
@@ -157,6 +158,7 @@
                 {% if submission and submission.status != 'submitted' %}
                 <form method="POST" action="{{ url_for('admin_one_pager_detail', submission_id=submission.id) }}"
                       onsubmit="return false;" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 </form>
                 <a href="{{ url_for('admin_one_pager_detail', submission_id=submission.id) }}"
                    style="font-size:0.8125rem;color:var(--primary);font-weight:600;text-decoration:none;">

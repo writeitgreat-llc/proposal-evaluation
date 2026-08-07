@@ -19,6 +19,7 @@
 
     <div class="detail-section">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="author_name">Author Name *</label>
                 <input type="text" id="author_name" name="author_name" required placeholder="e.g. Jane Smith">

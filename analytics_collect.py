@@ -901,9 +901,9 @@ def set_consent():
     Deliberately public and unauthenticated — an anonymous visitor with no
     session and no privileges to borrow. The worst a forged cross-site POST
     achieves is changing an analytics preference the visitor can change back in
-    one click. (This app has no CSRF extension installed, so unlike the
-    marketing site there is no `@csrf.exempt` to add; the reasoning is recorded
-    here so nobody later "fixes" it by adding one.)
+    one click. (app.py runs CSRFProtect app-wide and exempts this whole
+    blueprint right after init_app() — this reasoning is why, plus /e's
+    sendBeacon, which cannot carry a token header at all.)
 
     The identifier is set with `Set-Cookie` from here rather than by
     JavaScript, and that is load-bearing rather than stylistic. Safari's

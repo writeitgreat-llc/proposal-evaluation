@@ -16,6 +16,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>{% block extra_css %}{% endblock %}</style>
+    {# Per-page <head> additions — canonical tags, page-specific meta. A child
+       template that overrides a block this file does not define renders
+       NOTHING, silently, so this must stay defined even while only one page
+       uses it. #}
+    {% block head_extra %}{% endblock %}
 </head>
 <body>
     <header>

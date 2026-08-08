@@ -3,6 +3,16 @@
    templates/base_public.html for the scope boundary. #}
 {% extends "base_public.html" %}
 {% block title %}Confidentiality Statement - Write It Great{% endblock %}
+
+{# The marketing site ships this same statement at
+   writeitgreat.com/confidentiality (see the route docstring). Two addresses,
+   one text, on two hosts that a single Search Console domain property covers —
+   which is duplicate content with no declared original. This points Google at
+   the marketing copy as the canonical one; this page keeps serving normally to
+   authors who arrive here from a submission form. #}
+{% block head_extra %}
+    <link rel="canonical" href="https://writeitgreat.com/confidentiality">
+{% endblock %}
 {% block content %}
 <section class="hero">
     <h1>Confidentiality Statement</h1>

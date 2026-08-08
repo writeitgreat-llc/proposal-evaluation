@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from flask import Flask, Request, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort, has_request_context
+from flask import Flask, Request, Response, render_template, request, jsonify, redirect, url_for, flash, send_file, send_from_directory, session, abort, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -5494,6 +5494,79 @@ def favicon():
         'favicon.ico',
         mimetype='image/vnd.microsoft.icon',
     )
+
+
+# Paths that may be crawled but must never appear in search results. Crawling
+# is deliberately NOT blocked for these in robots.txt: a blocked crawler never
+# reads the header, so a URL already known from a link would stay indexed with
+# no snippet and no way to remove it. noindex is the stronger instruction and
+# it only works if the crawler is allowed in to read it.
+#
+# /admin is here because there is a followable chain into it from the public
+# internet: six marketing pages link authors.writeitgreat.com/author/register,
+# that page links /author/login, and /author/login links /admin/login at the
+# foot. Googlebot can walk from writeitgreat.com to the staff sign-in screen.
+#
+# NOT listed, on purpose: /author/register and /social-strategy (both are
+# genuine landing pages the marketing site sends traffic to) and /author/login
+# (a built landing page with its own copy, not a bare form — noindexing it is
+# a marketing decision, not hygiene).
+NOINDEX_PREFIXES = (
+    '/admin',
+    '/publisher',
+    '/author/forgot-password',
+    '/author/reset-password',
+    '/author/verify-email',
+    '/results/',
+    '/download/',
+    '/social-strategy/result/',
+    '/social-strategy/pdf/',
+)
+
+
+@app.after_request
+def add_noindex_header(response):
+    """Keep auth, staff and capability-token URLs out of search results."""
+    if request.path.startswith(NOINDEX_PREFIXES):
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    return response
+
+
+@app.route('/robots.txt')
+def robots_txt():
+    """Crawler instructions for authors.writeitgreat.com.
+
+    There were none: the origin 404'd this path and Cloudflare answered with
+    its content-signals boilerplate, which is 100% comments and carries no
+    User-agent, Disallow or Sitemap line — i.e. no instruction at all. (The
+    marketing site's own robots_txt() docstring claims Cloudflare *prepends*
+    those signals to whatever the origin serves. Measured on 2026-08-08 that
+    is wrong: writeitgreat.com/robots.txt returns the app's directives alone.
+    Cloudflare only synthesises them when the origin has none, so this route
+    replaces the boilerplate rather than being appended to it.)
+
+    Disallow covers only capability-token URLs and the API — addresses no
+    visitor should ever reach from a search result, and where the fetch itself
+    is the thing worth preventing. Everything else stays crawlable so the
+    X-Robots-Tag above can be read; see NOINDEX_PREFIXES for why that
+    distinction is load-bearing.
+
+    /author/register is deliberately absent from every Disallow: it is the
+    marketing site's primary call-to-action target. Blocking it would stop
+    Google reading the page it is being sent to and discard the anchor-text
+    signal, without reliably keeping it out of the index.
+    """
+    body = "\n".join([
+        "User-agent: *",
+        "Disallow: /api/",
+        "Disallow: /results/",
+        "Disallow: /download/",
+        "Disallow: /social-strategy/result/",
+        "Disallow: /social-strategy/pdf/",
+        "Allow: /",
+        "",
+    ])
+    return Response(body, mimetype='text/plain; charset=utf-8')
 
 
 @app.route('/healthz')

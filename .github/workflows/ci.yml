@@ -207,6 +207,16 @@ jobs:
       - name: The herokuapp origin cannot forge a visitor, and machine callers still reach it
         run: python ci/check_edge_trust.py
 
+      # Also a STEP, same reasoning as the check above. This host had no
+      # crawler instructions at all -- the origin 404'd /robots.txt and
+      # Cloudflare answered with a comment-only boilerplate carrying no
+      # directive -- while Googlebot had a followable path from the marketing
+      # site into /admin/login. What this pins is the distinction that is easy
+      # to get backwards: robots.txt governs the FETCH, noindex governs the
+      # INDEX, and blocking a path in both means the noindex is never read.
+      - name: Crawlers are told the right thing about auth, staff and token URLs
+        run: python ci/check_crawl_posture.py
+
       # A STEP inside proposal-ci, deliberately not a job of its own: proposal-ci
       # is the required status check, and a new job would be a new status context
       # that gates nothing until someone re-runs ci/setup_branch_protection.sh
